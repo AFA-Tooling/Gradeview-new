@@ -50,7 +50,7 @@ jobs:
               chmod 600 ~/.ssh/known_hosts
               ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-              export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+              export GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes'
               git remote set-url origin git@github.com:AFA-Tooling/Gradeview-new.git
               git fetch --all --prune
               git checkout -B main origin/main
