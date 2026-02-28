@@ -42,9 +42,10 @@ jobs:
               sudo chown -R \$USER:\$USER /home/gradeview
               git config --global --add safe.directory /home/gradeview/Grades
               cd /home/gradeview/Grades
+              git remote set-url origin git@github.com:${{ github.repository }}.git
               git fetch --all --prune
-              git checkout main
-              git reset --hard ${{ github.sha }}
+              git checkout -B main origin/main
+              git reset --hard origin/main
               # Minimal, idempotent cleanup
               sudo docker-compose -f docker-compose.yml down --remove-orphans || true
               sudo docker rm -f gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy 2>/dev/null || true
