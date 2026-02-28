@@ -33,8 +33,9 @@ jobs:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           GCP_ZONE: ${{ secrets.GCP_ZONE }}
           GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
+          GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
         run: |
-          gcloud compute ssh "$GCE_INSTANCE" \
+          gcloud compute ssh "$GCE_SSH_USER@$GCE_INSTANCE" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_ZONE" \
             --command "
