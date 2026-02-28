@@ -39,9 +39,9 @@ jobs:
             --zone "$GCP_ZONE" \
             --command "
               set -e
-              sudo chown -R \$USER:\$USER /opt/gradeview
-              git config --global --add safe.directory /opt/gradeview/Grades
-              cd /opt/gradeview/Grades
+              sudo chown -R \$USER:\$USER /home/gradeview
+              git config --global --add safe.directory /home/gradeview/Grades
+              cd /home/gradeview/Grades
               git fetch --all --prune
               git checkout main
               git reset --hard ${{ github.sha }}
