@@ -20,6 +20,7 @@ import {
     Accordion,
     AccordionSummary,
     AccordionDetails,
+    Stack,
     Tab,
     Tabs,
 } from '@mui/material';
@@ -47,24 +48,117 @@ export default function Settings() {
     const [newAdmin, setNewAdmin] = useState('');
     const [tabValue, setTabValue] = useState(0);
     const [expandedCourse, setExpandedCourse] = useState(0);
+    const [syncEndpointAvailable, setSyncEndpointAvailable] = useState(true);
+
+    const normalizeSyncConfig = (rawConfig) => {
+        const sourceConfig = rawConfig || {};
+        const globalSettings = sourceConfig.global_settings || {
+            csv_output_dir: 'data/exports',
+            log_level: 'INFO',
+            retry_attempts: 3,
+            retry_delay_seconds: 5,
+        };
+
+        const courses = Array.isArray(sourceConfig.courses) ? sourceConfig.courses : [];
+        const normalizedCourses = courses.map((course) => {
+            const legacySources = {
+                gradescope: course.gradescope,
+                prairielearn: course.prairielearn,
+                iclicker: course.iclicker,
+            };
+
+            const sources = {
+                gradescope: {
+                    enabled: course.sources?.gradescope?.enabled ?? legacySources.gradescope?.enabled ?? false,
+                    course_id: course.sources?.gradescope?.course_id ?? legacySources.gradescope?.course_id ?? '',
+                    sync_interval_hours: course.sources?.gradescope?.sync_interval_hours ?? legacySources.gradescope?.sync_interval_hours ?? 24,
+                },
+                prairielearn: {
+                    enabled: course.sources?.prairielearn?.enabled ?? legacySources.prairielearn?.enabled ?? false,
+                    course_id: course.sources?.prairielearn?.course_id ?? legacySources.prairielearn?.course_id ?? '',
+                },
+                iclicker: {
+                    enabled: course.sources?.iclicker?.enabled ?? legacySources.iclicker?.enabled ?? false,
+                    course_names: course.sources?.iclicker?.course_names ?? legacySources.iclicker?.course_names ?? [],
+                },
+            };
+
+            return {
+                id: course.id || `course_${Date.now()}`,
+                name: course.name || '',
+                department: course.department || '',
+                course_number: course.course_number || '',
+                semester: course.semester || 'Fall',
+                year: course.year || new Date().getFullYear(),
+                instructor: course.instructor || '',
+                sources,
+                database: {
+                    enabled: course.database?.enabled ?? true,
+                    use_as_primary: course.database?.use_as_primary ?? true,
+                },
+                buckets: {
+                    total_points_cap: course.buckets?.total_points_cap ?? '',
+                    rounding_policy: course.buckets?.rounding_policy ?? '',
+                    component_percentages: course.buckets?.component_percentages || [],
+                    grade_bins: course.buckets?.grade_bins || [],
+                    grading_breakdown: course.buckets?.grading_breakdown || [],
+                },
+                assignment_categories: course.assignment_categories || [],
+            };
+        });
+
+        return {
+            ...sourceConfig,
+            global_settings: globalSettings,
+            courses: normalizedCourses,
+        };
+    };
 
     useEffect(() => {
         loadConfig();
     }, []);
 
+    const getErrorMessage = (error, fallbackMessage) => {
+        const serverError = error?.response?.data?.error || error?.response?.data?.message;
+        const status = error?.response?.status;
+        if (serverError && status) {
+            return `${fallbackMessage} (${status}: ${serverError})`;
+        }
+        if (serverError) {
+            return `${fallbackMessage} (${serverError})`;
+        }
+        return fallbackMessage;
+    };
+
     const loadConfig = async () => {
         try {
             setLoading(true);
-            const [viewResponse, syncResponse] = await Promise.all([
+            const [viewResult, syncResult] = await Promise.allSettled([
                 apiv2.get('/config'),
-                apiv2.get('/config/sync')
+                apiv2.get('/config/sync'),
             ]);
-            setConfig(viewResponse.data);
-            setOriginalConfig(JSON.parse(JSON.stringify(viewResponse.data)));
-            setSyncConfig(syncResponse.data);
-            setOriginalSyncConfig(JSON.parse(JSON.stringify(syncResponse.data)));
+
+            if (viewResult.status === 'fulfilled') {
+                setConfig(viewResult.value.data);
+                setOriginalConfig(JSON.parse(JSON.stringify(viewResult.value.data)));
+            } else {
+                throw viewResult.reason;
+            }
+
+            if (syncResult.status === 'fulfilled') {
+                const normalizedSync = normalizeSyncConfig(syncResult.value.data);
+                setSyncConfig(normalizedSync);
+                setOriginalSyncConfig(JSON.parse(JSON.stringify(normalizedSync)));
+                setSyncEndpointAvailable(true);
+            } else {
+                const fallbackSync = normalizeSyncConfig({ global_settings: {}, courses: [] });
+                setSyncConfig(fallbackSync);
+                setOriginalSyncConfig(JSON.parse(JSON.stringify(fallbackSync)));
+                setSyncEndpointAvailable(false);
+                showSnackbar(getErrorMessage(syncResult.reason, 'GradeSync configuration endpoint unavailable, loaded fallback view'), 'warning');
+            }
         } catch (error) {
-            showSnackbar('Failed to load configuration', 'error');
+            showSnackbar(getErrorMessage(error, 'Failed to load GradeView configuration'), 'error');
             console.error('Error loading config:', error);
         } finally {
             setLoading(false);
@@ -74,15 +168,19 @@ export default function Settings() {
     const saveConfig = async () => {
         try {
             setSaving(true);
-            await Promise.all([
-                apiv2.put('/config', config),
-                apiv2.put('/config/sync', syncConfig)
-            ]);
+            await apiv2.put('/config', config);
+            if (syncEndpointAvailable) {
+                await apiv2.put('/config/sync', syncConfig);
+            }
             setOriginalConfig(JSON.parse(JSON.stringify(config)));
             setOriginalSyncConfig(JSON.parse(JSON.stringify(syncConfig)));
-            showSnackbar('Configuration saved successfully', 'success');
+            if (syncEndpointAvailable) {
+                showSnackbar('Configuration saved successfully', 'success');
+            } else {
+                showSnackbar('GradeView saved. GradeSync endpoint unavailable, skipped sync config save', 'warning');
+            }
         } catch (error) {
-            showSnackbar('Failed to save configuration', 'error');
+            showSnackbar(getErrorMessage(error, 'Failed to save configuration'), 'error');
             console.error('Error saving config:', error);
         } finally {
             setSaving(false);
@@ -149,6 +247,62 @@ export default function Settings() {
         setSyncConfig({ ...syncConfig, courses: updatedCourses });
     };
 
+    const updateCourseNestedSection = (courseIndex, section, subSection, field, value) => {
+        const updatedCourses = [...syncConfig.courses];
+        updatedCourses[courseIndex] = {
+            ...updatedCourses[courseIndex],
+            [section]: {
+                ...updatedCourses[courseIndex][section],
+                [subSection]: {
+                    ...updatedCourses[courseIndex][section]?.[subSection],
+                    [field]: value,
+                },
+            },
+        };
+        setSyncConfig({ ...syncConfig, courses: updatedCourses });
+    };
+
+    const updateBucketListItem = (courseIndex, bucketKey, itemIndex, field, value) => {
+        const updatedCourses = [...syncConfig.courses];
+        const list = [...(updatedCourses[courseIndex].buckets?.[bucketKey] || [])];
+        list[itemIndex] = { ...list[itemIndex], [field]: value };
+        updatedCourses[courseIndex] = {
+            ...updatedCourses[courseIndex],
+            buckets: {
+                ...updatedCourses[courseIndex].buckets,
+                [bucketKey]: list,
+            },
+        };
+        setSyncConfig({ ...syncConfig, courses: updatedCourses });
+    };
+
+    const addBucketListItem = (courseIndex, bucketKey, template) => {
+        const updatedCourses = [...syncConfig.courses];
+        const list = [...(updatedCourses[courseIndex].buckets?.[bucketKey] || [])];
+        list.push(template);
+        updatedCourses[courseIndex] = {
+            ...updatedCourses[courseIndex],
+            buckets: {
+                ...updatedCourses[courseIndex].buckets,
+                [bucketKey]: list,
+            },
+        };
+        setSyncConfig({ ...syncConfig, courses: updatedCourses });
+    };
+
+    const removeBucketListItem = (courseIndex, bucketKey, itemIndex) => {
+        const updatedCourses = [...syncConfig.courses];
+        const list = [...(updatedCourses[courseIndex].buckets?.[bucketKey] || [])].filter((_, i) => i !== itemIndex);
+        updatedCourses[courseIndex] = {
+            ...updatedCourses[courseIndex],
+            buckets: {
+                ...updatedCourses[courseIndex].buckets,
+                [bucketKey]: list,
+            },
+        };
+        setSyncConfig({ ...syncConfig, courses: updatedCourses });
+    };
+
     const addCourse = () => {
         const newCourse = {
             id: `new_course_${Date.now()}`,
@@ -158,10 +312,19 @@ export default function Settings() {
             semester: 'Fall',
             year: new Date().getFullYear(),
             instructor: '',
-            gradescope: { enabled: false, course_id: '', sync_interval_hours: 24 },
-            prairielearn: { enabled: false, course_id: '' },
-            iclicker: { enabled: false, course_names: [] },
+            sources: {
+                gradescope: { enabled: false, course_id: '', sync_interval_hours: 24 },
+                prairielearn: { enabled: false, course_id: '' },
+                iclicker: { enabled: false, course_names: [] },
+            },
             database: { enabled: true, use_as_primary: true },
+            buckets: {
+                total_points_cap: '',
+                rounding_policy: '',
+                component_percentages: [],
+                grade_bins: [],
+                grading_breakdown: [],
+            },
             assignment_categories: []
         };
         setSyncConfig({ ...syncConfig, courses: [...syncConfig.courses, newCourse] });
@@ -219,10 +382,10 @@ export default function Settings() {
         );
     }
 
-    if (!config || !syncConfig) {
+    if (!config) {
         return (
             <Box sx={{ p: 3 }}>
-                <Alert severity="error">Failed to load configuration</Alert>
+                <Alert severity="error">Failed to load GradeView configuration</Alert>
             </Box>
         );
     }
@@ -232,7 +395,7 @@ export default function Settings() {
             <PageHeader>Settings</PageHeader>
             
             <Alert severity="info" sx={{ mb: 3 }}>
-                Configure system-wide settings. Changes will affect all users after saving.
+                配置按层级组织：系统级设置 → 课程级设置 → 数据源 / 评分规则 / 分类映射。保存后对所有用户生效。
             </Alert>
 
             <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
@@ -364,7 +527,7 @@ export default function Settings() {
                                     value={syncConfig.global_settings?.retry_attempts || 3}
                                     onChange={(e) => setSyncConfig({
                                         ...syncConfig,
-                                        global_settings: { ...syncConfig.global_settings, retry_attempts: parseInt(e.target.value) }
+                                        global_settings: { ...syncConfig.global_settings, retry_attempts: parseInt(e.target.value || 0, 10) }
                                     })}
                                     helperText="Max retry attempts"
                                     sx={{ width: '150px' }}
@@ -375,7 +538,7 @@ export default function Settings() {
                                     value={syncConfig.global_settings?.retry_delay_seconds || 5}
                                     onChange={(e) => setSyncConfig({
                                         ...syncConfig,
-                                        global_settings: { ...syncConfig.global_settings, retry_delay_seconds: parseInt(e.target.value) }
+                                        global_settings: { ...syncConfig.global_settings, retry_delay_seconds: parseInt(e.target.value || 0, 10) }
                                     })}
                                     helperText="Delay between retries"
                                     sx={{ width: '180px' }}
@@ -470,33 +633,33 @@ export default function Settings() {
 
                                             <Divider sx={{ my: 1 }} />
 
-                                            {/* Integration Settings */}
-                                            <Typography variant="subtitle2" color="primary">Integration Settings</Typography>
+                                            {/* Source Integrations */}
+                                            <Typography variant="subtitle2" color="primary">Source Integrations</Typography>
                                             
                                             {/* Gradescope */}
                                             <Box sx={{ pl: 2, border: '1px solid #e0e0e0', borderRadius: 1, p: 2 }}>
                                                 <FormControlLabel
                                                     control={
                                                         <Switch
-                                                            checked={course.gradescope?.enabled || false}
-                                                            onChange={(e) => updateCourseSection(courseIndex, 'gradescope', 'enabled', e.target.checked)}
+                                                            checked={course.sources?.gradescope?.enabled || false}
+                                                            onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'gradescope', 'enabled', e.target.checked)}
                                                         />
                                                     }
                                                     label="Gradescope Enabled"
                                                 />
-                                                {course.gradescope?.enabled && (
+                                                {course.sources?.gradescope?.enabled && (
                                                     <Box sx={{ mt: 1, display: 'flex', gap: 2 }}>
                                                         <TextField
                                                             label="Course ID"
-                                                            value={course.gradescope?.course_id || ''}
-                                                            onChange={(e) => updateCourseSection(courseIndex, 'gradescope', 'course_id', e.target.value)}
+                                                            value={course.sources?.gradescope?.course_id || ''}
+                                                            onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'gradescope', 'course_id', e.target.value)}
                                                             sx={{ flex: 1 }}
                                                         />
                                                         <TextField
                                                             label="Sync Interval (hours)"
                                                             type="number"
-                                                            value={course.gradescope?.sync_interval_hours || 24}
-                                                            onChange={(e) => updateCourseSection(courseIndex, 'gradescope', 'sync_interval_hours', parseInt(e.target.value))}
+                                                            value={course.sources?.gradescope?.sync_interval_hours || 24}
+                                                            onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'gradescope', 'sync_interval_hours', parseInt(e.target.value || 0, 10))}
                                                             sx={{ width: '180px' }}
                                                         />
                                                     </Box>
@@ -508,17 +671,17 @@ export default function Settings() {
                                                 <FormControlLabel
                                                     control={
                                                         <Switch
-                                                            checked={course.prairielearn?.enabled || false}
-                                                            onChange={(e) => updateCourseSection(courseIndex, 'prairielearn', 'enabled', e.target.checked)}
+                                                            checked={course.sources?.prairielearn?.enabled || false}
+                                                            onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'prairielearn', 'enabled', e.target.checked)}
                                                         />
                                                     }
                                                     label="PrairieLearn Enabled"
                                                 />
-                                                {course.prairielearn?.enabled && (
+                                                {course.sources?.prairielearn?.enabled && (
                                                     <TextField
                                                         label="Course ID"
-                                                        value={course.prairielearn?.course_id || ''}
-                                                        onChange={(e) => updateCourseSection(courseIndex, 'prairielearn', 'course_id', e.target.value)}
+                                                        value={course.sources?.prairielearn?.course_id || ''}
+                                                        onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'prairielearn', 'course_id', e.target.value)}
                                                         fullWidth
                                                         sx={{ mt: 1 }}
                                                     />
@@ -530,20 +693,20 @@ export default function Settings() {
                                                 <FormControlLabel
                                                     control={
                                                         <Switch
-                                                            checked={course.iclicker?.enabled || false}
-                                                            onChange={(e) => updateCourseSection(courseIndex, 'iclicker', 'enabled', e.target.checked)}
+                                                            checked={course.sources?.iclicker?.enabled || false}
+                                                            onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'iclicker', 'enabled', e.target.checked)}
                                                         />
                                                     }
                                                     label="iClicker Enabled"
                                                 />
-                                                {course.iclicker?.enabled && (
+                                                {course.sources?.iclicker?.enabled && (
                                                     <Box sx={{ mt: 1 }}>
                                                         <Typography variant="caption">Course Names (one per line)</Typography>
                                                         <TextField
                                                             multiline
                                                             rows={3}
-                                                            value={course.iclicker?.course_names?.join('\n') || ''}
-                                                            onChange={(e) => updateCourseSection(courseIndex, 'iclicker', 'course_names', e.target.value.split('\n'))}
+                                                            value={course.sources?.iclicker?.course_names?.join('\n') || ''}
+                                                            onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'iclicker', 'course_names', e.target.value.split('\n').map((v) => v.trim()).filter(Boolean))}
                                                             fullWidth
                                                         />
                                                     </Box>
@@ -572,6 +735,121 @@ export default function Settings() {
                                                     sx={{ ml: 2 }}
                                                 />
                                             </Box>
+
+                                            <Divider sx={{ my: 1 }} />
+
+                                            <Typography variant="subtitle2" color="primary">Buckets / Grading Rules</Typography>
+                                            <Paper variant="outlined" sx={{ p: 2 }}>
+                                                <Stack spacing={2}>
+                                                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                                        <TextField
+                                                            label="Total Points Cap"
+                                                            type="number"
+                                                            value={course.buckets?.total_points_cap ?? ''}
+                                                            onChange={(e) => updateCourseSection(courseIndex, 'buckets', 'total_points_cap', parseInt(e.target.value || 0, 10))}
+                                                            sx={{ width: '220px' }}
+                                                        />
+                                                        <TextField
+                                                            label="Rounding Policy"
+                                                            value={course.buckets?.rounding_policy || ''}
+                                                            onChange={(e) => updateCourseSection(courseIndex, 'buckets', 'rounding_policy', e.target.value)}
+                                                            sx={{ flex: 1, minWidth: '260px' }}
+                                                        />
+                                                    </Box>
+
+                                                    <Box>
+                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                                            <Typography variant="subtitle2">Component Percentages</Typography>
+                                                            <Button size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'component_percentages', { component: '', percentage: 0 })}>
+                                                                Add
+                                                            </Button>
+                                                        </Box>
+                                                        {(course.buckets?.component_percentages || []).map((item, itemIndex) => (
+                                                            <Box key={itemIndex} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                                                                <TextField
+                                                                    label="Component"
+                                                                    value={item.component || ''}
+                                                                    onChange={(e) => updateBucketListItem(courseIndex, 'component_percentages', itemIndex, 'component', e.target.value)}
+                                                                    sx={{ flex: 1 }}
+                                                                    size="small"
+                                                                />
+                                                                <TextField
+                                                                    label="%"
+                                                                    type="number"
+                                                                    value={item.percentage ?? 0}
+                                                                    onChange={(e) => updateBucketListItem(courseIndex, 'component_percentages', itemIndex, 'percentage', parseFloat(e.target.value || 0))}
+                                                                    sx={{ width: '120px' }}
+                                                                    size="small"
+                                                                />
+                                                                <IconButton color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'component_percentages', itemIndex)}>
+                                                                    <Delete />
+                                                                </IconButton>
+                                                            </Box>
+                                                        ))}
+                                                    </Box>
+
+                                                    <Box>
+                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                                            <Typography variant="subtitle2">Grade Bins</Typography>
+                                                            <Button size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'grade_bins', { grade: '', range: '' })}>
+                                                                Add
+                                                            </Button>
+                                                        </Box>
+                                                        {(course.buckets?.grade_bins || []).map((item, itemIndex) => (
+                                                            <Box key={itemIndex} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                                                                <TextField
+                                                                    label="Grade"
+                                                                    value={item.grade || ''}
+                                                                    onChange={(e) => updateBucketListItem(courseIndex, 'grade_bins', itemIndex, 'grade', e.target.value)}
+                                                                    sx={{ width: '120px' }}
+                                                                    size="small"
+                                                                />
+                                                                <TextField
+                                                                    label="Range"
+                                                                    value={item.range || ''}
+                                                                    onChange={(e) => updateBucketListItem(courseIndex, 'grade_bins', itemIndex, 'range', e.target.value)}
+                                                                    sx={{ flex: 1 }}
+                                                                    size="small"
+                                                                />
+                                                                <IconButton color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'grade_bins', itemIndex)}>
+                                                                    <Delete />
+                                                                </IconButton>
+                                                            </Box>
+                                                        ))}
+                                                    </Box>
+
+                                                    <Box>
+                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                                            <Typography variant="subtitle2">Grading Breakdown</Typography>
+                                                            <Button size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'grading_breakdown', { assignment: '', points: 0 })}>
+                                                                Add
+                                                            </Button>
+                                                        </Box>
+                                                        {(course.buckets?.grading_breakdown || []).map((item, itemIndex) => (
+                                                            <Box key={itemIndex} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                                                                <TextField
+                                                                    label="Assignment"
+                                                                    value={item.assignment || ''}
+                                                                    onChange={(e) => updateBucketListItem(courseIndex, 'grading_breakdown', itemIndex, 'assignment', e.target.value)}
+                                                                    sx={{ flex: 1 }}
+                                                                    size="small"
+                                                                />
+                                                                <TextField
+                                                                    label="Points"
+                                                                    type="number"
+                                                                    value={item.points ?? 0}
+                                                                    onChange={(e) => updateBucketListItem(courseIndex, 'grading_breakdown', itemIndex, 'points', parseFloat(e.target.value || 0))}
+                                                                    sx={{ width: '140px' }}
+                                                                    size="small"
+                                                                />
+                                                                <IconButton color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'grading_breakdown', itemIndex)}>
+                                                                    <Delete />
+                                                                </IconButton>
+                                                            </Box>
+                                                        ))}
+                                                    </Box>
+                                                </Stack>
+                                            </Paper>
 
                                             <Divider sx={{ my: 1 }} />
 
