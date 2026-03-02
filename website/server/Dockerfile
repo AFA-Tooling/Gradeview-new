@@ -1,10 +1,10 @@
-FROM node:19.5-alpine3.16
+FROM node:20-alpine3.17
 
 WORKDIR /website
 ENV PATH="./node_modules/.bin:$PATH"
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY . .
 RUN npm run build

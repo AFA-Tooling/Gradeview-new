@@ -2,28 +2,31 @@
 .DEFAULT_GOAL := docker
 
 init:
-	@cd website && npm install
-	@cd api && npm install
-	@cd website/server && npm install
-	@cd website && npm run build
+	@echo "Initializing project with Docker-only setup..."
+	@docker compose -f docker-compose.dev.yml build
 
 dev-up:
-	@docker compose -f docker-compose.dev.yml up -dV
-
-dev-web-refresh:
-	@echo "Rebuilding frontend assets (website/src -> website/server/build)..."
-	@cd website && npm run build
-	@echo "Restarting dev web container..."
-	@docker compose -f docker-compose.dev.yml restart web
-	@echo "Done. Hard refresh browser: Cmd+Shift+R"
+	@docker compose -f docker-compose.dev.yml up -d
 
 dev-down:
 	@docker compose -f docker-compose.dev.yml down
 
+refresh:
+	@docker compose -f docker-compose.dev.yml down
+	@docker compose -f docker-compose.dev.yml build --no-cache
+	@docker compose -f docker-compose.dev.yml up -d --force-recreate -V
+
 dev-local:
 	@bash -c '\
-	echo "Starting services locally..."; \
+	echo "Starting local frontend/backend with Docker dependencies..."; \
 	echo "Checking ports..."; \
+	if lsof -Pi :5433 -sTCP:LISTEN -t >/dev/null 2>&1 ; then \
+		echo ""; \
+		echo "⚠️  Port 5433 is already in use:"; \
+		lsof -Pi :5433 -sTCP:LISTEN ; \
+		echo "Please free port 5433 (used by cloud-sql-proxy in dev-local mode)."; \
+		exit 1; \
+	fi; \
 	if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1 ; then \
 		echo ""; \
 		echo "⚠️  Port 8000 is already in use:"; \
@@ -51,13 +54,15 @@ dev-local:
 		fi \
 	fi; \
 	'
-	@echo "1. Starting database connectivity service..."
-	@docker compose -f docker-compose.dev.yml up -d cloud-sql-proxy
-	@echo "2. Waiting for database proxy to be ready..."
+	@echo "1. Stopping dockerized frontend/backend if running..."
+	@docker compose -f docker-compose.dev.yml stop reverseProxy web api >/dev/null 2>&1 || true
+	@echo "2. Starting Docker dependency services (cloud-sql-proxy + gradesync)..."
+	@docker compose -f docker-compose.dev.yml up -d cloud-sql-proxy gradesync
+	@echo "3. Waiting for database proxy to be ready..."
 	@sleep 5
-	@echo "3. Starting API server (database-backed)..."
-	@cd api && NODE_ENV=development npm run dev &
-	@echo "4. Starting website dev server..."
+	@echo "4. Starting local API server on :8000 (DB via localhost:5433)..."
+	@cd api && NODE_ENV=development POSTGRES_HOST=localhost POSTGRES_PORT=5433 npm run dev &
+	@echo "5. Starting local website dev server on :3000..."
 	@cd website && REACT_APP_PROXY_SERVER="http://localhost:8000" npm run react
 
 docker:

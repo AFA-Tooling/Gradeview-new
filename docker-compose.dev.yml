@@ -26,14 +26,19 @@ services:
     env_file:
       - .env
     volumes:
-      - ./website/server/build:/website/build
-      - ./website/server/build:/app/build
+      - ./website:/website
+      - /website/node_modules
+      - /website/server/node_modules
     environment:
-      - REACT_APP_PROXY_SERVER=${REACT_APP_PROXY_SERVER}
-      - PORT=${REACT_APP_PORT}
+      - REACT_APP_PROXY_SERVER=${REACT_APP_PROXY_SERVER:-http://gradeview-api:8000}
+      - PORT=${REACT_APP_PORT:-3000}
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
     networks:
       - frontend
-    command: npm start
+    ports:
+      - "3000:3000"
+    command: npm run react
     restart: unless-stopped
   
   cloud-sql-proxy:
@@ -48,6 +53,8 @@ services:
       - ./secrets/key.json:/secrets/key.json:ro
     env_file:
       - .env
+    ports:
+      - "5433:5432"
     networks:
       - frontend
       - db # 确保 proxy 也在 db 网络中
