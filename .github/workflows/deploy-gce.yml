@@ -7,10 +7,72 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-and-push-images:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push reverse proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./reverseProxy
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gradeview/reverse-proxy:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/gradeview/reverse-proxy:latest
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./website
+          file: ./website/server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gradeview/web:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/gradeview/web:latest
+
+      - name: Build and push api image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          file: ./api/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gradeview/server:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/gradeview/server:latest
+
+      - name: Build and push gradesync image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gradesync
+          file: ./gradesync/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gradeview/gradesync:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/gradeview/gradesync:latest
+
   deploy:
     name: Deploy on GCE VM
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    needs: build-and-push-images
 
     permissions:
       contents: read
@@ -34,13 +96,18 @@ jobs:
           GCP_ZONE: ${{ secrets.GCP_ZONE }}
           GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
           GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}/gradeview
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           gcloud compute ssh "$GCE_SSH_USER@$GCE_INSTANCE" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_ZONE" \
-            --command "
-              set -e
-              sudo chown -R \$USER:\$USER /home/gradeview
+            --command "IMAGE_REGISTRY='$IMAGE_REGISTRY' IMAGE_TAG='$IMAGE_TAG' GHCR_USERNAME='$GHCR_USERNAME' GHCR_TOKEN='$GHCR_TOKEN' bash -se" <<'REMOTE'
+              set -euo pipefail
+
+              sudo chown -R "$USER":"$USER" /home/gradeview
               git config --global --add safe.directory /home/gradeview/Grades
               cd /home/gradeview/Grades
 
@@ -69,13 +136,84 @@ jobs:
               git fetch --all --prune
               git checkout -B main origin/main
               git reset --hard origin/main
-              # Minimal, idempotent cleanup
-              sudo docker-compose -f docker-compose.yml down --remove-orphans || true
-              sudo docker rm -f gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy 2>/dev/null || true
-              sudo docker builder prune -af || true
-              sudo docker image prune -af || true
-              sudo docker container prune -f || true
 
-              # Recreate services from latest commit
-              sudo docker-compose -f docker-compose.yml up -d --build --force-recreate --remove-orphans
-            "
+              if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+                echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+              else
+                echo '[WARN] GHCR credentials not provided; proceeding without docker login.'
+              fi
+
+              STATE_FILE=/home/gradeview/.gradeview_last_successful_tag
+              PREVIOUS_TAG=''
+              if [ -f "$STATE_FILE" ]; then
+                PREVIOUS_TAG=$(cat "$STATE_FILE")
+              fi
+
+              set_compose_versions() {
+                local tag="$1"
+                export CI_REGISTRY_IMAGE="$IMAGE_REGISTRY"
+                export REVERSE_PROXY_VERSION="$tag"
+                export WEB_VERSION="$tag"
+                export API_VERSION="$tag"
+                export GRADESYNC_VERSION="$tag"
+              }
+
+              wait_for_health() {
+                local max_wait="${1:-180}"
+                local elapsed=0
+                local interval=6
+                local containers="gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy"
+
+                while [ "$elapsed" -lt "$max_wait" ]; do
+                  local all_healthy=true
+                  for c in $containers; do
+                    local status
+                    status=$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo missing)
+                    if [ "$status" != "healthy" ]; then
+                      all_healthy=false
+                      break
+                    fi
+                  done
+
+                  if [ "$all_healthy" = true ]; then
+                    return 0
+                  fi
+
+                  sleep "$interval"
+                  elapsed=$((elapsed + interval))
+                done
+
+                return 1
+              }
+
+              echo "[INFO] Deploying tag $IMAGE_TAG"
+              set_compose_versions "$IMAGE_TAG"
+              sudo docker compose -f docker-compose.yml pull
+              sudo docker compose -f docker-compose.yml up -d --no-build --remove-orphans
+
+              if wait_for_health 240; then
+                echo "$IMAGE_TAG" > "$STATE_FILE"
+                echo "[INFO] Deploy successful. Recorded tag: $IMAGE_TAG"
+                sudo docker image prune -f || true
+                exit 0
+              fi
+
+              echo '[ERROR] New deployment did not become healthy in time.'
+
+              if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ]; then
+                echo "[WARN] Rolling back to previous successful tag: $PREVIOUS_TAG"
+                set_compose_versions "$PREVIOUS_TAG"
+                sudo docker compose -f docker-compose.yml pull
+                sudo docker compose -f docker-compose.yml up -d --no-build --remove-orphans
+
+                if wait_for_health 180; then
+                  echo "[INFO] Rollback successful to tag: $PREVIOUS_TAG"
+                else
+                  echo '[ERROR] Rollback completed but services are still not healthy.'
+                fi
+              else
+                echo '[WARN] No previous successful tag found; rollback skipped.'
+              fi
+
+              exit 1
+          REMOTE

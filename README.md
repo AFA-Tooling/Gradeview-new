@@ -85,6 +85,20 @@ Grades/
   docker compose -f docker-compose.yml up --build
   ```
 
+## Cloud deployment (CI/CD)
+
+- The deploy workflow now builds and pushes images in GitHub Actions, then the GCE VM only runs `pull + up`.
+- This reduces VM CPU/RAM pressure and avoids slow in-place builds on the cloud host.
+- Images are tagged with commit SHA and deployed as immutable versions.
+
+Required GitHub secrets for deployment:
+- `GCP_SA_KEY`, `GCP_PROJECT_ID`, `GCP_ZONE`, `GCE_INSTANCE`, `GCE_SSH_USER`
+- `GHCR_USERNAME`, `GHCR_TOKEN` (for pulling private GHCR images on the VM)
+
+Notes:
+- Registry base path used by workflow: `ghcr.io/<org>/gradeview`
+- Services in `docker-compose.yml` are configured for stable runtime (health checks + log rotation, no dev bind mounts)
+
 ## Common ports
 
 - Web UI: 3000
