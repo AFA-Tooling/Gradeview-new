@@ -1,8 +1,8 @@
 """
-Unified Configuration Manager for GradeSync
+Unified Configuration Manager for GradeSync.
 
-Loads configuration from root config.json and provides
-easy access to course-specific settings.
+Loads GradeSync settings from the repository root config.json (`gradesync` section)
+with backward compatibility for legacy gradesync/config.json format.
 """
 import json
 import os
@@ -12,8 +12,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Default configuration file location
-DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config.json"
+def _resolve_default_config_path() -> Path:
+    """Resolve default config path with fallback to legacy location."""
+    root_config = Path(__file__).parent.parent.parent / "config.json"
+    legacy_config = Path(__file__).parent.parent / "config.json"
+    if root_config.exists():
+        return root_config
+    return legacy_config
+
+
+DEFAULT_CONFIG_PATH = _resolve_default_config_path()
 
 
 class CourseConfig:
@@ -21,21 +29,37 @@ class CourseConfig:
     
     def __init__(self, course_data: Dict[str, Any]):
         self.data = course_data
-        self.id = course_data.get("id")
-        self.name = course_data.get("name")
-        self.department = course_data.get("department")
-        self.course_number = course_data.get("course_number")
-        self.semester = course_data.get("semester")
-        self.year = course_data.get("year")
-        self.instructor = course_data.get("instructor")
+        self.general = self._resolve_general(course_data)
+        self.gradesync_section = self._resolve_gradesync(course_data)
+        self.gradeview_section = self._resolve_gradeview(course_data)
+
+        self.id = self.general.get("id") or course_data.get("id")
+        self.name = self.general.get("name") or course_data.get("name")
+        self.department = self.general.get("department") or course_data.get("department")
+        self.course_number = self.general.get("course_number") or course_data.get("course_number")
+        self.semester = self.general.get("semester") or course_data.get("semester")
+        self.year = self.general.get("year") or course_data.get("year")
+        self.instructor = self.general.get("instructor") or course_data.get("instructor")
         
-        # Source configurations (supports both new `sources` shape and legacy top-level keys)
-        self.sources = course_data.get("sources", {})
+        # Source configurations (supports nested gradesync.sources and legacy shapes)
+        self.sources = self.gradesync_section.get("sources", course_data.get("sources", {}))
         self.gradescope = self._resolve_source("gradescope")
         self.prairielearn = self._resolve_source("prairielearn")
         self.iclicker = self._resolve_source("iclicker")
-        self.database = course_data.get("database", {})
-        self.assignment_categories = course_data.get("assignment_categories", [])
+        self.database = self.gradesync_section.get("database", course_data.get("database", {}))
+        self.assignment_categories = self.gradesync_section.get("assignment_categories", course_data.get("assignment_categories", []))
+
+    def _resolve_general(self, course_data: Dict[str, Any]) -> Dict[str, Any]:
+        general = course_data.get("general", {})
+        return general if isinstance(general, dict) else {}
+
+    def _resolve_gradesync(self, course_data: Dict[str, Any]) -> Dict[str, Any]:
+        section = course_data.get("gradesync", {})
+        return section if isinstance(section, dict) else {}
+
+    def _resolve_gradeview(self, course_data: Dict[str, Any]) -> Dict[str, Any]:
+        section = course_data.get("gradeview", {})
+        return section if isinstance(section, dict) else {}
 
     def _resolve_source(self, source_name: str) -> Dict[str, Any]:
         source_config = self.sources.get(source_name, {})
@@ -103,7 +127,12 @@ class ConfigManager:
         
         try:
             with open(self.config_path, 'r') as f:
-                self.config_data = json.load(f)
+                raw_data = json.load(f)
+
+            if isinstance(raw_data, dict) and isinstance(raw_data.get("gradesync"), dict):
+                self.config_data = raw_data.get("gradesync", {})
+            else:
+                self.config_data = raw_data if isinstance(raw_data, dict) else {}
             
             # Load courses
             for course_data in self.config_data.get("courses", []):
@@ -116,7 +145,7 @@ class ConfigManager:
             # Load global settings
             self.global_settings = self.config_data.get("global_settings", {})
             
-            logger.info(f"Loaded configuration for {len(self.courses)} courses")
+            logger.info("Loaded configuration for %s courses from %s", len(self.courses), self.config_path)
             
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in configuration file: {e}")

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { isAdmin } from '../../../../lib/userlib.mjs';
 import {
     getStudentSubmissionsByTime,
     getStudentSubmissionsGrouped,
@@ -7,7 +6,7 @@ import {
     studentEnrolledInCourse,
     getCourseAssignmentMatrix,
 } from '../../../../lib/dbHelper.mjs';
-import { getEmailFromAuth } from '../../../../lib/googleAuthHelper.mjs';
+import { IAM_ROLE } from '../../../../lib/iam.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -16,21 +15,22 @@ router.get('/', async (req, res) => {
     const { sort, format, course_id: courseId } = req.query; // sort: 'time' or 'assignment' (default), format: 'list' or 'grouped'
     
     try {
-        const authEmail = await getEmailFromAuth(req);
-        const requesterIsAdmin = isAdmin(authEmail);
+        const authEmail = req?.auth?.email;
+        const requesterRole = req?.auth?.role;
+        const requesterIsPrivileged = [IAM_ROLE.SUPER_ADMIN, IAM_ROLE.COURSE_ADMIN, IAM_ROLE.INSTRUCTOR].includes(requesterRole);
 
-        if (!requesterIsAdmin && authEmail !== email) {
+        if (!requesterIsPrivileged && authEmail !== email) {
             return res.status(403).json({ message: 'Access denied.' });
         }
 
-        if (courseId && !requesterIsAdmin) {
+        if (courseId && !requesterIsPrivileged) {
             const enrolled = await studentEnrolledInCourse(email, courseId);
             if (!enrolled) {
                 return res.status(403).json({ message: 'Access denied for requested course.' });
             }
         }
 
-        if (!courseId && !requesterIsAdmin) {
+        if (!courseId && !requesterIsPrivileged) {
             const studentCourses = await getStudentCourses(email);
             if (studentCourses.length > 0) {
                 const defaultCourseId = studentCourses[0].gradescope_course_id || studentCourses[0].id;

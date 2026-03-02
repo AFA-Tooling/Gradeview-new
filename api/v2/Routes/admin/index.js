@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { validateAdminMiddleware } from '../../../lib/authlib.mjs';
+import { validateAdminPortalMiddleware } from '../../../lib/authlib.mjs';
 import CategoriesRouter from './categories/index.js';
 import AssignmentsRouter from './assignments/index.js';
 import StatsRouter from './stats/index.js';
@@ -20,7 +20,7 @@ const limiter = RateLimit({
 // apply rate limiter to all requests
 router.use(limiter);
 
-router.use(validateAdminMiddleware);
+router.use(validateAdminPortalMiddleware);
 
 // Mount sub-routers
 router.use('/categories', CategoriesRouter);

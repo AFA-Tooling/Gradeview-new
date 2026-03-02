@@ -1,23 +1,26 @@
 import { Router } from 'express';
-import { isAdmin } from '../../../lib/userlib.mjs';
-import { getEmailFromAuth } from '../../../lib/googleAuthHelper.mjs';
+import { validateAuthenticatedMiddleware } from '../../../lib/authlib.mjs';
 import AuthorizationError from '../../../lib/errors/http/AuthorizationError.js';
+import { IAM_ROLE, resolveRole } from '../../../lib/iam.mjs';
 const router = Router({ mergeParams: true });
 
 // Responds with whether or not the current user is an admin
-router.get('/', async (req, res) => {
+router.get('/', validateAuthenticatedMiddleware, async (req, res) => {
     try {
         const authHeader = req.headers['authorization'];
+        const { course_id: courseId } = req.query;
         if (!authHeader) {
             throw new AuthorizationError('Authorization Header is empty.');
         }
-        const authEmail = await getEmailFromAuth(req);
-        const adminStatus = await isAdmin(authEmail);
+        const authEmail = req?.auth?.email;
+        const role = await resolveRole(authEmail, courseId || null, req?.auth?.snapshot || null);
+        const adminStatus = role === IAM_ROLE.SUPER_ADMIN || role === IAM_ROLE.COURSE_ADMIN;
+        const staffStatus = role === IAM_ROLE.INSTRUCTOR;
         
         // --- ADDING DEBUG LOG ---
-        console.log(`[AUTH_DEBUG] Checking admin status for email: ${authEmail}. Is admin? ${adminStatus}`);
+        console.log(`[AUTH_DEBUG] IAM role for ${authEmail}: ${role}`);
         
-        return res.status(200).json({ isAdmin: adminStatus });
+        return res.status(200).json({ isAdmin: adminStatus, isStaff: staffStatus, role });
     } catch (err) {
         switch (err.name) {
             case 'AuthorizationError':

@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { getMaxPointsSoFar } from '../../../../lib/studentHelper.mjs';
-import { isAdmin } from '../../../../lib/userlib.mjs';
 import {
     getStudentSubmissionsGrouped,
     getCourseAssignmentMatrix,
     getCourseTotalPossibleScore,
 } from '../../../../lib/dbHelper.mjs';
+import { IAM_ROLE } from '../../../../lib/iam.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -15,11 +15,13 @@ router.get('/', async (req, res) => {
     try {
         let studentTotalScore = 0;
         let userGrades = {};
+        const requesterRole = req?.auth?.role;
+        const requesterIsPrivileged = [IAM_ROLE.SUPER_ADMIN, IAM_ROLE.COURSE_ADMIN, IAM_ROLE.INSTRUCTOR].includes(requesterRole);
 
         const maxScores = await getCourseAssignmentMatrix(courseId || null);
         const maxPoints = await getCourseTotalPossibleScore(courseId || null);
 
-        if (isAdmin(email)) {
+        if (requesterIsPrivileged) {
             userGrades = maxScores;
             studentTotalScore = maxPoints;
         } else {

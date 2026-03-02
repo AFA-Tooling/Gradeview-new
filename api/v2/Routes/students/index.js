@@ -4,10 +4,12 @@ import GradesRouter from './grades/index.js';
 import ProjectionsRouter from './projections/index.js';
 import ConceptStructureRouter from './concept-structure/index.js';
 import CategoryStatsRouter from './category-stats/index.js';
-import { validateAdminOrStudentMiddleware } from '../../../lib/authlib.mjs';
-import { validateAdminMiddleware } from '../../../lib/authlib.mjs';
-import { getEmailFromAuth } from '../../../lib/googleAuthHelper.mjs';
-import { getStudentsByCourse, getStudentCourses, getAllStudentsFromDb } from '../../../lib/dbHelper.mjs';
+import {
+    validateAdminOrStudentMiddleware,
+    validateStaffOrAdminMiddleware,
+    validateStudentSelfOrStaffOrAdminMiddleware,
+} from '../../../lib/authlib.mjs';
+import { getStudentsByCourse, getStudentCourses, getAllStudentsFromDb, getStaffCourses } from '../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -22,8 +24,22 @@ router.use(
 // Current user's enrolled courses (students) or all courses (admins).
 router.get('/courses', validateAdminOrStudentMiddleware, async (req, res) => {
     try {
-        const authEmail = await getEmailFromAuth(req);
-        const courses = await getStudentCourses(authEmail);
+        const authEmail = req?.auth?.email;
+        const studentCourses = await getStudentCourses(authEmail);
+        const staffCourses = await getStaffCourses(authEmail);
+
+        const mapById = new Map();
+        for (const course of [...studentCourses, ...staffCourses]) {
+            const key = String(course?.id || course?.gradescope_course_id || '');
+            if (!key) {
+                continue;
+            }
+            if (!mapById.has(key)) {
+                mapById.set(key, course);
+            }
+        }
+
+        const courses = Array.from(mapById.values());
         return res.status(200).json({ courses });
     } catch (err) {
         console.error('Error fetching current user courses:', err);
@@ -31,16 +47,16 @@ router.get('/courses', validateAdminOrStudentMiddleware, async (req, res) => {
     }
 });
 
-router.use('/category-stats', validateAdminOrStudentMiddleware, CategoryStatsRouter);
+router.use('/category-stats', validateStaffOrAdminMiddleware, CategoryStatsRouter);
 
-// Ensure a student can only access their own email-based resources.
-router.use('/:email', validateAdminOrStudentMiddleware);
+// Ensure only self-student, course staff/TA, or admin can access email-based resources.
+router.use('/:email', validateStudentSelfOrStaffOrAdminMiddleware);
 
 router.use('/:email/grades', GradesRouter);
 router.use('/:email/projections', ProjectionsRouter);
 router.use('/:email/concept-structure', ConceptStructureRouter);
 
-router.get('/', validateAdminMiddleware, async (req, res) => {
+router.get('/', validateStaffOrAdminMiddleware, async (req, res) => {
     try {
         const { course_id: courseId } = req.query;
 

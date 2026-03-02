@@ -14,6 +14,7 @@ const { Pool } = pkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ROOT_CONFIG_PATH = path.join(__dirname, '../../../../config.json');
 
 const pool = new Pool({
     connectionString: process.env.GRADESYNC_DATABASE_URL || process.env.DATABASE_URL
@@ -21,15 +22,14 @@ const pool = new Pool({
 
 async function migrateGradeSyncConfig() {
     console.log('🔄 Migrating GradeSync config.json to database...');
-    
-    const configPath = path.join(__dirname, '../../../GradeSync/config.json');
-    
-    if (!fs.existsSync(configPath)) {
-        console.log('⚠️  GradeSync config.json not found, skipping...');
+
+    if (!fs.existsSync(ROOT_CONFIG_PATH)) {
+        console.log('⚠️  root config.json not found, skipping...');
         return;
     }
-    
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+    const rootConfig = JSON.parse(fs.readFileSync(ROOT_CONFIG_PATH, 'utf8'));
+    const config = rootConfig?.gradesync || rootConfig;
     const client = await pool.connect();
     
     try {
@@ -64,6 +64,14 @@ async function migrateGradeSyncConfig() {
         const courses = config.courses || [];
         
         for (const courseData of courses) {
+            const general = courseData?.general || courseData || {};
+            const gradesyncSection = courseData?.gradesync || courseData || {};
+            const gradeviewSection = courseData?.gradeview || courseData || {};
+
+            const gradescope = gradesyncSection?.sources?.gradescope || courseData?.sources?.gradescope || courseData?.gradescope || {};
+            const prairielearn = gradesyncSection?.sources?.prairielearn || courseData?.sources?.prairielearn || courseData?.prairielearn || {};
+            const iclicker = gradesyncSection?.sources?.iclicker || courseData?.sources?.iclicker || courseData?.iclicker || {};
+
             // Insert or update course
             const courseResult = await client.query(`
                 INSERT INTO courses (
@@ -80,17 +88,17 @@ async function migrateGradeSyncConfig() {
                     updated_at = CURRENT_TIMESTAMP
                 RETURNING id
             `, [
-                courseData.gradescope?.course_id || courseData.id,
-                courseData.name,
-                courseData.department,
-                courseData.course_number,
-                courseData.semester,
-                courseData.year,
-                courseData.instructor
+                gradescope?.course_id || general.id,
+                general.name,
+                general.department,
+                general.course_number,
+                general.semester,
+                general.year,
+                general.instructor
             ]);
             
             const courseId = courseResult.rows[0].id;
-            console.log(`    ✅ Course: ${courseData.name} (ID: ${courseId})`);
+            console.log(`    ✅ Course: ${general.name || general.id} (ID: ${courseId})`);
             
             // Insert course config
             await client.query(`
@@ -114,30 +122,35 @@ async function migrateGradeSyncConfig() {
                     updated_at = CURRENT_TIMESTAMP
             `, [
                 courseId,
-                courseData.gradescope?.enabled || false,
-                courseData.gradescope?.course_id,
-                courseData.gradescope?.sync_interval_hours || 24,
-                courseData.prairielearn?.enabled || false,
-                courseData.prairielearn?.course_id,
-                courseData.iclicker?.enabled || false,
-                courseData.iclicker?.course_names || [],
-                courseData.database?.enabled ?? true,
-                courseData.database?.use_as_primary ?? true
+                gradescope?.enabled || false,
+                gradescope?.course_id,
+                gradescope?.sync_interval_hours || 24,
+                prairielearn?.enabled || false,
+                prairielearn?.course_id,
+                iclicker?.enabled || false,
+                iclicker?.course_names || [],
+                gradesyncSection?.database?.enabled ?? courseData?.database?.enabled ?? true,
+                gradesyncSection?.database?.use_as_primary ?? courseData?.database?.use_as_primary ?? true
             ]);
             
             // Insert assignment categories
-            if (courseData.assignment_categories) {
+            const assignmentCategories =
+                gradesyncSection?.assignment_categories
+                || gradeviewSection?.assignment_categories
+                || courseData.assignment_categories;
+
+            if (assignmentCategories) {
                 await client.query('DELETE FROM assignment_categories WHERE course_id = $1', [courseId]);
                 
-                for (let i = 0; i < courseData.assignment_categories.length; i++) {
-                    const category = courseData.assignment_categories[i];
+                for (let i = 0; i < assignmentCategories.length; i++) {
+                    const category = assignmentCategories[i];
                     await client.query(`
                         INSERT INTO assignment_categories (course_id, name, patterns, display_order)
                         VALUES ($1, $2, $3, $4)
                     `, [courseId, category.name, category.patterns || [], i]);
                 }
                 
-                console.log(`      📋 Added ${courseData.assignment_categories.length} categories`);
+                console.log(`      📋 Added ${assignmentCategories.length} categories`);
             }
         }
         
@@ -155,15 +168,14 @@ async function migrateGradeSyncConfig() {
 
 async function migrateGradeViewConfig() {
     console.log('\n🔄 Migrating GradeView config to database...');
-    
-    const configPath = path.join(__dirname, '../config/default.json');
-    
-    if (!fs.existsSync(configPath)) {
-        console.log('⚠️  GradeView config not found, skipping...');
+
+    if (!fs.existsSync(ROOT_CONFIG_PATH)) {
+        console.log('⚠️  root config.json not found, skipping...');
         return;
     }
-    
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+    const rootConfig = JSON.parse(fs.readFileSync(ROOT_CONFIG_PATH, 'utf8'));
+    const config = rootConfig?.gradeview || rootConfig;
     const client = await pool.connect();
     
     try {

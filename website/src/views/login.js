@@ -35,19 +35,21 @@ export default function Login() {
 
     // Updates OAuth2 token to be the local token value
     async function handleGoogleLogin(authData) {
-        const token = `Bearer ${authData.credential}`;
+        const googleToken = `Bearer ${authData.credential}`;
         axios
             .get(`/api/v2/login`, {
-                headers: { Authorization: token },
+                headers: { Authorization: googleToken },
             })
             .then((loginRes) => {
                 if (!loginRes.data.status) {
                     setError(
-                        'You are not a registered student or admin.  Please contact course staff if you think this is a mistake.',
+                        loginRes?.data?.message
+                        || 'You are not assigned as a student or staff in any active course. Please contact course staff if you think this is a mistake.',
                     );
                     return;
                 } else {
-                    localStorage.setItem('token', token);
+                    localStorage.setItem('token', loginRes?.data?.token || '');
+                    localStorage.setItem('permissions', JSON.stringify(loginRes?.data?.permissions || {}));
                     const credData = jwtDecode(authData.credential);
                     // TODO: this is pretty awful.  We should have this in a context or something.
                     localStorage.setItem('email', credData?.email);

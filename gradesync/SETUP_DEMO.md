@@ -1,5 +1,11 @@
 # Demo 课程创建 - 使用指南
 
+## Quick Docs Access
+
+- Docs hub: `../docs/README.md`
+- GradeSync feature doc: `../docs/features/gradesync.md`
+- Database feature doc: `../docs/features/database.md`
+
 ## 脚本概览
 
 我已经为你创建了 `create_demo_course.py` 脚本，用来在数据库中快速生成一个完整的演示课程，包括学生和成绩数据。这样你就可以在下周的会议演示中使用虚拟数据，而不用担心学生隐私问题。
@@ -7,7 +13,7 @@
 ## 脚本位置
 
 ```
-/Users/zhangweishu/Grades/Grades/gradesync/create_demo_course.py
+gradesync/create_demo_course.py
 ```
 
 ## 功能
@@ -22,7 +28,7 @@
 ### 基础使用（推荐用于演示）
 
 ```bash
-cd /Users/zhangweishu/Grades/Grades/gradesync
+cd gradesync
 python3 create_demo_course.py --clean
 ```
 
@@ -76,14 +82,14 @@ python3 create_demo_course.py \
 
 **选项A：在本地Mac上运行（需要能连接到云端数据库）**
 ```bash
-cd /Users/zhangweishu/Grades/Grades/gradesync
+cd gradesync
 python3 create_demo_course.py --clean
 ```
 
 **选项B：在Docker中运行（推荐）**
 ```bash
 # 从项目根目录
-cd /Users/zhangweishu/Grades/Grades
+cd .
 
 # 启动Docker容器
 docker compose up
@@ -99,7 +105,7 @@ docker compose exec gradesync python3 create_demo_course.py --clean
 python3 << 'EOF'
 from pathlib import Path
 import sys
-sys.path.insert(0, '/Users/zhangweishu/Grades/Grades/gradesync')
+sys.path.insert(0, 'gradesync')
 
 from api.core.db import SessionLocal
 from api.core import models
@@ -203,7 +209,7 @@ EOF
 - **编程语言**: Python 3
 - **依赖**: SQLAlchemy, python-dotenv, psycopg2
 - **数据库**: PostgreSQL（你的云数据库）
-- **代码位置**: `/Users/zhangweishu/Grades/Grades/gradesync/create_demo_course.py`
+- **代码位置**: `gradesync/create_demo_course.py`
 
 所有的虚拟数据都在生成时标记为 `demo: true`，所以非常容易识别和清理。
 
@@ -227,4 +233,4 @@ python3 create_demo_course.py --clean
 
 ---
 
-有问题？在 `/Users/zhangweishu/Grades/Grades/gradesync/DEMO_COURSE_README.md` 中有更详细的技术文档。
+有问题？在 `gradesync/DEMO_COURSE_README.md` 中有更详细的技术文档。

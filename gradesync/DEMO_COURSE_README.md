@@ -1,5 +1,11 @@
 # Demo Course Creation Guide
 
+## Quick Docs Access
+
+- Docs hub: `../docs/README.md`
+- GradeSync feature doc: `../docs/features/gradesync.md`
+- Database feature doc: `../docs/features/database.md`
+
 ## Overview
 
 The `create_demo_course.py` script creates a complete demo course with synthetic student data, assignments, and grades in your PostgreSQL database. This is perfect for demos and testing without using real student data.

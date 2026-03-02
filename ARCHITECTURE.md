@@ -9,6 +9,15 @@ GradeView is a multi-component grade management system consisting of:
 - **Report Generation**: Python Progress Report service
 - **Infrastructure**: PostgreSQL, Nginx reverse proxy
 
+## Quick Documentation Access
+
+- Hub: `docs/README.md`
+- Database: `docs/features/database.md`
+- Auth & IAM: `docs/features/auth-and-iam.md`
+- Config & Settings: `docs/features/config-and-settings.md`
+- GradeSync: `docs/features/gradesync.md`
+- Dev & Deployment: `docs/features/dev-and-deploy.md`
+
 ---
 
 ## Project Directory Breakdown
@@ -21,8 +30,6 @@ Main responsibilities: user authentication, grade data queries, student informat
 api/
 ├── server.js              # Main server entry point
 ├── Router.js              # Route definitions (versioned routes)
-├── config/
-│   └── default.json       # API config (OAuth, admin list)
 ├── lib/
 │   ├── authlib.mjs        # Auth middleware (Admin/Student validation)
 │   ├── googleAuthHelper.mjs  # Google OAuth token verification
@@ -39,7 +46,7 @@ api/
 **Key workflow:**
 1. User login → obtains Google OAuth token
 2. API validates token (checks `@berkeley.edu` domain)
-3. Queries `config.get('admins')` to determine admin status
+3. Queries root `config.json` (`gradeview.admins` or `gradesync.courses[].admins`) to determine admin status
 4. Returns appropriate data based on permissions
 
 ---
@@ -72,7 +79,6 @@ Fetches grades from external systems (Gradescope, PrairieLearn, iClicker) and sy
 
 ```
 gradesync/
-├── config.json           # Course config (enabled systems, buckets, categories)
 ├── api/
 │   ├── app.py           # Main FastAPI application
 │   ├── config_manager.py # Config loader
@@ -196,7 +202,7 @@ Browser 用户
 API: authlib.mjs validateAdminMiddleware() 或 validateStudentMiddleware()
     ├─ 验证 token (googleAuthHelper.mjs)
     ├─ 检查 @berkeley.edu 域名（如果不是直接拒绝）
-    └─ 查询 config.admins 判断 admin 身份 (userlib.mjs)
+    └─ 查询 root config.json（global 或 course admins）判断 admin 身份 (userlib.mjs)
     ↓
 返回数据或 403 权限不足
 ```
@@ -206,7 +212,7 @@ API: authlib.mjs validateAdminMiddleware() 或 validateStudentMiddleware()
 ```
 GradeSync 定时任务 / 手动触发
     ↓
-根据 gradesync/config.json 配置课程列表
+根据 root config.json 的 gradesync 配置课程列表
     ↓
 对每个课程：
     ├─ Gradescope: 爬虫登录 → 拉成绩 → 整理为标准格式
@@ -242,14 +248,11 @@ API 查询 PostgreSQL
 - **GradeSync**: Gradescope/PrairieLearn/iClicker credentials
 
 ### Config Files
-- **API** (`api/config/default.json`)
-  - OAuth client ID
-  - Admin list
-
-- **GradeSync** (`gradesync/config.json`)
-  - Course list
-  - Enabled sync sources and credentials
-  - Assignment categories mapping
+- **Unified** (`config.json`)
+    - `gradeview.googleconfig.oauth.clientid` (OAuth client ID)
+    - `gradeview.admins` (global admin list)
+    - `gradesync.courses[]` (course list, source settings, course-specific `admins`)
+    - `gradesync.global_settings` (global sync settings)
 
 ---
 
@@ -282,7 +285,7 @@ docker compose -f docker-compose.yml up
 
 ### Step 1: Prepare Local Environment
 - [ ] Clone repository
-- [ ] `cp .env.example .env` and `cp api/config/default.example.json api/config/default.json`
+- [ ] `cp .env.example .env` and `cp config.example.json config.json`
 - [ ] Fill in environment variables and config
 
 ### Step 2: Start Dev Environment
@@ -290,7 +293,7 @@ docker compose -f docker-compose.yml up
 - [ ] Verify all services start successfully
 
 ### Step 3: Test Authentication & Permissions
-- [ ] Login with Berkeley account (need to be added to `api/config/default.json` admins list)
+- [ ] Login with Berkeley account (need to be added to `config.json` admins list)
 - [ ] Verify student grade query functionality
 
 ### Step 4: Modify Code
@@ -308,7 +311,7 @@ docker compose -f docker-compose.yml up
 | Issue | Root Cause | Solution |
 |-------|-----------|----------|
 | Login fails (domain mismatch) | Non-Berkeley account used | Only @berkeley.edu accounts allowed |
-| 403 permission denied | Account not in admins list | Admin must add your email to `api/config/default.json` |
+| 403 permission denied | Account not in admins list | Admin must add your email to `config.json` (`gradeview.admins` or target course `admins`) |
 | Gradescope sync fails | Credentials expired or XPath changed | Verify GRADESCOPE_* credentials in `.env` |
 | Sync not reflected in UI | GradeSync failed to write into DB or API query scoped to wrong course | Check GradeSync logs and database rows for target course |
 
@@ -325,5 +328,5 @@ Files you typically need to modify:
 | Modify frontend page | `website/src/**` |
 | Change grade sync logic | `gradesync/api/**`, `gradesync/{gradescope,prairieLearn,iclicker}/` |
 | Modify database operations | `api/lib/dbHelper.mjs`, `gradesync/api/core/**` |
-| Configure permissions | `api/config/default.json` → `admins` list |
-| Configure course sync settings | `gradesync/config.json` |
+| Configure permissions | `config.json` → `gradeview.admins` / `gradesync.courses[].admins` |
+| Configure course sync settings | `config.json` → `gradesync` |

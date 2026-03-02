@@ -254,6 +254,43 @@ export async function getStudentCourses(email) {
 }
 
 /**
+ * Gets courses a staff/admin user is assigned to via course_permissions.
+ * @param {string} email - User email
+ * @returns {Promise<Array<{id:number,name:string,gradescope_course_id:string,department:string,course_number:string,semester:string,year:number,permission_level:string,user_role:string}>>}
+ */
+export async function getStaffCourses(email) {
+    const pool = getPool();
+
+    const query = `
+        SELECT DISTINCT
+            c.id,
+            c.name,
+            c.gradescope_course_id,
+            c.department,
+            c.course_number,
+            c.semester,
+            c.year,
+            cp.permission_level,
+            u.role AS user_role
+        FROM users u
+        JOIN course_permissions cp ON cp.user_id = u.id
+        JOIN courses c ON c.id = cp.course_id
+        WHERE LOWER(u.email) = LOWER($1)
+          AND u.is_active = true
+          AND c.is_active = true
+        ORDER BY c.year DESC, c.semester, c.department, c.course_number, c.name
+    `;
+
+    try {
+        const result = await pool.query(query, [email]);
+        return result.rows;
+    } catch (err) {
+        console.error('Error fetching staff courses:', err);
+        throw err;
+    }
+}
+
+/**
  * Checks whether a student is enrolled in a given course.
  * @param {string} email - Student email
  * @param {string|number} courseId - Internal course id or gradescope course id

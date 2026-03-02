@@ -1,12 +1,7 @@
 import { Router } from 'express';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getGradeSyncConfig, getCourseGeneral, getCourseGradeView } from '../../../lib/unifiedConfig.mjs';
 
 const router = Router({ mergeParams: true });
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GRADE_SYNC_CONFIG_PATH = path.resolve(__dirname, '../../../../gradesync/config.json');
 
 const DEFAULT_ASSIGNMENT_POINTS = {
     'Quest': 25,
@@ -46,8 +41,7 @@ const DEFAULT_GRADE_BINS = [
 
 async function loadGradeSyncConfig() {
     try {
-        const raw = await fs.readFile(GRADE_SYNC_CONFIG_PATH, 'utf-8');
-        const parsed = JSON.parse(raw);
+        const parsed = getGradeSyncConfig();
         return parsed?.courses || [];
     } catch (err) {
         console.warn('Unable to read GradeSync config for bins route, using defaults:', err?.message || err);
@@ -70,8 +64,8 @@ function resolveCourseById(courses, requestedCourseId) {
     }
 
     const matched = courses.find((course) => (
-        String(course?.id || '') === normalized ||
-        String(course?.sources?.gradescope?.course_id || '') === normalized
+        String(course?.general?.id || course?.id || '') === normalized ||
+        String(course?.gradesync?.sources?.gradescope?.course_id || course?.sources?.gradescope?.course_id || '') === normalized
     ));
 
     return matched || courses[0];
@@ -156,14 +150,16 @@ router.get('/', async (req, res) => {
     try {
         const courses = await loadGradeSyncConfig();
         const course = resolveCourseById(courses, requestedCourseId);
+        const courseGeneral = getCourseGeneral(course);
+        const courseGradeView = getCourseGradeView(course);
 
-        const bins = normalizeBins(course?.buckets?.grade_bins);
-        const assignmentPointsFromConfig = normalizeAssignmentPoints(course?.buckets?.grading_breakdown);
+        const bins = normalizeBins(courseGradeView?.buckets?.grade_bins || course?.buckets?.grade_bins);
+        const assignmentPointsFromConfig = normalizeAssignmentPoints(courseGradeView?.buckets?.grading_breakdown || course?.buckets?.grading_breakdown);
         const assignmentPoints = Object.keys(assignmentPointsFromConfig).length > 0
             ? assignmentPointsFromConfig
             : DEFAULT_ASSIGNMENT_POINTS;
         const totalCoursePoints = Object.values(assignmentPoints).reduce((sum, val) => sum + (Number(val) || 0), 0);
-        const configuredCapPoints = Number(course?.buckets?.total_points_cap) || totalCoursePoints;
+        const configuredCapPoints = Number(courseGradeView?.buckets?.total_points_cap || course?.buckets?.total_points_cap) || totalCoursePoints;
         const maxBinPoints = getMaxBinPoints(bins);
         const overallCapPoints = maxBinPoints || configuredCapPoints || totalCoursePoints;
         
@@ -173,12 +169,13 @@ router.get('/', async (req, res) => {
             total_course_points: totalCoursePoints,
             total_points_cap: configuredCapPoints,
             overall_cap_points: overallCapPoints,
-            component_percentages: Array.isArray(course?.buckets?.component_percentages)
-                ? course.buckets.component_percentages
+            component_percentages: Array.isArray(courseGradeView?.buckets?.component_percentages || course?.buckets?.component_percentages)
+                ? (courseGradeView?.buckets?.component_percentages || course?.buckets?.component_percentages)
                 : DEFAULT_COMPONENT_PERCENTAGES,
-            rounding_policy: course?.buckets?.rounding_policy
+            rounding_policy: courseGradeView?.buckets?.rounding_policy
+                || course?.buckets?.rounding_policy
                 || 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
-            course_id: course?.id || requestedCourseId || null,
+            course_id: courseGeneral?.id || course?.id || requestedCourseId || null,
             source: course ? 'gradesync_config' : 'default_policy'
         };
 

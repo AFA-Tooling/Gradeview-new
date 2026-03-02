@@ -1,5 +1,11 @@
 # 演示课程脚本 - 创建完成 ✅
 
+## Quick Docs Access
+
+- Docs hub: `../docs/README.md`
+- GradeSync feature doc: `../docs/features/gradesync.md`
+- Database feature doc: `../docs/features/database.md`
+
 ## 📋 你要的所有东西都已经创建好了！
 
 你现在有了一个完整的演示课程创建系统，可以在下周的会议上使用虚拟数据进行演示。
@@ -9,7 +15,7 @@
 ## 📝 创建的文件
 
 ### 1. **create_demo_course.py** ⭐ (主脚本)
-位置: `/Users/zhangweishu/Grades/Grades/gradesync/create_demo_course.py`
+位置: `gradesync/create_demo_course.py`
 
 这是核心脚本，用来：
 - 直接在数据库中创建演示课程（**不** 从外部系统同步）
@@ -18,12 +24,12 @@
 
 **快速使用:**
 ```bash
-cd /Users/zhangweishu/Grades/Grades/gradesync
+cd gradesync
 python3 create_demo_course.py --clean
 ```
 
 ### 2. **demo.sh** (便捷启动脚本)
-位置: `/Users/zhangweishu/Grades/Grades/gradesync/demo.sh`
+位置: `gradesync/demo.sh`
 
 一键运行脚本（带错误检查）：
 ```bash
@@ -31,7 +37,7 @@ python3 create_demo_course.py --clean
 ```
 
 ### 3. **SETUP_DEMO.md** (中文使用指南)
-位置: `/Users/zhangweishu/Grades/Grades/gradesync/SETUP_DEMO.md`
+位置: `gradesync/SETUP_DEMO.md`
 
 详细的中文说明，包括：
 - 如何使用脚本
@@ -39,7 +45,7 @@ python3 create_demo_course.py --clean
 - 会议前的准备清单
 
 ### 4. **DEMO_COURSE_README.md** (技术文档)
-位置: `/Users/zhangweishu/Grades/Grades/gradesync/DEMO_COURSE_README.md`
+位置: `gradesync/DEMO_COURSE_README.md`
 
 详细的技术文档，包括：
 - 创建的数据结构
@@ -74,13 +80,13 @@ python3 create_demo_course.py --clean
 
 ```bash
 # Step 1: 进入项目目录
-cd /Users/zhangweishu/Grades/Grades/gradesync
+cd gradesync
 
 # Step 2: 运行脚本创建演示数据（如果数据库连接正常）
 python3 create_demo_course.py --clean
 
 # Step 3: 或在Docker中运行（推荐）
-cd /Users/zhangweishu/Grades/Grades
+cd .
 docker compose up
 # 在另一个终端
 docker compose exec gradesync python3 create_demo_course.py --clean
@@ -158,7 +164,7 @@ docker compose exec gradesync python3 create_demo_course.py --clean
 ## 📂 文件位置总结
 
 ```
-/Users/zhangweishu/Grades/Grades/gradesync/
+gradesync/
 ├── create_demo_course.py          ← 主脚本 (Python)
 ├── demo.sh                        ← 便捷脚本 (Bash)
 ├── SETUP_DEMO.md                  ← 中文使用指南
@@ -185,7 +191,7 @@ docker compose exec gradesync python3 create_demo_course.py --clean
 最快的方式：
 
 ```bash
-cd /Users/zhangweishu/Grades/Grades/gradesync
+cd gradesync
 python3 create_demo_course.py --clean
 ```
 

@@ -1,6 +1,7 @@
-import config from 'config';
 import { OAuth2Client } from 'google-auth-library';
 import AuthorizationError from './errors/http/AuthorizationError.js';
+import { getGoogleOauthClientId, isAdmin as isUnifiedAdmin } from './unifiedConfig.mjs';
+import { decodeAccessToken, verifyAccessToken } from './jwtAuth.mjs';
 
 /**
  * Gets an email from a google auth token.
@@ -12,7 +13,23 @@ export async function getEmailFromAuth(authInput) {
 
     const token = extractAuthorizationToken(authInput);
 
-    const googleOauthAudience = config.get('googleconfig.oauth.clientid');
+    // First, attempt to treat token as GradeView-issued JWT
+    try {
+        const payload = verifyAccessToken(token);
+        const jwtEmail = payload?.email || payload?.sub || null;
+        if (jwtEmail) {
+            return String(jwtEmail).toLowerCase();
+        }
+    } catch {
+        const decoded = decodeAccessToken(token);
+        const issuer = String(decoded?.iss || '').toLowerCase();
+        if (issuer === 'gradeview-api') {
+            throw new AuthorizationError('Session token is invalid or expired. Please sign in again.');
+        }
+        // Not a valid GradeView JWT, continue with Google ID token validation.
+    }
+
+    const googleOauthAudience = getGoogleOauthClientId();
     
     // Retry logic for handling Google key rotation
     let lastError;
@@ -41,8 +58,11 @@ export async function getEmailFromAuth(authInput) {
     }
     
     console.error('Error during Google authorization:', lastError);
+    const debugReason = String(lastError?.message || '').trim();
     throw new AuthorizationError(
-        'Could not authenticate authorization token.',
+        debugReason
+            ? `Could not authenticate authorization token. ${debugReason}`
+            : 'Could not authenticate authorization token.',
     );
 }
 
@@ -87,6 +107,6 @@ export function verifyBerkeleyEmail(email) {
  * @deprecated use api/lib/userlib.mjs middlewares instead.
  */
 export function ensureStudentOrAdmin(email) {
-    const isAdmin = config.get('admins').includes(email);
+    const isAdmin = isUnifiedAdmin(email);
     return isAdmin;
 }

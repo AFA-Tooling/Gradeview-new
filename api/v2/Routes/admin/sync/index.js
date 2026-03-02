@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import http from 'http';
 import crypto from 'crypto';
+import { canManageCourse, IAM_ROLE } from '../../../../lib/iam.mjs';
 
 const router = Router({ mergeParams: true });
 // Use service name "gradesync" which is resolvable in the shared docker network
@@ -328,7 +329,32 @@ router.get('/', async (req, res) => {
             method: 'GET',
             timeoutMs: COURSES_PROXY_TIMEOUT_MS,
         });
-        res.json(data);
+
+        const requesterEmail = req?.auth?.email;
+        const requesterRole = req?.auth?.role;
+
+        if (requesterRole === IAM_ROLE.SUPER_ADMIN) {
+            return res.json(data);
+        }
+
+        const courses = Array.isArray(data?.courses) ? data.courses : [];
+        const allowedCourses = [];
+        for (const course of courses) {
+            const courseId = String(course?.id || '').trim();
+            if (!courseId) {
+                continue;
+            }
+            const allowed = await canManageCourse({
+                requesterEmail,
+                courseId,
+                snapshot: req?.auth?.snapshot || null,
+            });
+            if (allowed) {
+                allowedCourses.push(course);
+            }
+        }
+
+        return res.json({ ...data, courses: allowedCourses });
     } catch (err) {
         console.error('GradeSync proxy error:', err);
         if (isTimeoutError(err)) {
@@ -342,6 +368,15 @@ router.get('/', async (req, res) => {
 router.post('/:courseId', async (req, res) => {
     const { courseId } = req.params;
     try {
+        const allowed = await canManageCourse({
+            requesterEmail: req?.auth?.email,
+            courseId,
+            snapshot: req?.auth?.snapshot || null,
+        });
+        if (!allowed) {
+            return res.status(403).json({ error: 'Course admin permission required' });
+        }
+
         console.log(`[Proxy] Triggering sync for ${courseId} at ${GRADESYNC_URL}/api/sync/${courseId}`);
         const data = await requestJson(`${GRADESYNC_URL}/api/sync/${courseId}`, {
             method: 'POST',
@@ -363,6 +398,15 @@ router.post('/:courseId/start', async (req, res) => {
     const { courseId } = req.params;
 
     try {
+        const allowed = await canManageCourse({
+            requesterEmail: req?.auth?.email,
+            courseId,
+            snapshot: req?.auth?.snapshot || null,
+        });
+        if (!allowed) {
+            return res.status(403).json({ error: 'Course admin permission required' });
+        }
+
         const existingRunningJob = Array.from(syncJobs.values()).find(
             (job) => job.courseId === courseId && (job.status === 'queued' || job.status === 'running')
         );
@@ -397,6 +441,15 @@ router.get('/jobs/:jobId', async (req, res) => {
 
     if (!job) {
         return res.status(404).json({ error: 'Sync job not found' });
+    }
+
+    const allowed = await canManageCourse({
+        requesterEmail: req?.auth?.email,
+        courseId: job.courseId,
+        snapshot: req?.auth?.snapshot || null,
+    });
+    if (!allowed) {
+        return res.status(403).json({ error: 'Course admin permission required' });
     }
 
     return res.status(200).json(job);

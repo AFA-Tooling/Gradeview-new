@@ -1,7 +1,4 @@
 import { Router } from 'express';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import {
     getPool,
     getCourseAssignmentMatrix,
@@ -9,11 +6,9 @@ import {
     getAllStudentScores,
     getStudentCourses,
 } from '../../../../lib/dbHelper.mjs';
+import { getGradeSyncConfig, getCourseGradeView } from '../../../../lib/unifiedConfig.mjs';
 
 const router = Router({ mergeParams: true });
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GRADESYNC_CONFIG_PATH = path.resolve(__dirname, '../../../../../gradesync/config.json');
 
 const DEFAULT_STUDENT_LEVELS = [
     { name: 'First Steps', color: '#dddddd' },
@@ -72,12 +67,7 @@ function averageLevel(children) {
 
 function parseConfigJson() {
     try {
-        if (!fs.existsSync(GRADESYNC_CONFIG_PATH)) {
-            return null;
-        }
-
-        const raw = fs.readFileSync(GRADESYNC_CONFIG_PATH, 'utf8');
-        return JSON.parse(raw);
+        return getGradeSyncConfig();
     } catch (err) {
         console.warn('Unable to parse gradesync config for concept map:', err?.message || err);
         return null;
@@ -90,12 +80,13 @@ function findCourseConfig(config, internalCourseId, gradescopeCourseId) {
     }
 
     return config.courses.find((course) => {
-        const sourceGsId = course?.sources?.gradescope?.course_id;
+        const sourceGsId = course?.gradesync?.sources?.gradescope?.course_id || course?.sources?.gradescope?.course_id;
+        const internalId = course?.general?.id || course?.id;
         return (
-            String(course?.id || '') === String(internalCourseId || '')
+            String(internalId || '') === String(internalCourseId || '')
             || String(sourceGsId || '') === String(gradescopeCourseId || '')
             || String(sourceGsId || '') === String(internalCourseId || '')
-            || String(course?.id || '') === String(gradescopeCourseId || '')
+            || String(internalId || '') === String(gradescopeCourseId || '')
         );
     }) || null;
 }
@@ -207,8 +198,9 @@ router.get('/', async (req, res, next) => {
             courseContext.internalCourseId,
             courseContext.gradescopeCourseId,
         );
+        const courseGradeView = getCourseGradeView(matchedCourseConfig);
 
-        const fileCategoryRules = (matchedCourseConfig?.assignment_categories || []).map((item, index) => ({
+        const fileCategoryRules = (courseGradeView?.assignment_categories || matchedCourseConfig?.assignment_categories || []).map((item, index) => ({
             name: item?.name,
             patterns: Array.isArray(item?.patterns) ? item.patterns : [],
             display_order: Number(item?.display_order) || index,
@@ -218,11 +210,11 @@ router.get('/', async (req, res, next) => {
         const activeCategoryRules = dbCategoryRules.length > 0 ? dbCategoryRules : fileCategoryRules;
 
         const studentLevels = normalizeLevelConfig(
-            matchedCourseConfig?.concept_map?.student_levels,
+            courseGradeView?.concept_map?.student_levels || matchedCourseConfig?.concept_map?.student_levels,
             DEFAULT_STUDENT_LEVELS,
         );
         const classLevels = normalizeLevelConfig(
-            matchedCourseConfig?.concept_map?.class_levels,
+            courseGradeView?.concept_map?.class_levels || matchedCourseConfig?.concept_map?.class_levels,
             DEFAULT_CLASS_LEVELS,
         );
         const levelCount = studentLevels.length;
