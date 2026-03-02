@@ -1,38 +1,29 @@
 {
-  "gradeview": {
-    "googleconfig": {
-      "oauth": {
-        "clientid": "960156693240-hje09pstet1al4g4tr08271kkcjfqnn2.apps.googleusercontent.com"
-      }
+    "gradeview": {
+        "googleconfig": {
+            "oauth": {
+                "clientid": "960156693240-hje09pstet1al4g4tr08271kkcjfqnn2.apps.googleusercontent.com"
+            }
+        },
+        "admins": [
+            "weszhang@berkeley.edu"
+        ]
     },
-    "admins": [
-      "connorbernard@berkeley.edu",
-      "ddgarcia@berkeley.edu",
-      "gandhi@berkeley.edu",
-      "pai@berkeley.edu",
-      "eemonq@berkeley.edu",
-      "naveen.nathan@berkeley.edu",
-      "hheidy_463@berkeley.edu",
-      "diyagarg@berkeley.edu",
-      "weszhang@berkeley.edu",
-      "shreyam04@berkeley.edu",
-      "juan.poncedeleon@berkeley.edu",
-      "sam_hilkey@berkeley.edu",
-      "adamhacker@berkeley.edu"
-    ]
-  },
-  "gradesync": {
+    "gradesync": {
     "courses": [
-      {
+        {
         "general": {
-          "id": "cs10_fa25",
-          "name": "CS10: The Beauty and Joy of Computing",
-          "department": "COMPSCI",
-          "course_number": "10",
-          "semester": "Fall",
-          "year": 2025,
-          "instructor": "Dan Garcia",
-          "admins": [
+            "id": "cs10_fa25",
+            "name": "CS10: The Beauty and Joy of Computing",
+            "department": "COMPSCI",
+            "course_number": "10",
+            "semester": "Fall",
+            "year": 2025,
+            "instructor": "Dan Garcia",
+            "admins": [
+            "weszhang@berkeley.edu"
+            ],
+            "instructors": [
             "connorbernard@berkeley.edu",
             "ddgarcia@berkeley.edu",
             "gandhi@berkeley.edu",
@@ -41,249 +32,250 @@
             "naveen.nathan@berkeley.edu",
             "hheidy_463@berkeley.edu",
             "diyagarg@berkeley.edu",
-            "weszhang@berkeley.edu",
             "shreyam04@berkeley.edu",
             "juan.poncedeleon@berkeley.edu",
             "sam_hilkey@berkeley.edu",
             "adamhacker@berkeley.edu"
-          ],
-          "instructors": [],
-          "tas": []
+            ],
+            "tas": []
         },
         "gradesync": {
-          "sources": {
+            "sources": {
             "gradescope": {
-              "enabled": true,
-              "course_id": "1098053",
-              "sync_interval_hours": 24
+                "enabled": true,
+                "course_id": "1098053",
+                "sync_interval_hours": 24
             },
             "prairielearn": {
-              "enabled": false,
-              "course_id": "192475"
+                "enabled": false,
+                "course_id": "192475"
             },
             "iclicker": {
-              "enabled": false,
-              "course_names": [
+                "enabled": false,
+                "course_names": [
                 "[CS10 | Fa25] Discussion",
                 "[CS10 | Fa25] Lab",
                 "[CS10 | Fa25] Lecture"
-              ]
+                ]
             }
-          },
-          "database": {
+            },
+            "database": {
             "enabled": true,
             "use_as_primary": true
-          },
-          "assignment_categories": [
+            },
+            "assignment_categories": [
             {
-              "name": "Attendance / Participation",
-              "patterns": [
+                "name": "Attendance / Participation",
+                "patterns": [
                 "Lecture Quiz",
                 "Discussion"
-              ]
+                ]
             },
             {
-              "name": "Labs",
-              "patterns": [
+                "name": "Labs",
+                "patterns": [
                 "Lab"
-              ]
+                ]
             },
             {
-              "name": "Projects",
-              "patterns": [
+                "name": "Projects",
+                "patterns": [
                 "Project"
-              ]
+                ]
             },
             {
-              "name": "Quest",
-              "patterns": [
+                "name": "Quest",
+                "patterns": [
                 "Quest"
-              ]
+                ]
             },
             {
-              "name": "Midterm",
-              "patterns": [
+                "name": "Midterm",
+                "patterns": [
                 "Midterm"
-              ]
+                ]
             },
             {
-              "name": "Postterm",
-              "patterns": [
+                "name": "Postterm",
+                "patterns": [
                 "Postterm"
-              ]
+                ]
             }
-          ]
+            ]
         },
         "gradeview": {
-          "buckets": {
+            "buckets": {
             "total_points_cap": 400,
             "rounding_policy": "Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.",
             "component_percentages": [
-              {
+                {
                 "component": "Attendance / Participation",
                 "percentage": 3.75
-              },
-              {
+                },
+                {
                 "component": "Labs",
                 "percentage": 20
-              },
-              {
+                },
+                {
                 "component": "Projects",
                 "percentage": 38.75
-              },
-              {
+                },
+                {
                 "component": "Quest",
                 "percentage": 6.25
-              },
-              {
+                },
+                {
                 "component": "Midterm",
                 "percentage": 12.5
-              },
-              {
+                },
+                {
                 "component": "Postterm",
                 "percentage": 18.75
-              }
+                }
             ],
             "grade_bins": [
-              {
+                {
                 "grade": "A+",
                 "range": "390-400"
-              },
-              {
+                },
+                {
                 "grade": "A",
                 "range": "370-390"
-              },
-              {
+                },
+                {
                 "grade": "A-",
                 "range": "360-370"
-              },
-              {
+                },
+                {
                 "grade": "B+",
                 "range": "350-360"
-              },
-              {
+                },
+                {
                 "grade": "B",
                 "range": "330-350"
-              },
-              {
+                },
+                {
                 "grade": "B-",
                 "range": "320-330"
-              },
-              {
+                },
+                {
                 "grade": "C+",
                 "range": "310-320"
-              },
-              {
+                },
+                {
                 "grade": "C",
                 "range": "290-310"
-              },
-              {
+                },
+                {
                 "grade": "C-",
                 "range": "280-290"
-              },
-              {
+                },
+                {
                 "grade": "D",
                 "range": "240-280"
-              },
-              {
+                },
+                {
                 "grade": "F",
                 "range": "0-240"
-              }
+                }
             ],
             "grading_breakdown": [
-              {
+                {
                 "assignment": "Quest",
                 "points": 25
-              },
-              {
+                },
+                {
                 "assignment": "Midterm",
                 "points": 50
-              },
-              {
+                },
+                {
                 "assignment": "Postterm",
                 "points": 75
-              },
-              {
+                },
+                {
                 "assignment": "Project 1: Wordle™-lite",
                 "points": 15
-              },
-              {
+                },
+                {
                 "assignment": "Project 2: Spelling-Bee",
                 "points": 25
-              },
-              {
+                },
+                {
                 "assignment": "Project 3: 2048",
                 "points": 35
-              },
-              {
+                },
+                {
                 "assignment": "Project 4: Explore",
                 "points": 20
-              },
-              {
+                },
+                {
                 "assignment": "Final Project",
                 "points": 60
-              },
-              {
+                },
+                {
                 "assignment": "Labs",
                 "points": 80
-              },
-              {
+                },
+                {
                 "assignment": "Attendance / Participation",
                 "points": 15
-              }
+                }
             ]
-          },
-          "assignment_categories": [
+            },
+            "assignment_categories": [
             {
-              "name": "Attendance / Participation",
-              "patterns": [
+                "name": "Attendance / Participation",
+                "patterns": [
                 "Lecture Quiz",
                 "Discussion"
-              ]
+                ]
             },
             {
-              "name": "Labs",
-              "patterns": [
+                "name": "Labs",
+                "patterns": [
                 "Lab"
-              ]
+                ]
             },
             {
-              "name": "Projects",
-              "patterns": [
+                "name": "Projects",
+                "patterns": [
                 "Project"
-              ]
+                ]
             },
             {
-              "name": "Quest",
-              "patterns": [
+                "name": "Quest",
+                "patterns": [
                 "Quest"
-              ]
+                ]
             },
             {
-              "name": "Midterm",
-              "patterns": [
+                "name": "Midterm",
+                "patterns": [
                 "Midterm"
-              ]
+                ]
             },
             {
-              "name": "Postterm",
-              "patterns": [
+                "name": "Postterm",
+                "patterns": [
                 "Postterm"
-              ]
+                ]
             }
-          ]
+            ]
         }
-      },
-      {
+        },
+        {
         "general": {
-          "id": "cs10_sp26",
-          "name": "CS10: The Beauty and Joy of Computing",
-          "department": "COMPSCI",
-          "course_number": "10",
-          "semester": "Spring",
-          "year": 2026,
-          "instructor": "Dan Garcia",
-          "admins": [
+            "id": "cs10_sp26",
+            "name": "CS10: The Beauty and Joy of Computing",
+            "department": "COMPSCI",
+            "course_number": "10",
+            "semester": "Spring",
+            "year": 2026,
+            "instructor": "Dan Garcia",
+            "admins": [
+            "weszhang@berkeley.edu"
+            ],
+            "instructors": [
             "connorbernard@berkeley.edu",
             "ddgarcia@berkeley.edu",
             "gandhi@berkeley.edu",
@@ -292,217 +284,215 @@
             "naveen.nathan@berkeley.edu",
             "hheidy_463@berkeley.edu",
             "diyagarg@berkeley.edu",
-            "weszhang@berkeley.edu",
             "shreyam04@berkeley.edu",
             "juan.poncedeleon@berkeley.edu",
             "sam_hilkey@berkeley.edu",
             "adamhacker@berkeley.edu"
-          ],
-          "instructors": [],
-          "tas": []
+            ],
+            "tas": []
         },
         "gradesync": {
-          "sources": {
+            "sources": {
             "gradescope": {
-              "enabled": true,
-              "course_id": "1232070",
-              "sync_interval_hours": 24
+                "enabled": true,
+                "course_id": "1232070",
+                "sync_interval_hours": 24
             },
             "prairielearn": {
-              "enabled": false,
-              "course_id": "192476"
+                "enabled": false,
+                "course_id": "192476"
             },
             "iclicker": {
-              "enabled": false,
-              "course_names": [
+                "enabled": false,
+                "course_names": [
                 "[CS10 | Sp26] Discussion",
                 "[CS10 | Sp26] Lab",
                 "[CS10 | Sp26] Lecture"
-              ]
+                ]
             }
-          },
-          "database": {
+            },
+            "database": {
             "enabled": true,
             "use_as_primary": false
-          },
-          "assignment_categories": [
+            },
+            "assignment_categories": [
             {
-              "name": "Attendance / Participation",
-              "patterns": [
+                "name": "Attendance / Participation",
+                "patterns": [
                 "Lecture Quiz",
                 "Discussion"
-              ]
+                ]
             },
             {
-              "name": "Labs",
-              "patterns": [
+                "name": "Labs",
+                "patterns": [
                 "Lab"
-              ]
+                ]
             },
             {
-              "name": "Projects",
-              "patterns": [
+                "name": "Projects",
+                "patterns": [
                 "Project"
-              ]
+                ]
             },
             {
-              "name": "Quest",
-              "patterns": [
+                "name": "Quest",
+                "patterns": [
                 "Quest"
-              ]
+                ]
             },
             {
-              "name": "Midterm",
-              "patterns": [
+                "name": "Midterm",
+                "patterns": [
                 "Midterm"
-              ]
+                ]
             },
             {
-              "name": "Postterm",
-              "patterns": [
+                "name": "Postterm",
+                "patterns": [
                 "Postterm"
-              ]
+                ]
             }
-          ]
+            ]
         },
         "gradeview": {
-          "buckets": {
+            "buckets": {
             "grade_bins": [
-              {
+                {
                 "grade": "A+",
                 "range": "390-400"
-              },
-              {
+                },
+                {
                 "grade": "A",
                 "range": "370-390"
-              },
-              {
+                },
+                {
                 "grade": "A-",
                 "range": "360-370"
-              },
-              {
+                },
+                {
                 "grade": "B+",
                 "range": "350-360"
-              },
-              {
+                },
+                {
                 "grade": "B",
                 "range": "330-350"
-              },
-              {
+                },
+                {
                 "grade": "B-",
                 "range": "320-330"
-              },
-              {
+                },
+                {
                 "grade": "C+",
                 "range": "310-320"
-              },
-              {
+                },
+                {
                 "grade": "C",
                 "range": "290-310"
-              },
-              {
+                },
+                {
                 "grade": "C-",
                 "range": "280-290"
-              },
-              {
+                },
+                {
                 "grade": "D",
                 "range": "240-280"
-              },
-              {
+                },
+                {
                 "grade": "F",
                 "range": "0-240"
-              }
+                }
             ],
             "grading_breakdown": [
-              {
+                {
                 "assignment": "Quest",
                 "points": 25
-              },
-              {
+                },
+                {
                 "assignment": "Midterm",
                 "points": 50
-              },
-              {
+                },
+                {
                 "assignment": "Postterm",
                 "points": 75
-              },
-              {
+                },
+                {
                 "assignment": "Project 1: Wordle™-lite",
                 "points": 15
-              },
-              {
+                },
+                {
                 "assignment": "Project 2: Spelling-Bee",
                 "points": 25
-              },
-              {
+                },
+                {
                 "assignment": "Project 3: 2048",
                 "points": 35
-              },
-              {
+                },
+                {
                 "assignment": "Project 4: Explore",
                 "points": 20
-              },
-              {
+                },
+                {
                 "assignment": "Final Project",
                 "points": 60
-              },
-              {
+                },
+                {
                 "assignment": "Labs",
                 "points": 80
-              },
-              {
+                },
+                {
                 "assignment": "Attendance / Participation",
                 "points": 15
-              }
+                }
             ]
-          },
-          "assignment_categories": [
+            },
+            "assignment_categories": [
             {
-              "name": "Attendance / Participation",
-              "patterns": [
+                "name": "Attendance / Participation",
+                "patterns": [
                 "Lecture Quiz",
                 "Discussion"
-              ]
+                ]
             },
             {
-              "name": "Labs",
-              "patterns": [
+                "name": "Labs",
+                "patterns": [
                 "Lab"
-              ]
+                ]
             },
             {
-              "name": "Projects",
-              "patterns": [
+                "name": "Projects",
+                "patterns": [
                 "Project"
-              ]
+                ]
             },
             {
-              "name": "Quest",
-              "patterns": [
+                "name": "Quest",
+                "patterns": [
                 "Quest"
-              ]
+                ]
             },
             {
-              "name": "Midterm",
-              "patterns": [
+                "name": "Midterm",
+                "patterns": [
                 "Midterm"
-              ]
+                ]
             },
             {
-              "name": "Postterm",
-              "patterns": [
+                "name": "Postterm",
+                "patterns": [
                 "Postterm"
-              ]
+                ]
             }
-          ]
+            ]
         }
-      }
+        }
     ],
     "global_settings": {
-      "csv_output_dir": "data/exports",
-      "log_level": "INFO",
-      "retry_attempts": 3,
-      "retry_delay_seconds": 5
+        "csv_output_dir": "data/exports",
+        "log_level": "INFO",
+        "retry_attempts": 3,
+        "retry_delay_seconds": 5
     }
-  }
+    }
 }
