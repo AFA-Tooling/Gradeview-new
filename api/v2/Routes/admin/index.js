@@ -23,8 +23,8 @@ router.use(limiter);
 router.use(validateAdminMiddleware);
 
 // Mount sub-routers
-router.use('/categories', CategoriesRouter); // Legacy Redis endpoint
-router.use('/assignments', AssignmentsRouter); // New database endpoint
+router.use('/categories', CategoriesRouter);
+router.use('/assignments', AssignmentsRouter);
 router.use('/stats', StatsRouter);
 router.use('/distribution', DistributionRouter);
 router.use('/studentScores', StudentScoresRouter);

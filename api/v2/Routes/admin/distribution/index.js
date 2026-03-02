@@ -5,7 +5,7 @@ const router = Router({ mergeParams: true });
 /**
  * GET /admin/distribution/:section/:name
  * Returns score distribution with student data.
- * OPTIMIZED: First tries PostgreSQL (single JOIN query), falls back to Redis if needed
+ * OPTIMIZED: Uses PostgreSQL (single JOIN query)
  * Returns: { 
  *   freq: [count0, count1, ...], 
  *   minScore: number, 
@@ -40,7 +40,7 @@ router.get('/:section/:name', async (req, res) => {
             dataSource = 'database-assignment';
         }
         
-        // Continue with distribution calculation (same for both DB and Redis)
+        // Continue with distribution calculation
         if (scoreData.length === 0) {
             // Return empty data structure
             return res.json({ 
@@ -181,7 +181,7 @@ router.get('/:section/:name', async (req, res) => {
             isSummary,
             suggestedTickInterval,  // Frontend can use this to reduce x-axis label density
             distribution,  // Includes all students grouped by score range (0 to maxScore)
-            dataSource,    // 'database-assignment', 'database-summary', or 'redis-fallback'
+            dataSource,
             queryTime: totalTime  // Time in milliseconds
         });
     } catch (error) {

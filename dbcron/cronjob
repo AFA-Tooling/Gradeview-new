@@ -1,1 +1,0 @@
-*/30 * * * * echo "[$(date -Iseconds)] dbcron heartbeat: Sheets->Redis jobs disabled" >> /var/log/cron.log 2>&1

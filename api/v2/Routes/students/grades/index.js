@@ -55,7 +55,7 @@ router.get('/', async (req, res) => {
             });
         }
         
-        // Handle grouped format from PostgreSQL (similar to Redis structure)
+        // Handle grouped format from PostgreSQL
         if (format === 'db') {
             const groupedSubmissions = await getStudentSubmissionsGrouped(email, effectiveCourseId);
             const maxScores = await getCourseAssignmentMatrix(effectiveCourseId);

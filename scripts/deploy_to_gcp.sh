@@ -70,7 +70,6 @@ PROGRESS_REPORT_PORT=8080
 REVERSE_PROXY_LISTEN=0.0.0.0:80
 REACT_APP_PROXY_SERVER="http://api:8000"
 REACT_APP_PORT=3000
-REDIS_DB_SECRET=change_me_please
 ENVIRONMENT=production
 
 # Cloud SQL连接名（从GCP Console获取）
@@ -163,7 +162,6 @@ echo ""
 echo "2. 编辑.env文件:"
 echo "   cd /opt/gradeview && sudo nano .env"
 echo "   重点修改这些变量："
-echo "   - REDIS_DB_SECRET      (改为强密码)"
 echo "   - POSTGRES_PASSWORD    (改为强密码)"
 echo "   - INSTANCE_CONNECTION_NAME 已自动填充为"
 echo "     eecs-gradeview:${REGION}:gradeview-db"

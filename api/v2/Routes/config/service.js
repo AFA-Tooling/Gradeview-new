@@ -238,7 +238,6 @@ class ConfigService {
         const result = await getDbPool().query('SELECT key, value, value_type FROM gradeview_config');
         
         const config = {
-            redis: {},
             googleconfig: { oauth: {} },
             admins: []
         };
@@ -246,9 +245,7 @@ class ConfigService {
         result.rows.forEach(row => {
             const value = this.parseConfigValue(row.value, row.value_type);
             
-            if (row.key.startsWith('redis_')) {
-                config.redis[row.key.replace('redis_', '')] = value;
-            } else if (row.key === 'google_oauth_client_id') {
+            if (row.key === 'google_oauth_client_id') {
                 config.googleconfig.oauth.clientid = value;
             }
         });
@@ -284,9 +281,6 @@ class ConfigService {
             
             // Update configurations
             const updates = [
-                ['redis_host', config.redis?.host, 'string'],
-                ['redis_port', config.redis?.port, 'integer'],
-                ['redis_username', config.redis?.username, 'string'],
                 ['google_oauth_client_id', config.googleconfig?.oauth?.clientid, 'string']
             ];
             

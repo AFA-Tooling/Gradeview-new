@@ -10,7 +10,6 @@ import {
     Snackbar,
     Chip,
     IconButton,
-    Tooltip,
     FormControl,
     InputLabel,
     Select,
@@ -28,7 +27,6 @@ import {
     Settings as SettingsIcon,
     Save,
     Refresh,
-    Info,
     Delete,
     Add,
     ExpandMore,
@@ -293,54 +291,6 @@ export default function Settings() {
                             variant="outlined"
                         />
                     ))}
-                </Box>
-            </Paper>
-
-            {/* Redis Configuration */}
-            <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <SettingsIcon sx={{ mr: 1 }} />
-                    <Typography variant="h6">Redis Configuration</Typography>
-                    <Tooltip title="Redis is used for caching and session management">
-                        <IconButton size="small" sx={{ ml: 1 }}>
-                            <Info fontSize="small" />
-                        </IconButton>
-                    </Tooltip>
-                </Box>
-                <Divider sx={{ mb: 2 }} />
-
-                <Box sx={{ display: 'flex', gap: 2 }}>
-                    <TextField
-                        label="Host"
-                        value={config.redis?.host || ''}
-                        onChange={(e) => setConfig({
-                            ...config,
-                            redis: { ...config.redis, host: e.target.value }
-                        })}
-                        helperText="Redis server hostname"
-                        fullWidth
-                    />
-                    <TextField
-                        label="Port"
-                        type="number"
-                        value={config.redis?.port || 6379}
-                        onChange={(e) => setConfig({
-                            ...config,
-                            redis: { ...config.redis, port: parseInt(e.target.value) }
-                        })}
-                        helperText="Redis server port"
-                        sx={{ maxWidth: '150px' }}
-                    />
-                    <TextField
-                        label="Username"
-                        value={config.redis?.username || ''}
-                        onChange={(e) => setConfig({
-                            ...config,
-                            redis: { ...config.redis, username: e.target.value }
-                        })}
-                        helperText="Redis username"
-                        fullWidth
-                    />
                 </Box>
             </Paper>
 

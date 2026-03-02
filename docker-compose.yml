@@ -16,6 +16,7 @@ services:
     depends_on:
       - web
       - api
+    restart: unless-stopped
   web:
     container_name: gradeview-web
     image: ${CI_REGISTRY_IMAGE:-gradeview}/web:${WEB_VERSION:-development}
@@ -48,13 +49,6 @@ services:
       - db
     command: npm start
     restart: unless-stopped
-  redis:
-    image: redis:latest
-    networks:
-      - db
-    command: redis-server --requirepass ${REDIS_DB_SECRET:-password}
-    ports:
-      - 6379:6379
   gradesync:
     container_name: gradeview-gradesync
     build: ./gradesync

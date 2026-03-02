@@ -10,7 +10,7 @@ const router = Router({ mergeParams: true });
 /**
  * GET /admin/student-scores
  * Returns all student scores in the format expected by admin.jsx
- * OPTIMIZED: Uses single database query instead of N+1 Redis calls
+ * OPTIMIZED: Uses a single database query
  */
 router.get('/', async (req, res) => {
     const startTime = Date.now();

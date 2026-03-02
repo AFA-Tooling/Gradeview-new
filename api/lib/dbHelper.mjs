@@ -126,10 +126,10 @@ export async function getStudentSubmissionsByTime(email, courseId = null) {
 }
 
 /**
- * Gets all submissions for a student with both Redis structure and time data
+ * Gets all submissions for a student with grouped assignment structure and time data
  * @param {string} email - The student's email
  * @param {string} courseId - Optional course ID filter
- * @returns {Promise<Object>} Object with Redis-like structure plus submission times
+ * @returns {Promise<Object>} Object grouped by category/assignment plus submission times
  */
 export async function getStudentSubmissionsGrouped(email, courseId = null) {
     const pool = getPool();
@@ -175,7 +175,7 @@ export async function getStudentSubmissionsGrouped(email, courseId = null) {
     try {
         const result = await pool.query(query, params);
         
-        // Group by category like Redis structure
+        // Group by category
         const grouped = {};
         
         result.rows.forEach(row => {
@@ -422,7 +422,7 @@ export async function getAssignmentsSummaryDistribution(assignmentTitles) {
 }
 
 /**
- * Gets all student scores in one query (replaces N+1 Redis calls)
+ * Gets all student scores in one query
  * Returns data in the format expected by admin UI
  * @returns {Promise<Array>} Array of {name, email, scores: {category: {assignmentName: score}}}
  */

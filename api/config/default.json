@@ -1,9 +1,4 @@
 {
-    "redis": {
-        "username": "default",
-        "host": "redis",
-        "port": 6379
-    },
     "googleconfig": {
         "oauth": {
             "clientid": "960156693240-hje09pstet1al4g4tr08271kkcjfqnn2.apps.googleusercontent.com"

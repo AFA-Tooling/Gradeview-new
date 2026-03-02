@@ -51,11 +51,11 @@ dev-local:
 		fi \
 	fi; \
 	'
-	@echo "1. Starting Redis and dbcron..."
-	@docker compose -f docker-compose.dev.yml up -d redis dbcron cloud-sql-proxy
-	@echo "2. Waiting for data to be loaded into Redis..."
+	@echo "1. Starting database connectivity service..."
+	@docker compose -f docker-compose.dev.yml up -d cloud-sql-proxy
+	@echo "2. Waiting for database proxy to be ready..."
 	@sleep 5
-	@echo "3. Starting API server..."
+	@echo "3. Starting API server (database-backed)..."
 	@cd api && NODE_ENV=development npm run dev &
 	@echo "4. Starting website dev server..."
 	@cd website && REACT_APP_PROXY_SERVER="http://localhost:8000" npm run react

@@ -6,7 +6,7 @@ const router = Router({ mergeParams: true });
 /**
  * GET /admin/assignments
  * Returns all assignments grouped by category from PostgreSQL database
- * This replaces the Redis-based /admin/categories endpoint
+ * Database-backed assignments endpoint
  * Format: {
  *   "Projects": { "Project 1": 100, "Project 2": 100, ... },
  *   "Labs": { "Lab 1": 10, "Lab 2": 10, ... },

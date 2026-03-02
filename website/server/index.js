@@ -42,6 +42,10 @@ app.use('/api', proxy);
 
 // Serve static files from the React app
 app.get('/*', (_, res) => {
+    if (_.path.startsWith('/.')) {
+        return res.status(404).send('Not Found');
+    }
+
     if (!buildDir) {
         return res.status(500).send(
             'Frontend build not found. Please run `npm run build` in website/ and ensure build files are mounted.',

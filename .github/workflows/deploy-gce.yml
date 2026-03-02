@@ -50,7 +50,21 @@ jobs:
               chmod 600 ~/.ssh/known_hosts
               ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-              export GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes'
+              KEY_FILE=''
+              if [ -f ~/.ssh/id_ed25519 ]; then
+                KEY_FILE=~/.ssh/id_ed25519
+              elif [ -f ~/.ssh/id_rsa ]; then
+                KEY_FILE=~/.ssh/id_rsa
+              fi
+
+              if [ -z "$KEY_FILE" ]; then
+                echo '[ERROR] No SSH private key found for GitHub access. Expected ~/.ssh/id_ed25519 or ~/.ssh/id_rsa.'
+                ls -la ~/.ssh || true
+                exit 1
+              fi
+
+              chmod 600 "$KEY_FILE" || true
+              export GIT_SSH_COMMAND="ssh -i $KEY_FILE -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
               git remote set-url origin git@github.com:AFA-Tooling/Gradeview-new.git
               git fetch --all --prune
               git checkout -B main origin/main
@@ -58,6 +72,9 @@ jobs:
               # Minimal, idempotent cleanup
               sudo docker-compose -f docker-compose.yml down --remove-orphans || true
               sudo docker rm -f gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy 2>/dev/null || true
+              sudo docker builder prune -af || true
+              sudo docker image prune -af || true
+              sudo docker container prune -f || true
 
               # Recreate services from latest commit
               sudo docker-compose -f docker-compose.yml up -d --build --force-recreate --remove-orphans

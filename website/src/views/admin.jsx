@@ -152,14 +152,14 @@ export default function Admin() {
     }
   };
 
-  /** 1) Load assignment categories with max points from DATABASE (not Redis) **/
+  /** 1) Load assignment categories with max points from DATABASE **/
   useEffect(() => {
     if (!selectedCourse) return;
 
     setLoadingA(true);
     setErrorA(null);
 
-    // NEW: Get assignments directly from database instead of Redis
+    // Get assignments directly from database
     apiv2.get(`/admin/assignments${buildCourseQuery(selectedCourse)}`)
       .then(res => {
         const categoriesData = res.data; // { "Projects": { "Project 1": 100, ... }, "Labs": { ... }, ... }

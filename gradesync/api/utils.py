@@ -115,9 +115,10 @@ def convert_course_info_to_json(course_info_response: str):
     # TODO: Example: Lab 4 for Fall 2023 can correspond to Lab 5 in Fall 2024. 
     # TODO: Create a function to input (OldSemester, OldAssignmentID, NewSemester) -> Output new assignmentID. 
     # TODO: The above suggested function is for processing incomplete students.
-    # TODO: In Redis, do we want an ID {UNIVERSAL_ID_FOR_ASSIGNMENT: {Fall2023: FALL2023_ID_FOR_ASSIGNMENT, Fall2024: FALL2024_ID_FOR_ASSIGNMENT}}?
+    # TODO: Consider a normalized assignment ID mapping:
+    # {UNIVERSAL_ID: {Fall2023: ASSIGNMENT_ID_2023, Fall2024: ASSIGNMENT_ID_2024}}
 
-    # TODO: Statically configure this assignmentID configuration for Fall 2024 and cache this in Redis
+    # TODO: Statically configure this assignment ID mapping for each term.
     # TODO: Or statically cache this in a config file to avoid constant API calls to GradeScope
     # TODO: This JSON will be needed to periodically update grades (CRON job) for 1 particular assignment by inputting the assignmentID.
 

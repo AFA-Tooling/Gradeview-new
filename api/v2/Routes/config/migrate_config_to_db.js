@@ -171,9 +171,6 @@ async function migrateGradeViewConfig() {
         
         // Migrate GradeView configs
         const configs = [
-            ['redis_host', config.redis?.host, 'string'],
-            ['redis_port', config.redis?.port, 'integer'],
-            ['redis_username', config.redis?.username, 'string'],
             ['google_oauth_client_id', config.googleconfig?.oauth?.clientid, 'string']
         ];
         

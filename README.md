@@ -1,6 +1,6 @@
 # GradeView
 
-GradeView is a multi-service web app for viewing grades, syncing data, and generating reports. It includes a React web UI, a Node.js API, a Python-based progress report service, and supporting services like Redis and Cloud SQL Proxy.
+GradeView is a multi-service web app for viewing grades, syncing data, and generating reports. It includes a React web UI, a Node.js API, a Python-based progress report service, and supporting services like Cloud SQL Proxy.
 
 ## High-level architecture
 
@@ -15,7 +15,6 @@ Grades/
   gradesync/           # Grade sync service (FastAPI)
   progressReport/     # Progress report service
   reverseProxy/       # Nginx reverse proxy
-  dbcron/             # Cron jobs and DB maintenance scripts
   docs/               # Docs and helper scripts
   scripts/            # Utility scripts
   secrets/            # Local secrets (not committed)
@@ -32,7 +31,6 @@ Grades/
 - **API**: Node.js server for authentication and grade data access.
 - **GradeSync**: FastAPI service to sync grades from external sources.
 - **Progress Report**: Python service for report generation.
-- **Redis**: Cache and student data lookup.
 - **Cloud SQL Proxy** (dev compose): Connects to a Cloud SQL instance.
 
 ## Authentication notes
@@ -58,7 +56,6 @@ Grades/
   - Database connection (`GRADESYNC_DATABASE_URL` or `POSTGRES_*`)
   - Third-party credentials (`GRADESCOPE_*`, `PL_API_TOKEN`, `ICLICKER_*`)
 5. Fill in required values in `api/config/default.json`:
-  - `redis`: Redis connection for API
   - `googleconfig.oauth.clientid`: OAuth client ID used to verify tokens
   - `admins`: list of admin emails
 6. Fill in required values in `gradesync/config.json`:
@@ -76,6 +73,11 @@ Grades/
 - Development-like stack:
   ```bash
   docker compose -f docker-compose.dev.yml up --build
+  ```
+
+- One-command health check (services + recent logs):
+  ```bash
+  docker compose -f docker-compose.dev.yml ps && docker compose -f docker-compose.dev.yml logs --tail=60 api web gradesync
   ```
 
 - Production-like stack:

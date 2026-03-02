@@ -127,9 +127,6 @@ ON CONFLICT (key) DO NOTHING;
 
 -- Insert default GradeView configurations
 INSERT INTO gradeview_config (key, value, value_type, description) VALUES
-    ('redis_host', 'redis', 'string', 'Redis server hostname'),
-    ('redis_port', '6379', 'integer', 'Redis server port'),
-    ('redis_username', 'default', 'string', 'Redis username'),
     ('google_oauth_client_id', '960156693240-hje09pstet1al4g4tr08271kkcjfqnn2.apps.googleusercontent.com', 'string', 'Google OAuth Client ID')
 ON CONFLICT (key) DO NOTHING;
 

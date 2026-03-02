@@ -6,9 +6,8 @@ GradeView is a multi-component grade management system consisting of:
 - **Frontend**: React Web UI
 - **Backend API**: Node.js (data queries, authentication)
 - **Grade Sync**: FastAPI GradeSync (pulls grades from external systems)
-- **Data Processing**: Python scheduled tasks (dbcron)
 - **Report Generation**: Python Progress Report service
-- **Infrastructure**: Redis, PostgreSQL, Nginx reverse proxy
+- **Infrastructure**: PostgreSQL, Nginx reverse proxy
 
 ---
 
@@ -23,13 +22,12 @@ api/
 ├── server.js              # Main server entry point
 ├── Router.js              # Route definitions (versioned routes)
 ├── config/
-│   └── default.json       # API config (Redis, Sheets, OAuth, admin list)
+│   └── default.json       # API config (OAuth, admin list)
 ├── lib/
 │   ├── authlib.mjs        # Auth middleware (Admin/Student validation)
 │   ├── googleAuthHelper.mjs  # Google OAuth token verification
 │   ├── userlib.mjs        # User permission checks
 │   ├── dbHelper.mjs       # Database connection and queries
-│   ├── redisHelper.mjs    # Redis cache operations (student data)
 │   ├── studentHelper.mjs  # Student query logic
 │   ├── uploadHandler.mjs  # File upload handling
 │   └── errors/            # Custom error classes
@@ -97,13 +95,7 @@ Update PostgreSQL
 
 ---
 
-### 4. **dbcron/** - Cache Maintenance Scripts
-
-Utility scripts for manual Redis maintenance.
-
----
-
-### 5. **progressReport/** - Report Generation Service
+### 4. **progressReport/** - Report Generation Service
 
 Python Flask/uWSGI application that generates student progress reports
 
@@ -153,11 +145,9 @@ graph LR
     API["Node.js<br/>API"]
     PR["Python<br/>Progress Report"]
     
-    Redis[(Redis<br/>Cache)]
     DB[(PostgreSQL<br/>DB)]
     
     GS["FastAPI<br/>GradeSync"]
-    DC["DB Cron<br/>Tasks"]
     CSP["Cloud SQL<br/>Proxy"]
     
     ES["🔗 External<br/>Systems<br/>Gradescope<br/>PrairieLearn<br/>iClicker"]
@@ -169,15 +159,12 @@ graph LR
     RP --> PR
     
     Web -->|fetch/auth| API
-    API -->|query/auth| Redis
     API -->|query| DB
     
     ES -->|sync| GS
     GS -->|write| DB
     
     DB -->|via proxy| CSP
-    
-    DC -->|update Redis| Redis
     
     PR -->|read| DB
     PR -->|generate| User
@@ -187,10 +174,8 @@ graph LR
     style Web fill:#f3e5f5
     style API fill:#e8f5e9
     style PR fill:#fce4ec
-    style Redis fill:#fff9c4
     style DB fill:#fff9c4
     style GS fill:#ede7f6
-    style DC fill:#ede7f6
     style CSP fill:#f5f5f5
     style ES fill:#ffebee
 ```
@@ -231,8 +216,6 @@ GradeSync 定时任务 / 手动触发
 按 assignment_categories 分类聚合
     ↓
 写入 PostgreSQL
-    ↓
-dbcron 定时更新 Redis 缓存
 ```
 
 ### 3️⃣ 学生查询成绩流程
@@ -244,9 +227,7 @@ dbcron 定时更新 Redis 缓存
     ↓
 API 中间件校验（token 和权限）
     ↓
-API 查询 Redis → 找到学生缓存数据
-    ├─ Hit: 直接返回
-    └─ Miss: 查询 PostgreSQL 并写入 Redis
+API 查询 PostgreSQL
     ↓
 前端展示成绩
 ```
@@ -262,7 +243,6 @@ API 查询 Redis → 找到学生缓存数据
 
 ### Config Files
 - **API** (`api/config/default.json`)
-  - Redis connection
   - OAuth client ID
   - Admin list
 
@@ -283,7 +263,6 @@ docker compose -f docker-compose.dev.yml up
 - API (8000)
 - GradeSync (8001)
 - Progress Report (8080)
-- Redis (6379)
 - Cloud SQL Proxy (5432 → Cloud SQL)
 
 ### Docker Compose Production Mode
@@ -330,9 +309,8 @@ docker compose -f docker-compose.yml up
 |-------|-----------|----------|
 | Login fails (domain mismatch) | Non-Berkeley account used | Only @berkeley.edu accounts allowed |
 | 403 permission denied | Account not in admins list | Admin must add your email to `api/config/default.json` |
-| Redis connection failed | Redis service not running or address mismatch | Check redis host/port in `api/config/default.json` |
 | Gradescope sync fails | Credentials expired or XPath changed | Verify GRADESCOPE_* credentials in `.env` |
-| Grades not appearing in Sheets | GradeSync not running or service account lacks permissions | Check GradeSync logs; ensure service account has Sheets edit permission |
+| Sync not reflected in UI | GradeSync failed to write into DB or API query scoped to wrong course | Check GradeSync logs and database rows for target course |
 
 ---
 
@@ -347,6 +325,5 @@ Files you typically need to modify:
 | Modify frontend page | `website/src/**` |
 | Change grade sync logic | `gradesync/api/**`, `gradesync/{gradescope,prairieLearn,iclicker}/` |
 | Modify database operations | `api/lib/dbHelper.mjs`, `gradesync/api/core/**` |
-| Change cache logic | `api/lib/redisHelper.mjs`, `dbcron/*.py` |
 | Configure permissions | `api/config/default.json` → `admins` list |
 | Configure course sync settings | `gradesync/config.json` |
