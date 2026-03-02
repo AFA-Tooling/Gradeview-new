@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
+source "$SCRIPT_DIR/lib/common.sh"
+cd_repo_root
 
 docker compose -f docker-compose.dev.yml down
 docker compose -f docker-compose.dev.yml build --no-cache

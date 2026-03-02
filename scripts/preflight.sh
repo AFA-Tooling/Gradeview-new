@@ -2,11 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
+source "$SCRIPT_DIR/lib/common.sh"
+cd_repo_root
 
-echo "Running production preflight (build + up + health + smoke tests)..."
-echo "Stopping dev stack first to avoid port/container conflicts..."
+log_info "Running production preflight (build + up + health + smoke tests)..."
+log_info "Stopping dev stack first to avoid port/container conflicts..."
 docker compose -f docker-compose.dev.yml down --remove-orphans >/dev/null 2>&1 || true
 docker compose -f docker-compose.yml up -d --build --remove-orphans
 
@@ -15,7 +15,7 @@ interval=6
 elapsed=0
 containers=(gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy)
 
-echo "Waiting for healthy services..."
+log_info "Waiting for healthy services..."
 while [[ "$elapsed" -lt "$max_wait" ]]; do
   all_healthy=true
   for container in "${containers[@]}"; do
@@ -27,7 +27,7 @@ while [[ "$elapsed" -lt "$max_wait" ]]; do
   done
 
   if [[ "$all_healthy" == "true" ]]; then
-    echo "All services are healthy."
+    log_info "All services are healthy."
     break
   fi
 
@@ -36,14 +36,14 @@ while [[ "$elapsed" -lt "$max_wait" ]]; do
 done
 
 if [[ "$elapsed" -ge "$max_wait" ]]; then
-  echo "Preflight failed: services did not become healthy in time."
+  log_info "Preflight failed: services did not become healthy in time."
   docker compose -f docker-compose.yml ps
   docker compose -f docker-compose.yml logs --tail=120 api web gradesync reverseProxy
   exit 1
 fi
 
-echo "Running smoke checks..."
+log_info "Running smoke checks..."
 curl -fsS http://localhost/api/health >/dev/null
 curl -fsS http://localhost/ >/dev/null
 docker compose -f docker-compose.yml ps
-echo "Preflight passed. To stop stack: make preflight-down"
+log_info "Preflight passed. To stop stack: make preflight-down"

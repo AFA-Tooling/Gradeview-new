@@ -2,65 +2,49 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
+source "$SCRIPT_DIR/lib/common.sh"
+cd_repo_root
 
-echo "Starting local frontend/backend with Docker dependencies..."
-echo "Checking ports..."
+log_info "Starting local frontend/backend with Docker dependencies..."
+log_info "Checking ports..."
 
-if lsof -Pi :5433 -sTCP:LISTEN -t >/dev/null 2>&1; then
+if port_in_use 5433; then
   echo
   echo "⚠️  Port 5433 is already in use:"
-  lsof -Pi :5433 -sTCP:LISTEN
+  show_port_usage 5433
   echo "Please free port 5433 (used by cloud-sql-proxy in dev-local mode)."
   exit 1
 fi
 
-if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
+if port_in_use 8000; then
   echo
   echo "⚠️  Port 8000 is already in use:"
-  lsof -Pi :8000 -sTCP:LISTEN
-  read -r -p "Kill process on port 8000? [y/N] " -n 1 reply
-  echo
-  if [[ "$reply" =~ ^[Yy]$ ]]; then
-    lsof -Pi :8000 -sTCP:LISTEN -t | xargs kill -9
-    echo "✓ Killed process on port 8000"
-  else
-    echo "Aborted."
-    exit 1
-  fi
+  show_port_usage 8000
+  confirm_and_kill_port 8000 || exit 1
 fi
 
-if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null 2>&1; then
+if port_in_use 3000; then
   echo
   echo "⚠️  Port 3000 is already in use:"
-  lsof -Pi :3000 -sTCP:LISTEN
-  read -r -p "Kill process on port 3000? [y/N] " -n 1 reply
-  echo
-  if [[ "$reply" =~ ^[Yy]$ ]]; then
-    lsof -Pi :3000 -sTCP:LISTEN -t | xargs kill -9
-    echo "✓ Killed process on port 3000"
-  else
-    echo "Aborted."
-    exit 1
-  fi
+  show_port_usage 3000
+  confirm_and_kill_port 3000 || exit 1
 fi
 
-echo "1. Stopping dockerized frontend/backend if running..."
+log_info "1. Stopping dockerized frontend/backend if running..."
 docker compose -f docker-compose.dev.yml stop reverseProxy web api >/dev/null 2>&1 || true
 
-echo "2. Starting Docker dependency services (cloud-sql-proxy + gradesync)..."
+log_info "2. Starting Docker dependency services (cloud-sql-proxy + gradesync)..."
 docker compose -f docker-compose.dev.yml up -d cloud-sql-proxy gradesync
 
-echo "3. Waiting for database proxy to be ready..."
+log_info "3. Waiting for database proxy to be ready..."
 sleep 5
 
-echo "4. Starting local API server on :8000 (DB via localhost:5433)..."
+log_info "4. Starting local API server on :8000 (DB via localhost:5433)..."
 (
   cd api
   NODE_ENV=development POSTGRES_HOST=localhost POSTGRES_PORT=5433 npm run dev
 ) &
 
-echo "5. Starting local website dev server on :3000..."
+log_info "5. Starting local website dev server on :3000..."
 cd website
 REACT_APP_PROXY_SERVER="http://localhost:8000" npm run react
