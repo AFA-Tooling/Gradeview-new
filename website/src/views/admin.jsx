@@ -56,6 +56,14 @@ ChartJS.register(
 
 
 export default function Admin() {
+  const QUEST_SUMMARY_CAP = 25;
+  const ATTENDANCE_SUMMARY_CAP = 15;
+
+  const normalizeSectionName = (name = '') => String(name || '').trim().toLowerCase();
+  const isAttendanceSection = (name = '') => {
+    const normalized = normalizeSectionName(name);
+    return normalized.includes('attendance') || normalized.includes('attendence');
+  };
   // TAB STATE
   const [tab, setTab] = useState(0);
   const [courses, setCourses] = useState([]);
@@ -276,6 +284,15 @@ export default function Admin() {
   const sectionMaxPoints = useMemo(() => {
     const maxPoints = {};
     Object.entries(assignmentsBySection).forEach(([section, sectionAssignments]) => {
+      const normalized = normalizeSectionName(section);
+      if (normalized === 'quest') {
+        maxPoints[section] = QUEST_SUMMARY_CAP;
+        return;
+      }
+      if (isAttendanceSection(section)) {
+        maxPoints[section] = ATTENDANCE_SUMMARY_CAP;
+        return;
+      }
       maxPoints[section] = sectionAssignments.reduce((sum, a) => sum + (a.maxPoints || 0), 0);
     });
     return maxPoints;
@@ -296,6 +313,12 @@ export default function Admin() {
 
       const sectionTotals = {};
       Object.keys(assignmentsBySection).forEach(sec => {
+        const summaryScore = Number(stu?.summarySectionTotals?.[sec]);
+        if (Number.isFinite(summaryScore)) {
+          sectionTotals[sec] = summaryScore;
+          return;
+        }
+
         sectionTotals[sec] = allAssignments
           .filter(a => a.section === sec)
           .reduce((sum, a) => sum + Number(flatScores[a.name] || 0), 0);

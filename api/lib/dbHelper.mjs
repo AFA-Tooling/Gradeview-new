@@ -9,6 +9,9 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Relative to a
 
 let pool = null;
 
+const QUEST_SUMMARY_CAP = 25;
+const ATTENDANCE_SUMMARY_CAP = 15;
+
 /**
  * Gets or creates a PostgreSQL connection pool.
  * @returns {Pool} PostgreSQL pool instance
@@ -609,12 +612,397 @@ export async function getAssignmentDistribution(assignmentName, category, course
     }
 }
 
+function normalizeSummaryCategoryName(category = '') {
+    return String(category || '').trim().toLowerCase();
+}
+
+function isAttendanceSummaryCategory(category = '') {
+    const normalized = normalizeSummaryCategoryName(category);
+    return normalized.includes('attendance') || normalized.includes('attendence');
+}
+
+function getSummaryCapByCategory(category = '') {
+    const normalized = normalizeSummaryCategoryName(category);
+    if (normalized === 'quest') return QUEST_SUMMARY_CAP;
+    if (isAttendanceSummaryCategory(normalized)) return ATTENDANCE_SUMMARY_CAP;
+    return null;
+}
+
+function toCeilNumber(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.ceil(numeric);
+}
+
+function buildQuestComponentCapMap(assignmentMetadata = {}, scoresByQuestion = {}) {
+    const capMap = new Map();
+
+    const metadataComponents = Array.isArray(assignmentMetadata?.components)
+        ? assignmentMetadata.components
+        : [];
+    metadataComponents.forEach((component) => {
+        const key = normalizeComponentKey(component?.key || component?.name || component?.label);
+        const cap = Number(component?.max_points);
+        if (key && Number.isFinite(cap) && cap > 0) {
+            capMap.set(key, cap);
+        }
+    });
+
+    const embeddedCaps = scoresByQuestion?.component_caps && typeof scoresByQuestion.component_caps === 'object'
+        ? scoresByQuestion.component_caps
+        : {};
+    Object.entries(embeddedCaps).forEach(([rawKey, rawCap]) => {
+        const key = normalizeComponentKey(rawKey);
+        const cap = Number(rawCap);
+        if (key && Number.isFinite(cap) && cap > 0) {
+            capMap.set(key, cap);
+        }
+    });
+
+    return capMap;
+}
+
+function extractQuestComponentScores(scoresByQuestion = {}, componentCaps = new Map()) {
+    const componentScores = new Map();
+    if (!scoresByQuestion || typeof scoresByQuestion !== 'object') {
+        return componentScores;
+    }
+
+    for (const [rawKey, rawValue] of Object.entries(scoresByQuestion)) {
+        const key = normalizeComponentKey(rawKey);
+        if (!key || key === 'source' || key === 'score_perc' || key === 'component caps' || key === 'component_caps') {
+            continue;
+        }
+
+        const score = Number(rawValue);
+        if (!Number.isFinite(score)) {
+            continue;
+        }
+
+        const cap = Number(componentCaps.get(key));
+        const boundedScore = Number.isFinite(cap) && cap > 0
+            ? Math.min(score, cap)
+            : score;
+
+        const existing = Number(componentScores.get(key));
+        if (!Number.isFinite(existing) || boundedScore > existing) {
+            componentScores.set(key, boundedScore);
+        }
+    }
+
+    return componentScores;
+}
+
+async function getQuestSummaryDistribution(courseId = null) {
+    const pool = getPool();
+
+    let query = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            s.total_score,
+            s.scores_by_question,
+            a.title AS assignment_title,
+            a.max_points AS assignment_max_points,
+            a.assignment_metadata
+        FROM students st
+        JOIN courses c ON st.course_id = c.id
+        LEFT JOIN submissions s ON s.student_id = st.id
+        LEFT JOIN assignments a
+          ON a.id = s.assignment_id
+         AND a.course_id = c.id
+         AND LOWER(COALESCE(a.category, '')) = 'quest'
+    `;
+
+    const params = [];
+    if (courseId) {
+        query += ` WHERE (c.gradescope_course_id::text = $1 OR c.id::text = $1)`;
+        params.push(String(courseId));
+    }
+
+    query += ` ORDER BY st.legal_name, a.title`;
+
+    const result = await pool.query(query, params);
+
+    const extractComponentScore = (rawValue) => {
+        const direct = Number(rawValue);
+        if (Number.isFinite(direct)) {
+            return direct;
+        }
+
+        if (rawValue && typeof rawValue === 'object') {
+            const candidates = [rawValue.score, rawValue.points, rawValue.value, rawValue.raw];
+            for (const candidate of candidates) {
+                const numeric = Number(candidate);
+                if (Number.isFinite(numeric)) {
+                    return numeric;
+                }
+            }
+        }
+
+        const text = String(rawValue ?? '').trim();
+        if (!text) return null;
+
+        if (text.includes('/')) {
+            const numerator = text.split('/', 1)[0].trim();
+            const matched = numerator.match(/-?\d+(?:\.\d+)?/);
+            if (matched) {
+                const parsed = Number(matched[0]);
+                if (Number.isFinite(parsed)) return parsed;
+            }
+        }
+
+        if (text.endsWith('%')) {
+            const parsed = Number(text.slice(0, -1).trim());
+            if (Number.isFinite(parsed)) return parsed;
+        }
+
+        const matched = text.match(/-?\d+(?:\.\d+)?/);
+        if (matched) {
+            const parsed = Number(matched[0]);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+
+        return null;
+    };
+
+    const studentMap = new Map();
+
+    result.rows.forEach((row) => {
+        const studentId = String(row.student_id);
+        if (!studentMap.has(studentId)) {
+            studentMap.set(studentId, {
+                studentName: row.student_name,
+                studentEmail: row.student_email,
+                categoryBest: new Map(),
+                categoryCaps: new Map(),
+            });
+        }
+
+        const student = studentMap.get(studentId);
+        const hasQuestRow = row.assignment_title != null;
+        if (!hasQuestRow) {
+            return;
+        }
+
+        const scoresByQuestion = row.scores_by_question && typeof row.scores_by_question === 'object'
+            ? row.scores_by_question
+            : {};
+
+        const scoreLookup = new Map();
+        Object.entries(scoresByQuestion).forEach(([rawKey, rawValue]) => {
+            const key = normalizeComponentKey(rawKey);
+            if (!key || key === 'source' || key === 'score_perc' || key === 'component caps' || key === 'component_caps') {
+                return;
+            }
+            const parsedScore = extractComponentScore(rawValue);
+            if (Number.isFinite(parsedScore)) {
+                scoreLookup.set(key, parsedScore);
+            }
+        });
+
+        const assignmentMetadata = row.assignment_metadata && typeof row.assignment_metadata === 'object'
+            ? row.assignment_metadata
+            : {};
+        const components = Array.isArray(assignmentMetadata.components)
+            ? assignmentMetadata.components
+            : [];
+
+        if (components.length > 0) {
+            const assignmentCategoryScores = new Map();
+            const assignmentCategoryCaps = new Map();
+
+            components.forEach((component) => {
+                const key = normalizeComponentKey(component?.key);
+                if (!key) return;
+
+                const categoryRaw = String(component?.category || component?.key || '').trim();
+                const categoryKey = normalizeComponentKey(categoryRaw);
+                if (!categoryKey) return;
+
+                const score = Number(scoreLookup.get(key));
+                if (Number.isFinite(score)) {
+                    assignmentCategoryScores.set(
+                        categoryKey,
+                        (Number(assignmentCategoryScores.get(categoryKey)) || 0) + score,
+                    );
+                }
+
+                const cap = Number(component?.max_points);
+                if (Number.isFinite(cap) && cap > 0) {
+                    assignmentCategoryCaps.set(
+                        categoryKey,
+                        (Number(assignmentCategoryCaps.get(categoryKey)) || 0) + cap,
+                    );
+                }
+            });
+
+            const rawScoreTotal = Array.from(assignmentCategoryScores.values()).reduce(
+                (sum, value) => sum + (Number(value) || 0),
+                0,
+            );
+            const rawCapTotal = Array.from(assignmentCategoryCaps.values()).reduce(
+                (sum, value) => sum + (Number(value) || 0),
+                0,
+            );
+            const assignmentMaxPoints = Number(row.assignment_max_points);
+            const assignmentTotal = Number(row.total_score);
+
+            let scoreScale = 1;
+            let capScale = 1;
+
+            if (Number.isFinite(assignmentMaxPoints) && assignmentMaxPoints > 0 && rawCapTotal > 0) {
+                capScale = assignmentMaxPoints / rawCapTotal;
+                scoreScale = capScale;
+            } else if (Number.isFinite(assignmentTotal) && assignmentTotal > 0 && rawScoreTotal > 0) {
+                scoreScale = assignmentTotal / rawScoreTotal;
+                capScale = scoreScale;
+            }
+
+            if (scoreScale !== 1) {
+                assignmentCategoryScores.forEach((value, categoryKey) => {
+                    assignmentCategoryScores.set(categoryKey, (Number(value) || 0) * scoreScale);
+                });
+            }
+
+            if (capScale !== 1) {
+                assignmentCategoryCaps.forEach((value, categoryKey) => {
+                    assignmentCategoryCaps.set(categoryKey, (Number(value) || 0) * capScale);
+                });
+            }
+
+            assignmentCategoryScores.forEach((categoryScore, categoryKey) => {
+                const existing = Number(student.categoryBest.get(categoryKey));
+                if (!Number.isFinite(existing) || categoryScore > existing) {
+                    student.categoryBest.set(categoryKey, categoryScore);
+                }
+            });
+
+            assignmentCategoryCaps.forEach((categoryCap, categoryKey) => {
+                const oldCap = Number(student.categoryCaps.get(categoryKey));
+                if (!Number.isFinite(oldCap) || categoryCap > oldCap) {
+                    student.categoryCaps.set(categoryKey, categoryCap);
+                }
+            });
+
+            return;
+        }
+
+        scoreLookup.forEach((score, key) => {
+            const existing = Number(student.categoryBest.get(key));
+            if (!Number.isFinite(existing) || score > existing) {
+                student.categoryBest.set(key, score);
+            }
+        });
+    });
+
+    return Array.from(studentMap.values()).map((student) => {
+        let categoryTotal = 0;
+        student.categoryBest.forEach((bestScore, categoryKey) => {
+            const cap = Number(student.categoryCaps.get(categoryKey));
+            categoryTotal += Number.isFinite(cap) && cap > 0
+                ? Math.min(bestScore, cap)
+                : bestScore;
+        });
+
+        return {
+            studentName: student.studentName,
+            studentEmail: student.studentEmail,
+            score: Math.min(QUEST_SUMMARY_CAP, toCeilNumber(categoryTotal)),
+        };
+    });
+}
+
+async function getAttendanceSummaryDistribution(category, courseId = null) {
+    const pool = getPool();
+    const normalizedCategory = normalizeSummaryCategoryName(category);
+
+    let query = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            s.total_score,
+            s.max_points AS submission_max_points,
+            a.max_points AS assignment_max_points
+        FROM students st
+        JOIN courses c ON st.course_id = c.id
+        LEFT JOIN submissions s ON s.student_id = st.id
+        LEFT JOIN assignments a
+          ON a.id = s.assignment_id
+         AND a.course_id = c.id
+         AND LOWER(COALESCE(a.category, '')) = $1
+        WHERE 1=1
+    `;
+
+    const params = [normalizedCategory];
+    if (courseId) {
+        query += ` AND (c.gradescope_course_id::text = $2 OR c.id::text = $2)`;
+        params.push(String(courseId));
+    }
+
+    query += ` ORDER BY st.legal_name`;
+
+    const result = await pool.query(query, params);
+    const studentMap = new Map();
+
+    result.rows.forEach((row) => {
+        const studentId = String(row.student_id);
+        if (!studentMap.has(studentId)) {
+            studentMap.set(studentId, {
+                studentName: row.student_name,
+                studentEmail: row.student_email,
+                passCount: 0,
+            });
+        }
+
+        const hasAttendanceRow = row.assignment_max_points != null;
+        if (!hasAttendanceRow) {
+            return;
+        }
+
+        const score = Number(row.total_score);
+        const submissionMax = Number(row.submission_max_points);
+        const assignmentMax = Number(row.assignment_max_points);
+        const denominator = Number.isFinite(submissionMax) && submissionMax > 0
+            ? submissionMax
+            : (Number.isFinite(assignmentMax) && assignmentMax > 0 ? assignmentMax : 0);
+
+        const passed = Number.isFinite(score)
+            && (
+                score >= 1
+                || (denominator > 0 && (score / denominator) >= 0.6)
+            );
+
+        if (passed) {
+            const student = studentMap.get(studentId);
+            student.passCount += 1;
+        }
+    });
+
+    return Array.from(studentMap.values()).map((student) => ({
+        studentName: student.studentName,
+        studentEmail: student.studentEmail,
+        score: Math.min(ATTENDANCE_SUMMARY_CAP, toCeilNumber(student.passCount)),
+    }));
+}
+
 /**
  * Gets score distribution for category summary (sum of all assignments in category)
  * @param {string} category - The assignment category (may not match DB, legacy parameter)
  * @returns {Promise<Array>} Array of {studentName, studentEmail, score}
  */
 export async function getCategorySummaryDistribution(category, courseId = null) {
+    const normalizedCategory = normalizeSummaryCategoryName(category);
+    if (normalizedCategory === 'quest') {
+        return getQuestSummaryDistribution(courseId);
+    }
+
+    if (isAttendanceSummaryCategory(normalizedCategory)) {
+        return getAttendanceSummaryDistribution(category, courseId);
+    }
+
     const pool = getPool();
     
     let query = `
@@ -649,7 +1037,7 @@ export async function getCategorySummaryDistribution(category, courseId = null) 
         return result.rows.map(row => ({
             studentName: row.student_name,
             studentEmail: row.student_email,
-            score: parseFloat(row.total_score) || 0,
+            score: toCeilNumber(row.total_score),
         }));
     } catch (err) {
         console.error('Error fetching category summary distribution:', err);

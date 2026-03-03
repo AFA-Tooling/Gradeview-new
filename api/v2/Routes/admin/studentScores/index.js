@@ -18,12 +18,54 @@ router.get('/', async (req, res) => {
     
     try {
         const students = await getAllStudentScores(courseId || null);
+
+        const sectionNames = new Set();
+        students.forEach((student) => {
+            Object.keys(student?.scores || {}).forEach((sectionName) => {
+                if (!sectionName) return;
+                if (String(sectionName).toLowerCase() === 'uncategorized') return;
+                sectionNames.add(sectionName);
+            });
+        });
+
+        const summaryRowsBySection = await Promise.all(
+            Array.from(sectionNames).map(async (sectionName) => {
+                const rows = await getCategorySummaryDistribution(sectionName, courseId || null);
+                return [sectionName, rows];
+            })
+        );
+
+        const summaryMapBySection = new Map();
+        summaryRowsBySection.forEach(([sectionName, rows]) => {
+            const rowMap = new Map();
+            (rows || []).forEach((row) => {
+                const email = String(row?.studentEmail || '').trim().toLowerCase();
+                if (!email) return;
+                rowMap.set(email, Number(row?.score) || 0);
+            });
+            summaryMapBySection.set(sectionName, rowMap);
+        });
+
+        const studentsWithSummary = students.map((student) => {
+            const studentEmail = String(student?.email || '').trim().toLowerCase();
+            const summarySectionTotals = {};
+
+            sectionNames.forEach((sectionName) => {
+                const sectionMap = summaryMapBySection.get(sectionName);
+                summarySectionTotals[sectionName] = Number(sectionMap?.get(studentEmail) || 0);
+            });
+
+            return {
+                ...student,
+                summarySectionTotals,
+            };
+        });
         
         const queryTime = Date.now() - startTime;
         console.log(`[PERF] Fetched all student scores from DB in ${queryTime}ms (${students.length} students)`);
         
         res.json({
-            students: students,
+            students: studentsWithSummary,
             dataSource: 'database',
             queryTime: queryTime
         });
@@ -63,6 +105,12 @@ router.get('/:section/:assignment/:score', async (req, res) => {
     }
 
     try {
+        const ceilScore = (value) => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return 0;
+            return Math.ceil(numeric);
+        };
+
         let rows = [];
 
         if (decodedAssignment.includes('Summary')) {
@@ -73,7 +121,7 @@ router.get('/:section/:assignment/:score', async (req, res) => {
 
         const matchingStudents = rows
             .map((row) => {
-                const scoreVal = Number(row.score);
+                const scoreVal = ceilScore(row.score);
                 return {
                     name: row.studentName,
                     email: row.studentEmail,

@@ -12,13 +12,19 @@ router.get('/:section/:name', async (req, res) => {
         const { section, name } = req.params;
         const { course_id: courseId } = req.query;
 
+        const ceilScore = (value) => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return 0;
+            return Math.ceil(numeric);
+        };
+
         let scores = [];
         if (name.includes('Summary')) {
             const summaryRows = await getCategorySummaryDistribution(section, courseId || null);
-            scores = summaryRows.map((row) => Number(row.score)).filter((score) => !Number.isNaN(score));
+            scores = summaryRows.map((row) => ceilScore(row.score)).filter((score) => !Number.isNaN(score));
         } else {
             const assignmentRows = await getAssignmentDistribution(name, section, courseId || null);
-            scores = assignmentRows.map((row) => Number(row.score)).filter((score) => !Number.isNaN(score));
+            scores = assignmentRows.map((row) => ceilScore(row.score)).filter((score) => !Number.isNaN(score));
         }
 
         if (scores.length === 0) {

@@ -2,6 +2,18 @@ import { Router } from 'express';
 import { getAssignmentDistribution, getCategorySummaryDistribution } from '../../../../lib/dbHelper.mjs';
 const router = Router({ mergeParams: true });
 
+const QUEST_SUMMARY_CAP = 25;
+const ATTENDANCE_SUMMARY_CAP = 15;
+
+function normalizeCategoryName(value = '') {
+    return String(value || '').trim().toLowerCase();
+}
+
+function isAttendanceCategory(value = '') {
+    const normalized = normalizeCategoryName(value);
+    return normalized.includes('attendance') || normalized.includes('attendence');
+}
+
 /**
  * GET /admin/distribution/:section/:name
  * Returns score distribution with student data.
@@ -19,6 +31,12 @@ router.get('/:section/:name', async (req, res) => {
         const { section, name } = req.params;
         const { course_id: courseId } = req.query;
         const startTime = Date.now();
+
+        const ceilScore = (value) => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return 0;
+            return Math.ceil(numeric);
+        };
         
         console.log(`[DEBUG] Distribution request - section: "${section}", name: "${name}"`);
         
@@ -29,6 +47,12 @@ router.get('/:section/:name', async (req, res) => {
         if (name.includes('Summary')) {
             console.log(`[PERF] Fetching category summary from DB: ${section}`);
             scoreData = await getCategorySummaryDistribution(section, courseId || null);
+            const normalizedSection = normalizeCategoryName(section);
+            if (normalizedSection === 'quest') {
+                maxPossibleScore = QUEST_SUMMARY_CAP;
+            } else if (isAttendanceCategory(section)) {
+                maxPossibleScore = ATTENDANCE_SUMMARY_CAP;
+            }
             dataSource = 'database-summary';
         } else {
             console.log(`[PERF] Fetching assignment distribution from DB: ${section}/${name}`);
@@ -54,7 +78,7 @@ router.get('/:section/:name', async (req, res) => {
             });
         }
 
-        const scores = scoreData.map(d => d.score);
+        const scores = scoreData.map((d) => ceilScore(d.score));
         const maxScore = Math.max(...scores);
         const minScore = Math.min(...scores);
         
@@ -133,7 +157,7 @@ router.get('/:section/:name', async (req, res) => {
         
         // Group students by bucket
         scoreData.forEach(data => {
-            const score = data.score;
+            const score = ceilScore(data.score);
             // Calculate which bucket this score falls into (from 0)
             let bucketIndex = Math.floor(score / binWidth);
             
@@ -146,7 +170,7 @@ router.get('/:section/:name', async (req, res) => {
             distributionBuckets[bucketIndex].students.push({
                 name: data.studentName,
                 email: data.studentEmail,
-                score: data.score
+                score
             });
         });
         
