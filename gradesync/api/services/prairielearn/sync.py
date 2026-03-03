@@ -110,6 +110,151 @@ class PrairieLearnSync:
         """Close clients."""
         self.pl_client.close()
 
+    _QUEST_COMPONENT_ORDER = [
+        "Abstraction",
+        "Number Representation",
+        "Iteration",
+        "Domain and Range",
+        "Booleans",
+        "Functions",
+        "HOFs I",
+    ]
+
+    @classmethod
+    def _normalize_component_name(cls, question_topic: Any, question_name: Any) -> Optional[str]:
+        topic_text = str(question_topic or "").strip()
+        name_text = str(question_name or "").strip()
+
+        candidate = topic_text or name_text.rsplit("/", 1)[-1]
+        normalized = candidate.lower().replace("-", " ").replace("_", " ").strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+
+        aliases = {
+            "abstraction": "Abstraction",
+            "number representation": "Number Representation",
+            "iteration": "Iteration",
+            "domain and range": "Domain and Range",
+            "booleans": "Booleans",
+            "boolean": "Booleans",
+            "functions": "Functions",
+            "hofs i": "HOFs I",
+            "hof i": "HOFs I",
+            "higher order functions": "HOFs I",
+            "higher-order functions": "HOFs I",
+        }
+        direct = aliases.get(normalized)
+        if direct:
+            return direct
+
+        for key, mapped in aliases.items():
+            if key in normalized:
+                return mapped
+
+        for item in cls._QUEST_COMPONENT_ORDER:
+            if item.lower() in normalized:
+                return item
+
+        return None
+
+    def _collect_quest_component_scores(
+        self,
+        pl_course_id: str,
+        gradebook_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        assessment_instance_meta: Dict[str, Dict[str, str]] = {}
+
+        for row in gradebook_rows:
+            for item in row.get("assessments") or []:
+                assessment_name = str(item.get("assessment_name") or "").strip().lower()
+                if "quest" not in assessment_name or "practice" in assessment_name:
+                    continue
+
+                attempt_no = self._to_float(item.get("assessment_number"))
+                if attempt_no not in (1.0, 2.0, 3.0):
+                    continue
+
+                instance_id = str(item.get("assessment_instance_id") or "").strip()
+                assessment_id = str(item.get("assessment_id") or "").strip()
+                if not instance_id or not assessment_id:
+                    continue
+
+                assessment_instance_meta[instance_id] = {
+                    "assessment_id": assessment_id,
+                }
+
+        instance_component_map: Dict[str, Dict[str, Any]] = {}
+        assessment_component_caps: Dict[str, Dict[str, float]] = {}
+
+        for instance_id, meta in assessment_instance_meta.items():
+            try:
+                submissions = self.pl_client._call_api(
+                    f"/course_instances/{pl_course_id}/assessment_instances/{instance_id}/submissions"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch PrairieLearn instance submissions for %s: %s",
+                    instance_id,
+                    exc,
+                )
+                continue
+
+            best_by_question: Dict[str, Dict[str, Any]] = {}
+            for submission in submissions if isinstance(submissions, list) else []:
+                component_name = self._normalize_component_name(
+                    submission.get("question_topic"),
+                    submission.get("question_name"),
+                )
+                if not component_name:
+                    continue
+
+                question_key = str(
+                    submission.get("question_id")
+                    or submission.get("instance_question_id")
+                    or ""
+                ).strip()
+                if not question_key:
+                    continue
+
+                points = self._to_float(submission.get("instance_question_points"))
+                cap = self._to_float(submission.get("assessment_question_max_points"))
+                if points is None:
+                    continue
+
+                old = best_by_question.get(question_key)
+                if not old or points > float(old.get("points", 0.0)):
+                    best_by_question[question_key] = {
+                        "component": component_name,
+                        "points": points,
+                        "cap": cap,
+                    }
+
+            component_scores: Dict[str, float] = {}
+            component_caps: Dict[str, float] = {}
+            for entry in best_by_question.values():
+                component = entry["component"]
+                component_scores[component] = float(component_scores.get(component, 0.0)) + float(entry.get("points", 0.0))
+                cap_value = entry.get("cap")
+                if cap_value is not None:
+                    component_caps[component] = float(component_caps.get(component, 0.0)) + float(cap_value)
+
+            instance_component_map[instance_id] = {
+                "component_scores": component_scores,
+                "component_caps": component_caps,
+            }
+
+            assessment_id = meta.get("assessment_id")
+            if assessment_id:
+                caps_for_assessment = assessment_component_caps.setdefault(assessment_id, {})
+                for component, cap_value in component_caps.items():
+                    old_cap = caps_for_assessment.get(component)
+                    if old_cap is None or cap_value > old_cap:
+                        caps_for_assessment[component] = cap_value
+
+        return {
+            "instance_component_map": instance_component_map,
+            "assessment_component_caps": assessment_component_caps,
+        }
+
     @staticmethod
     def _to_float(value: Any) -> Optional[float]:
         if value is None:
@@ -202,6 +347,16 @@ class PrairieLearnSync:
                 and isinstance(gradebook_rows[0].get("assessments"), list)
             )
 
+            quest_component_data = {
+                "instance_component_map": {},
+                "assessment_component_caps": {},
+            }
+            if nested_format:
+                quest_component_data = self._collect_quest_component_scores(pl_course_id, gradebook_rows)
+
+            instance_component_map = quest_component_data.get("instance_component_map", {})
+            assessment_component_caps = quest_component_data.get("assessment_component_caps", {})
+
             score_columns = self._select_score_columns(gradebook_rows)
 
             assignment_id_by_col: Dict[str, int] = {}
@@ -209,6 +364,7 @@ class PrairieLearnSync:
 
             if nested_format:
                 active_assessment_ids = set()
+                assessment_max_points: Dict[str, float] = {}
                 for row in gradebook_rows:
                     for item in row.get("assessments") or []:
                         points_val = self._to_float(item.get("points"))
@@ -216,13 +372,21 @@ class PrairieLearnSync:
                             assessment_id = str(item.get("assessment_id") or "").strip()
                             if assessment_id:
                                 active_assessment_ids.add(assessment_id)
+                        max_points_val = self._to_float(item.get("max_points"))
+                        assessment_id_for_max = str(item.get("assessment_id") or "").strip()
+                        if assessment_id_for_max and max_points_val is not None and max_points_val > 0:
+                            old_max = assessment_max_points.get(assessment_id_for_max)
+                            if old_max is None or max_points_val > old_max:
+                                assessment_max_points[assessment_id_for_max] = max_points_val
 
                 for assessment_id in sorted(active_assessment_ids):
                     info = assessments_by_id.get(assessment_id)
                     column = str(getattr(info, "number", "") or assessment_id)
                     title = (getattr(info, "title", "") or assessment_id).strip()
                     category = _categorize_assignment(title, course_categories)
-                    max_points = getattr(info, "points", None)
+                    max_points = assessment_max_points.get(assessment_id)
+                    if max_points is None:
+                        max_points = getattr(info, "points", None)
                     if max_points is not None and max_points <= 0:
                         max_points = None
 
@@ -233,6 +397,19 @@ class PrairieLearnSync:
                         "pl_number": getattr(info, "number", None) if info else None,
                         "pl_short_name": getattr(info, "short_name", None) if info else None,
                     }
+
+                    component_caps = assessment_component_caps.get(assessment_id) or {}
+                    if component_caps:
+                        metadata["scores_schema"] = "quest_components"
+                        metadata["components"] = [
+                            {
+                                "key": component_name,
+                                "max_points": float(component_caps.get(component_name, 0.0)),
+                                "display_order": idx,
+                            }
+                            for idx, component_name in enumerate(self._QUEST_COMPONENT_ORDER)
+                            if component_name in component_caps
+                        ]
 
                     external_assignment_id = f"pl:{pl_course_id}:{assessment_id}"
 
@@ -378,6 +555,23 @@ class PrairieLearnSync:
                         if score is None:
                             continue
 
+                        instance_id = str(item.get("assessment_instance_id") or "").strip()
+                        component_data = instance_component_map.get(instance_id) if instance_id else None
+
+                        scores_payload = {
+                            "source": "prairielearn",
+                            "assessment_number": item.get("assessment_number"),
+                            "assessment_label": item.get("assessment_label"),
+                            "assessment_name": item.get("assessment_name"),
+                            "score_perc": self._to_float(item.get("score_perc")),
+                        }
+                        if component_data:
+                            for component_name, component_score in (component_data.get("component_scores") or {}).items():
+                                scores_payload[component_name] = component_score
+                            component_caps = component_data.get("component_caps") or {}
+                            if component_caps:
+                                scores_payload["component_caps"] = component_caps
+
                         submissions_data.append({
                             "assignment_id": assignment_db_id,
                             "student_id": student_id,
@@ -389,13 +583,7 @@ class PrairieLearnSync:
                             "lateness": None,
                             "view_count": None,
                             "submission_count": None,
-                            "scores_by_question": {
-                                "source": "prairielearn",
-                                "assessment_number": item.get("assessment_number"),
-                                "assessment_label": item.get("assessment_label"),
-                                "assessment_name": item.get("assessment_name"),
-                                "score_perc": self._to_float(item.get("score_perc")),
-                            },
+                            "scores_by_question": scores_payload,
                         })
                 else:
                     for column, assignment_db_id in assignment_id_by_col.items():

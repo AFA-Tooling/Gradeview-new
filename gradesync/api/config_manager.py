@@ -119,7 +119,14 @@ class ConfigManager:
     def _load_config(self):
         """Load configuration from JSON file."""
         if not self.config_path.exists():
-            raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+            logger.warning(
+                "Configuration file not found at %s; falling back to database-backed configuration",
+                self.config_path,
+            )
+            self.config_data = {}
+            self.courses = {}
+            self.global_settings = {}
+            return
         
         try:
             with open(self.config_path, 'r') as f:
@@ -145,18 +152,190 @@ class ConfigManager:
             
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in configuration file: {e}")
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _build_course_config_from_db(self, course: Any, db_config: Any, categories: List[Any]) -> Optional[CourseConfig]:
+        if not course:
+            return None
+
+        external_course_id = str(getattr(course, "gradescope_course_id", None) or getattr(course, "id", "")).strip()
+        if not external_course_id:
+            return None
+
+        category_rows = sorted(
+            categories or [],
+            key=lambda row: (getattr(row, "display_order", 0) or 0, getattr(row, "name", "") or "")
+        )
+        assignment_categories = [
+            {
+                "name": getattr(row, "name", "") or "",
+                "patterns": list(getattr(row, "patterns", None) or []),
+                "display_order": self._safe_int(getattr(row, "display_order", 0), 0),
+            }
+            for row in category_rows
+            if getattr(row, "name", None)
+        ]
+
+        gradescope_course_id = (
+            getattr(db_config, "gradescope_course_id", None)
+            or getattr(course, "gradescope_course_id", None)
+            or external_course_id
+        )
+
+        course_data = {
+            "id": external_course_id,
+            "general": {
+                "id": external_course_id,
+                "name": getattr(course, "name", None) or f"Course {external_course_id}",
+                "department": getattr(course, "department", None) or "",
+                "course_number": getattr(course, "course_number", None) or "",
+                "semester": getattr(course, "semester", None) or "",
+                "year": self._safe_int(getattr(course, "year", None), 0),
+                "instructor": getattr(course, "instructor", None) or "",
+            },
+            "gradesync": {
+                "sources": {
+                    "gradescope": {
+                        "enabled": bool(
+                            getattr(db_config, "gradescope_enabled", False)
+                            if db_config is not None
+                            else bool(gradescope_course_id)
+                        ),
+                        "course_id": str(gradescope_course_id),
+                    },
+                    "prairielearn": {
+                        "enabled": bool(getattr(db_config, "prairielearn_enabled", False)) if db_config is not None else False,
+                        "course_id": getattr(db_config, "prairielearn_course_id", None) if db_config is not None else None,
+                    },
+                    "iclicker": {
+                        "enabled": bool(getattr(db_config, "iclicker_enabled", False)) if db_config is not None else False,
+                        "course_names": list(getattr(db_config, "iclicker_course_names", None) or []) if db_config is not None else [],
+                    },
+                },
+                "database": {
+                    "enabled": bool(getattr(db_config, "database_enabled", True)) if db_config is not None else True,
+                    "use_as_primary": bool(getattr(db_config, "use_as_primary", True)) if db_config is not None else True,
+                },
+                "assignment_categories": assignment_categories,
+            },
+        }
+
+        return CourseConfig(course_data)
+
+    def _get_course_from_db(self, course_id: str) -> Optional[CourseConfig]:
+        from sqlalchemy import String, cast, or_
+        from api.core.db import SessionLocal
+        from api.core.models import Course, CourseConfig as CourseConfigModel, AssignmentCategory
+
+        session = SessionLocal()
+        try:
+            normalized = str(course_id or "").strip()
+            if not normalized:
+                return None
+
+            row = (
+                session.query(Course, CourseConfigModel)
+                .outerjoin(CourseConfigModel, CourseConfigModel.course_id == Course.id)
+                .filter(
+                    or_(
+                        Course.gradescope_course_id == normalized,
+                        cast(Course.id, String) == normalized,
+                    )
+                )
+                .first()
+            )
+            if not row:
+                return None
+
+            course, db_config = row
+            categories = session.query(AssignmentCategory).filter(AssignmentCategory.course_id == course.id).all()
+            return self._build_course_config_from_db(course, db_config, categories)
+        finally:
+            session.close()
+
+    def _list_course_configs_from_db(self) -> List[CourseConfig]:
+        from api.core.db import SessionLocal
+        from api.core.models import Course, CourseConfig as CourseConfigModel, AssignmentCategory
+
+        session = SessionLocal()
+        try:
+            rows = (
+                session.query(Course, CourseConfigModel)
+                .outerjoin(CourseConfigModel, CourseConfigModel.course_id == Course.id)
+                .all()
+            )
+            if not rows:
+                return []
+
+            course_ids = [course.id for course, _ in rows]
+            category_rows = (
+                session.query(AssignmentCategory)
+                .filter(AssignmentCategory.course_id.in_(course_ids))
+                .all()
+            )
+            categories_by_course: Dict[int, List[Any]] = {}
+            for category in category_rows:
+                categories_by_course.setdefault(category.course_id, []).append(category)
+
+            built: List[CourseConfig] = []
+            for course, db_config in rows:
+                cfg = self._build_course_config_from_db(
+                    course,
+                    db_config,
+                    categories_by_course.get(course.id, []),
+                )
+                if cfg is not None:
+                    built.append(cfg)
+
+            return built
+        finally:
+            session.close()
     
     def get_course(self, course_id: str) -> Optional[CourseConfig]:
         """Get configuration for a specific course."""
-        return self.courses.get(course_id)
+        normalized = str(course_id or "").strip()
+        if not normalized:
+            return None
+
+        file_cfg = self.courses.get(normalized)
+        if file_cfg is not None:
+            return file_cfg
+
+        for cfg in self.courses.values():
+            if str(cfg.gradescope_course_id or "").strip() == normalized:
+                return cfg
+
+        try:
+            return self._get_course_from_db(normalized)
+        except Exception as exc:
+            logger.warning("Failed to resolve course %s from DB fallback: %s", normalized, exc)
+            return None
     
     def list_courses(self) -> List[str]:
         """List all available course IDs."""
-        return list(self.courses.keys())
+        return [cfg.id for cfg in self.list_course_configs()]
     
     def list_course_configs(self) -> List[CourseConfig]:
         """List all course configurations."""
-        return list(self.courses.values())
+        merged: Dict[str, CourseConfig] = {
+            str(cfg.id): cfg for cfg in self.courses.values() if str(getattr(cfg, "id", "")).strip()
+        }
+
+        try:
+            for db_cfg in self._list_course_configs_from_db():
+                key = str(db_cfg.id or "").strip()
+                if key:
+                    merged[key] = db_cfg
+        except Exception as exc:
+            logger.warning("Failed to load DB-backed course configurations: %s", exc)
+
+        return list(merged.values())
     
     def get_global_setting(self, key: str, default: Any = None) -> Any:
         """Get a global setting value."""

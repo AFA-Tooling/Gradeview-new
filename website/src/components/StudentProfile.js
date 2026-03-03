@@ -12,7 +12,13 @@ import {
   Alert,
 } from '@mui/material';
 import apiv2 from '../utils/apiv2';
-import { processStudentData, getGradeLevel } from '../utils/studentDataProcessor';
+import {
+  processStudentData,
+  applyExamPolicyToProcessedData,
+  buildQuestComponentTrendFallback,
+  buildQuestComponentTrendFromAssignments,
+  getGradeLevel,
+} from '../utils/studentDataProcessor';
 import StudentProfileContent from './StudentProfileContent';
 
 /**
@@ -65,10 +71,21 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
             || Number(binsRes?.data?.total_course_points)
             || 0,
         };
-        const processed = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig);
+        const processedBase = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig);
+        const processed = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+
+        const trendFromApi = policyRes?.data?.questComponentTrend;
+        const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);
+        const trendFromAssignments = buildQuestComponentTrendFromAssignments(processed?.assignmentsList || []);
+        const hasTrendSeries = (trend) => Array.isArray(trend?.series) && trend.series.length > 0;
+        const questComponentTrend = hasTrendSeries(trendFromApi)
+          ? trendFromApi
+          : (hasTrendSeries(trendFromPolicy) ? trendFromPolicy : trendFromAssignments);
+
         setStudentData({
           ...processed,
           examPolicyRows: policyRows,
+          questComponentTrend,
         });
         setLoading(false);
       })

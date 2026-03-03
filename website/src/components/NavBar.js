@@ -117,6 +117,52 @@ export default function ButtonAppBar() {
     const [selectedCourse, setSelectedCourse] = useState(
         localStorage.getItem('selectedCourseId') || '',
     );
+
+    const formatCourseLabel = (course) => {
+        const year = String(course?.year || '').trim();
+        const semester = String(course?.semester || '').trim();
+        const name = String(course?.name || '').trim();
+        const pieces = [year, semester, name].filter(Boolean);
+        if (pieces.length > 0) {
+            return pieces.join(' ');
+        }
+        return String(course?.id || course?.gradescope_course_id || 'Course').trim();
+    };
+
+    const normalizeCourseList = (list) => {
+        const items = Array.isArray(list) ? list : [];
+        const merged = new Map();
+        items.forEach((course) => {
+            const key = String(course?.gradescope_course_id || course?.id || '').trim();
+            if (!key) return;
+            if (!merged.has(key)) {
+                merged.set(key, { ...course, id: String(course.id) });
+            }
+        });
+        return Array.from(merged.values());
+    };
+
+    const fetchCourses = async () => {
+        if (!isAdmin) {
+            const studentRes = await apiv2.get('/students/courses');
+            return normalizeCourseList(studentRes?.data?.courses || []);
+        }
+
+        const [adminResult, studentResult] = await Promise.allSettled([
+            apiv2.get('/admin/sync'),
+            apiv2.get('/students/courses'),
+        ]);
+
+        const adminCourses = adminResult.status === 'fulfilled'
+            ? (adminResult.value?.data?.courses || [])
+            : [];
+        const studentCourses = studentResult.status === 'fulfilled'
+            ? (studentResult.value?.data?.courses || [])
+            : [];
+
+        return normalizeCourseList([...adminCourses, ...studentCourses]);
+    };
+
     useEffect(() => {
         let mounted = true;
         if (!loggedIn) {
@@ -137,12 +183,10 @@ export default function ButtonAppBar() {
             });
         }
 
-        const coursesEndpoint = isAdmin ? '/admin/sync' : '/students/courses';
-        apiv2.get(coursesEndpoint)
-            .then((res) => {
+        fetchCourses()
+            .then((fetchedCourses) => {
                 if (!mounted) return;
 
-                const fetchedCourses = res?.data?.courses || [];
                 setCourses(fetchedCourses);
 
                 if (fetchedCourses.length === 0) {
@@ -154,8 +198,9 @@ export default function ButtonAppBar() {
                     return;
                 }
 
-                const hasSelected = fetchedCourses.some((course) => String(course.id) === String(selectedCourse));
-                const nextCourse = hasSelected ? selectedCourse : String(fetchedCourses[0].id);
+                const rememberedCourse = localStorage.getItem('selectedCourseId') || selectedCourse;
+                const hasSelected = fetchedCourses.some((course) => String(course.id) === String(rememberedCourse));
+                const nextCourse = hasSelected ? String(rememberedCourse) : String(fetchedCourses[0].id);
 
                 setSelectedCourse(nextCourse);
                 localStorage.setItem('selectedCourseId', nextCourse);
@@ -171,7 +216,7 @@ export default function ButtonAppBar() {
             });
 
         return () => (mounted = false);
-    }, [isAdmin, loggedIn, selectedCourse, setSelectedStudent]);
+    }, [isAdmin, loggedIn, setSelectedStudent]);
 
     useEffect(() => {
         let mounted = true;
@@ -266,7 +311,7 @@ export default function ButtonAppBar() {
                                     >
                                         {courses.map((course) => (
                                             <MenuItem key={course.id} value={course.id}>
-                                                {course.name} ({course.id})
+                                                {formatCourseLabel(course)}
                                             </MenuItem>
                                         ))}
                                     </Select>

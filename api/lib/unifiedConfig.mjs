@@ -18,6 +18,8 @@ const emptyConfig = {
     },
 };
 
+let missingConfigWarned = false;
+
 function getAllCourseAdminEmails(courses) {
     if (!Array.isArray(courses)) {
         return [];
@@ -71,7 +73,10 @@ export function loadUnifiedConfig() {
             },
         };
     } catch (error) {
-        console.warn('Unable to load root config.json, falling back to empty config:', error?.message || error);
+        if (!missingConfigWarned) {
+            console.warn('Unable to load root config.json, falling back to empty config:', error?.message || error);
+            missingConfigWarned = true;
+        }
         return emptyConfig;
     }
 }

@@ -14,7 +14,12 @@ import {
   Alert
 } from '@mui/material';
 import apiv2 from '../utils/apiv2';
-import { processStudentData } from '../utils/studentDataProcessor';
+import {
+  processStudentData,
+  applyExamPolicyToProcessedData,
+  buildQuestComponentTrendFallback,
+  buildQuestComponentTrendFromAssignments,
+} from '../utils/studentDataProcessor';
 import StudentProfileContent from '../components/StudentProfileContent';
 import { StudentSelectionContext } from "../components/StudentSelectionWrapper";
 import Buckets from './buckets';
@@ -40,8 +45,21 @@ export default function StudentProfile() {
 
   const resolveCourseQueryId = (courseId) => {
     if (!courseId) return '';
-    const matchedCourse = courses.find((course) => course.id === courseId);
+    const matchedCourse = courses.find((course) => String(course.id) === String(courseId));
     return matchedCourse?.gradescope_course_id || courseId;
+  };
+
+  const normalizeCourseList = (list) => {
+    const items = Array.isArray(list) ? list : [];
+    const merged = new Map();
+    items.forEach((course) => {
+      const key = String(course?.gradescope_course_id || course?.id || '').trim();
+      if (!key) return;
+      if (!merged.has(key)) {
+        merged.set(key, { ...course, id: String(course.id) });
+      }
+    });
+    return Array.from(merged.values());
   };
 
   useEffect(() => {
@@ -65,11 +83,22 @@ export default function StudentProfile() {
           const adminStatus = res?.data?.isAdmin === true;
           setIsAdmin(adminStatus);
 
-          const coursesEndpoint = adminStatus ? '/admin/sync' : '/students/courses';
-          apiv2.get(coursesEndpoint)
-            .then((coursesRes) => {
+          const loadCourses = adminStatus
+            ? Promise.allSettled([apiv2.get('/admin/sync'), apiv2.get('/students/courses')])
+            : Promise.allSettled([apiv2.get('/students/courses')]);
+
+          loadCourses.then((results) => {
               if (!mounted) return;
-              const fetchedCourses = coursesRes?.data?.courses || [];
+
+              const fetchedCourses = adminStatus
+                ? normalizeCourseList([
+                    ...(results[0]?.status === 'fulfilled' ? (results[0].value?.data?.courses || []) : []),
+                    ...(results[1]?.status === 'fulfilled' ? (results[1].value?.data?.courses || []) : []),
+                  ])
+                : normalizeCourseList([
+                    ...(results[0]?.status === 'fulfilled' ? (results[0].value?.data?.courses || []) : []),
+                  ]);
+
               setCourses(fetchedCourses);
 
               if (fetchedCourses.length === 0) {
@@ -78,8 +107,9 @@ export default function StudentProfile() {
                 return;
               }
 
-              const hasSelected = fetchedCourses.some((course) => String(course.id) === String(selectedCourse));
-              const nextCourse = hasSelected ? selectedCourse : String(fetchedCourses[0].id);
+              const rememberedCourse = localStorage.getItem('selectedCourseId') || selectedCourse;
+              const hasSelected = fetchedCourses.some((course) => String(course.id) === String(rememberedCourse));
+              const nextCourse = hasSelected ? String(rememberedCourse) : String(fetchedCourses[0].id);
               setSelectedCourse(nextCourse);
               localStorage.setItem('selectedCourseId', nextCourse);
             })
@@ -178,11 +208,13 @@ export default function StudentProfile() {
     Promise.all([
       apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/grades?format=db${queryCourseId ? `&course_id=${encodeURIComponent(queryCourseId)}` : ''}`),
       apiv2.get(`/students/category-stats${courseQuery}`),
-      apiv2.get(`/bins${courseQuery}`)
+      apiv2.get(`/bins${courseQuery}`),
+      apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/exam-policy${courseQuery}`),
     ])
-      .then(([gradesRes, statsRes, binsRes]) => {
+      .then(([gradesRes, statsRes, binsRes, policyRes]) => {
         const data = gradesRes.data;
         const classAverages = statsRes.data;
+        const policyRows = Array.isArray(policyRes?.data?.rows) ? policyRes.data.rows : [];
         const gradingConfig = {
           assignmentPoints: binsRes?.data?.assignment_points || {},
           totalCoursePoints:
@@ -191,9 +223,23 @@ export default function StudentProfile() {
             || Number(binsRes?.data?.total_course_points)
             || 0,
         };
-        
-        console.log('[DEBUG] Class averages:', classAverages);
-        setStudentData(processStudentData(data, fetchEmail, studentName, undefined, classAverages, gradingConfig));
+
+        const processedBase = processStudentData(data, fetchEmail, studentName, undefined, classAverages, gradingConfig);
+        const processed = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+
+        const trendFromApi = policyRes?.data?.questComponentTrend;
+        const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);
+        const trendFromAssignments = buildQuestComponentTrendFromAssignments(processed?.assignmentsList || []);
+        const hasTrendSeries = (trend) => Array.isArray(trend?.series) && trend.series.length > 0;
+        const questComponentTrend = hasTrendSeries(trendFromApi)
+          ? trendFromApi
+          : (hasTrendSeries(trendFromPolicy) ? trendFromPolicy : trendFromAssignments);
+
+        setStudentData({
+          ...processed,
+          examPolicyRows: policyRows,
+          questComponentTrend,
+        });
         setLoading(false);
       })
       .catch(err => {

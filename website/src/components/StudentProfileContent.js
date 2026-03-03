@@ -30,7 +30,7 @@ import {
   Tooltip as ChartTooltip,
   Legend as ChartLegend,
 } from 'chart.js';
-import { Bar as ChartBar, Line as ChartLine, Radar as ChartRadar } from 'react-chartjs-2';
+import { Line as ChartLine, Radar as ChartRadar } from 'react-chartjs-2';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 
 // Register Chart.js components
@@ -55,6 +55,12 @@ ChartJS.register(
  */
 export default function StudentProfileContent({ studentData }) {
   if (!studentData) return null;
+
+  const roundUpPoints = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.ceil(numeric);
+  };
 
   const toSafePercentage = (value) => {
     const numeric = Number(value);
@@ -136,6 +142,13 @@ export default function StudentProfileContent({ studentData }) {
 
   const examPolicyRows = Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [];
 
+  const questComponentTrend = useMemo(() => {
+    const trend = studentData?.questComponentTrend;
+    const components = Array.isArray(trend?.components) ? trend.components : [];
+    const series = Array.isArray(trend?.series) ? trend.series : [];
+    return { components, series };
+  }, [studentData?.questComponentTrend]);
+
   // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return '-';
@@ -171,10 +184,10 @@ export default function StudentProfileContent({ studentData }) {
             <Box textAlign="center" sx={{ p: 2 }}>
               <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Score</Typography>
               <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600, mb: 0.5 }}>
-                {Math.round(studentData.totalScore)}
+                {roundUpPoints(studentData.totalScore)}
               </Typography>
               <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-                / {Math.round(studentData.totalCapPoints ?? studentData.totalMaxPoints)}
+                / {roundUpPoints(studentData.totalCapPoints ?? studentData.totalMaxPoints)}
               </Typography>
             </Box>
           </Grid>
@@ -227,8 +240,8 @@ export default function StudentProfileContent({ studentData }) {
                 return (
                   <TableRow key={category} hover>
                     <TableCell><strong>{category}</strong></TableCell>
-                    <TableCell align="center">{Math.round(data.total)}</TableCell>
-                    <TableCell align="center">{Math.round(data.capPoints ?? data.maxPoints)}</TableCell>
+                    <TableCell align="center">{roundUpPoints(data.total)}</TableCell>
+                    <TableCell align="center">{roundUpPoints(data.capPoints ?? data.maxPoints)}</TableCell>
                     <TableCell align="center">{renderProgressBattery(data.percentage)}</TableCell>
                     <TableCell align="center">{data.count}</TableCell>
                     <TableCell align="center">{data.average.toFixed(2)}</TableCell>
@@ -353,8 +366,8 @@ export default function StudentProfileContent({ studentData }) {
           </Paper>
         </Grid>
 
-        {/* Bar Chart */}
-        <Grid item xs={12} md={6}>
+        {/* Quest Progress Trend */}
+        <Grid item xs={12}>
           <Paper 
             elevation={0} 
             sx={{ 
@@ -366,19 +379,37 @@ export default function StudentProfileContent({ studentData }) {
             }}
           >
             <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600 }}>
-              Category Scores Comparison
+              Quest Progress Trend
             </Typography>
             <Box sx={{ height: 300, position: 'relative' }}>
-              <ChartBar
+              {questComponentTrend.components.length === 0 || questComponentTrend.series.length === 0 ? (
+                <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Typography sx={{ color: '#6b7280' }}>Quest component progression is not available yet.</Typography>
+                </Box>
+              ) : (
+              <ChartLine
                 data={{
-                  labels: Object.keys(studentData.categoriesData),
-                  datasets: [{
-                    label: 'Percentage',
-                    data: Object.values(studentData.categoriesData).map(d => d.percentage),
-                    backgroundColor: '#1976d2',
-                    borderColor: '#1565c0',
-                    borderWidth: 1,
-                  }]
+                  labels: questComponentTrend.components,
+                  datasets: questComponentTrend.series.map((seriesItem, index) => {
+                    const colors = [
+                      { border: '#90caf9', background: 'rgba(144, 202, 249, 0.10)' },
+                      { border: '#42a5f5', background: 'rgba(66, 165, 245, 0.10)' },
+                      { border: '#1565c0', background: 'rgba(21, 101, 192, 0.12)' },
+                    ];
+                    const selectedColor = colors[index] || colors[colors.length - 1];
+                    return {
+                      label: seriesItem.name,
+                      data: (seriesItem.data || []).map((value) => toSafePercentage(value)),
+                      borderColor: selectedColor.border,
+                      backgroundColor: selectedColor.background,
+                      borderWidth: 3,
+                      pointRadius: 4,
+                      pointHoverRadius: 7,
+                      pointBackgroundColor: selectedColor.border,
+                      tension: 0.2,
+                      fill: false,
+                    };
+                  }),
                 }}
                 options={{
                   responsive: true,
@@ -404,11 +435,11 @@ export default function StudentProfileContent({ studentData }) {
                     },
                     x: {
                       grid: {
-                        display: false
+                        color: 'rgba(0, 0, 0, 0.05)'
                       },
                       title: {
                         display: true,
-                        text: 'Category',
+                        text: 'Quest Attempts',
                         font: {
                           size: 12
                         }
@@ -417,7 +448,8 @@ export default function StudentProfileContent({ studentData }) {
                   },
                   plugins: {
                     legend: {
-                      display: false
+                      display: true,
+                      position: 'top'
                     },
                     datalabels: {
                       display: false  // Hide labels, show only on hover
@@ -425,15 +457,16 @@ export default function StudentProfileContent({ studentData }) {
                     tooltip: {
                       callbacks: {
                         label: function(context) {
-                          const category = context.label;
-                          const data = studentData.categoriesData[category];
-                          return `${data.percentage.toFixed(2)}% (${Math.round(data.total)}/${Math.round(data.capPoints ?? data.maxPoints)})`;
+                          const pct = Number(context.parsed.y || 0);
+                          const points = Math.min(25, roundUpPoints((pct / 100) * 25));
+                          return `${pct.toFixed(2)}% (${points}/25)`;
                         }
                       }
                     }
                   }
                 }}
               />
+              )}
             </Box>
           </Paper>
         </Grid>

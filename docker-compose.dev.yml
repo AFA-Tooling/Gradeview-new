@@ -67,7 +67,6 @@ services:
     build: ./api
     volumes:
       - ./api:/api
-      - ./config.json:/config.json:ro
       - /api/node_modules
     environment:
       - PORT=${API_PORT}
@@ -91,7 +90,6 @@ services:
       - .env
     volumes:
       - ./gradesync:/app
-      - ./config.json:/app/config.json:ro
     environment:
       - POSTGRES_HOST=cloud-sql-proxy
       - POSTGRES_PORT=5432

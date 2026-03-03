@@ -104,25 +104,44 @@ export default function Admin() {
 
   const buildCourseQuery = (courseId) => {
     if (!courseId) return '';
-    const matchedCourse = courses.find((course) => course.id === courseId);
+    const matchedCourse = courses.find((course) => String(course.id) === String(courseId));
     const resolvedCourseId = matchedCourse?.gradescope_course_id || courseId;
     return `?course_id=${encodeURIComponent(resolvedCourseId)}`;
+  };
+
+  const normalizeCourseList = (list) => {
+    const items = Array.isArray(list) ? list : [];
+    const merged = new Map();
+    items.forEach((course) => {
+      const key = String(course?.gradescope_course_id || course?.id || '').trim();
+      if (!key) return;
+      if (!merged.has(key)) {
+        merged.set(key, { ...course, id: String(course.id) });
+      }
+    });
+    return Array.from(merged.values());
   };
 
   // Load courses for multi-course support
   useEffect(() => {
     setLoadingCourses(true);
-    apiv2.get('/admin/sync')
-      .then((res) => {
-        const fetchedCourses = res?.data?.courses || [];
+    Promise.allSettled([
+      apiv2.get('/admin/sync'),
+      apiv2.get('/students/courses'),
+    ])
+      .then(([adminResult, studentResult]) => {
+        const adminCourses = adminResult.status === 'fulfilled' ? (adminResult.value?.data?.courses || []) : [];
+        const studentCourses = studentResult.status === 'fulfilled' ? (studentResult.value?.data?.courses || []) : [];
+        const fetchedCourses = normalizeCourseList([...adminCourses, ...studentCourses]);
         setCourses(fetchedCourses);
 
         if (fetchedCourses.length === 0) {
           return;
         }
 
-        const hasSelected = fetchedCourses.some((course) => course.id === selectedCourse);
-        const nextCourse = hasSelected ? selectedCourse : fetchedCourses[0].id;
+        const rememberedCourse = localStorage.getItem('selectedCourseId') || selectedCourse;
+        const hasSelected = fetchedCourses.some((course) => String(course.id) === String(rememberedCourse));
+        const nextCourse = hasSelected ? String(rememberedCourse) : String(fetchedCourses[0].id);
 
         setSelectedCourse(nextCourse);
         localStorage.setItem('selectedCourseId', nextCourse);

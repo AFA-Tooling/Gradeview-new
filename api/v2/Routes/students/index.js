@@ -18,7 +18,10 @@ const router = Router({ mergeParams: true });
 router.use(
     RateLimit({
         windowMs: 5 * 60 * 1000, // 5 minutes
-        max: 100, // 100 requests
+        max: 2000, // allow normal dashboard/profile traffic bursts
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => String(req?.auth?.email || req.ip || 'anonymous').toLowerCase(),
     }),
 );
 

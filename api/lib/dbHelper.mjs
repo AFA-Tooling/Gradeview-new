@@ -271,6 +271,178 @@ export async function getStudentExamPolicyScores(email, courseId = null) {
     }));
 }
 
+function normalizeComponentKey(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function parseQuestAttemptNo(title) {
+    const text = String(title || '');
+    const match = text.match(/quest\s*[-:]?\s*(\d+)/i);
+    if (!match) return null;
+    const attemptNo = Number(match[1]);
+    return Number.isFinite(attemptNo) ? attemptNo : null;
+}
+
+/**
+ * Gets Quest component progression curves for a student.
+ * Curves represent cumulative best percentages after Quest-1, Quest-2, Quest-3.
+ * @param {string} email
+ * @param {string|null} courseId
+ * @returns {Promise<{components:string[], series:Array<{name:string,data:number[]}>}>}
+ */
+export async function getStudentQuestComponentTrend(email, courseId = null) {
+    const pool = getPool();
+
+    const componentOrder = [
+        'Abstraction',
+        'Number Representation',
+        'Iteration',
+        'Domain and Range',
+        'Booleans',
+        'Functions',
+        'HOFs I',
+    ];
+
+    let query = `
+        SELECT
+            a.id AS assignment_id,
+            a.title AS assignment_title,
+            a.max_points AS assignment_max_points,
+            a.assignment_metadata,
+            s.total_score,
+            s.max_points AS submission_max_points,
+            s.scores_by_question,
+            e.attempt_no
+        FROM students st
+        JOIN courses c ON c.id = st.course_id
+        JOIN submissions s ON s.student_id = st.id
+        JOIN assignments a ON a.id = s.assignment_id AND a.course_id = c.id
+        LEFT JOIN exam_attempt_map e
+            ON e.assignment_id = a.id
+           AND e.course_id = c.id
+           AND LOWER(e.exam_type) = 'quest'
+        WHERE st.email = $1
+          AND LOWER(COALESCE(a.category, '')) = 'quest'
+    `;
+
+    const params = [email];
+    if (courseId) {
+        query += ` AND (c.id::text = $2 OR c.gradescope_course_id::text = $2)`;
+        params.push(String(courseId));
+    }
+
+    query += ` ORDER BY a.title`;
+
+    const result = await pool.query(query, params);
+
+    const attemptMap = new Map();
+
+    for (const row of result.rows) {
+        const attemptNo = Number(row.attempt_no) || parseQuestAttemptNo(row.assignment_title);
+        if (!attemptNo || attemptNo < 1 || attemptNo > 3) {
+            continue;
+        }
+
+        const assignmentMetadata = row.assignment_metadata && typeof row.assignment_metadata === 'object'
+            ? row.assignment_metadata
+            : {};
+        const components = Array.isArray(assignmentMetadata.components) ? assignmentMetadata.components : [];
+        const componentCapsByKey = new Map();
+        for (const component of components) {
+            const key = normalizeComponentKey(component?.key);
+            if (!key) continue;
+            const maxPoints = Number(component?.max_points);
+            if (Number.isFinite(maxPoints) && maxPoints > 0) {
+                componentCapsByKey.set(key, maxPoints);
+            }
+        }
+
+        const scoresByQuestion = row.scores_by_question && typeof row.scores_by_question === 'object'
+            ? row.scores_by_question
+            : {};
+        const embeddedCapsRaw = scoresByQuestion.component_caps && typeof scoresByQuestion.component_caps === 'object'
+            ? scoresByQuestion.component_caps
+            : {};
+        const embeddedCaps = new Map();
+        for (const [capKey, capValue] of Object.entries(embeddedCapsRaw)) {
+            const normCapKey = normalizeComponentKey(capKey);
+            const numericCap = Number(capValue);
+            if (normCapKey && Number.isFinite(numericCap) && numericCap > 0) {
+                embeddedCaps.set(normCapKey, numericCap);
+            }
+        }
+
+        const assignmentMax = Number(row.assignment_max_points);
+        const submissionMax = Number(row.submission_max_points);
+        const totalScore = Number(row.total_score);
+        const overallPercentage = Number(scoresByQuestion.score_perc);
+        let fallbackPct = null;
+        if (Number.isFinite(overallPercentage)) {
+            fallbackPct = overallPercentage;
+        } else {
+            const denom = Number.isFinite(submissionMax) && submissionMax > 0
+                ? submissionMax
+                : (Number.isFinite(assignmentMax) && assignmentMax > 0 ? assignmentMax : null);
+            if (denom && Number.isFinite(totalScore)) {
+                fallbackPct = (totalScore / denom) * 100;
+            }
+        }
+
+        const existing = attemptMap.get(attemptNo) || {};
+        const merged = { ...existing };
+
+        for (const componentName of componentOrder) {
+            const targetKey = normalizeComponentKey(componentName);
+
+            let componentPct = null;
+
+            for (const [rawKey, rawValue] of Object.entries(scoresByQuestion)) {
+                const normKey = normalizeComponentKey(rawKey);
+                if (!normKey || normKey === 'source' || normKey === 'score_perc') continue;
+                if (normKey === 'component caps') continue;
+                if (normKey !== targetKey) continue;
+
+                const score = Number(rawValue);
+                const cap = Number(componentCapsByKey.get(normKey) ?? embeddedCaps.get(normKey));
+                if (Number.isFinite(score) && Number.isFinite(cap) && cap > 0) {
+                    const roundedScore = Math.ceil(score * 10) / 10;
+                    componentPct = (roundedScore / cap) * 100;
+                }
+            }
+
+            if (!Number.isFinite(componentPct) && Number.isFinite(fallbackPct)) {
+                componentPct = fallbackPct;
+            }
+
+            if (Number.isFinite(componentPct)) {
+                merged[componentName] = Math.max(0, Math.min(100, Number(componentPct)));
+            }
+        }
+
+        attemptMap.set(attemptNo, merged);
+    }
+
+    const getAttemptPct = (attemptNo, componentName) => {
+        const item = attemptMap.get(attemptNo);
+        if (!item) return 0;
+        const value = Number(item[componentName]);
+        return Number.isFinite(value) ? value : 0;
+    };
+
+    const after1 = componentOrder.map((componentName) => getAttemptPct(1, componentName));
+    const after2 = componentOrder.map((componentName, index) => Math.max(after1[index], getAttemptPct(2, componentName)));
+    const after3 = componentOrder.map((componentName, index) => Math.max(after2[index], getAttemptPct(3, componentName)));
+
+    return {
+        components: componentOrder,
+        series: [
+            { name: 'After Quest-1', data: after1.map((value) => Number(value.toFixed(2))) },
+            { name: 'After Quest-2 (Cumulative Best)', data: after2.map((value) => Number(value.toFixed(2))) },
+            { name: 'After Quest-3 (Cumulative Best)', data: after3.map((value) => Number(value.toFixed(2))) },
+        ],
+    };
+}
+
 /**
  * Checks if a student exists in the database
  * @param {string} email - The student's email

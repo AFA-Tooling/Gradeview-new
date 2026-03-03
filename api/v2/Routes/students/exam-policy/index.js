@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getStudentExamPolicyScores } from '../../../../lib/dbHelper.mjs';
+import { getStudentExamPolicyScores, getStudentQuestComponentTrend } from '../../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -9,9 +9,11 @@ router.get('/', async (req, res) => {
 
     try {
         const rows = await getStudentExamPolicyScores(email, courseId || null);
+        const questComponentTrend = await getStudentQuestComponentTrend(email, courseId || null);
         return res.status(200).json({
             rows,
             total: rows.length,
+            questComponentTrend,
         });
     } catch (err) {
         console.error('Error fetching student exam policy scores:', err);

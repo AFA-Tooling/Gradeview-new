@@ -21,6 +21,12 @@ export function processStudentData(data, email, name, sortMode = 'assignment', c
   return processAssignmentSortedData(data, email, name, classAverages, gradingConfig);
 }
 
+function roundUpPoints(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.ceil(numeric);
+}
+
 function normalizePointsMap(assignmentPoints = {}) {
   return Object.entries(assignmentPoints || {}).reduce((acc, [key, value]) => {
     const normalizedKey = String(key || '').trim().toLowerCase();
@@ -72,7 +78,7 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   submissions.forEach((submission) => {
     const category = submission.category;
     const assignmentName = submission.name;
-    const rawScore = parseFloat(submission.score) || 0;
+    const rawScore = roundUpPoints(parseFloat(submission.score) || 0);
     const rawMaxPoints = parseFloat(submission.maxPoints) || 0;
     const normalized = normalizeAssignmentScore(category, rawScore, rawMaxPoints);
     const score = normalized.score;
@@ -213,7 +219,7 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
     let categoryCount = 0;
 
     Object.entries(assignments).forEach(([assignmentName, assignmentData]) => {
-      const rawScore = parseFloat(assignmentData.student) || 0;
+      const rawScore = roundUpPoints(parseFloat(assignmentData.student) || 0);
       const rawMaxPoints = parseFloat(assignmentData.max) || 0;
       const normalized = normalizeAssignmentScore(category, rawScore, rawMaxPoints);
       const score = normalized.score;
@@ -321,6 +327,239 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
     assignmentsList: assignmentsList,
     radarData: radarData,
     trendData: trendData,
+  };
+}
+
+function getBestCategoryPercentageFromAssignments(processedData, categoryName) {
+  const assignments = Array.isArray(processedData?.assignmentsList) ? processedData.assignmentsList : [];
+  const target = String(categoryName || '').trim().toLowerCase();
+  const percentages = assignments
+    .filter((assignment) => String(assignment?.category || '').trim().toLowerCase() === target)
+    .map((assignment) => Number(assignment?.percentage))
+    .filter((value) => Number.isFinite(value));
+
+  if (percentages.length === 0) {
+    return null;
+  }
+
+  return Math.max(...percentages);
+}
+
+export function applyExamPolicyToProcessedData(processedData, examPolicyRows = [], gradingConfig = {}) {
+  if (!processedData) {
+    return processedData;
+  }
+
+  const policyRows = Array.isArray(examPolicyRows) ? examPolicyRows : [];
+
+  const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
+  const componentCaps = {
+    quest: getPointsForName('Quest', pointsMap),
+    midterm: getPointsForName('Midterm', pointsMap),
+    postterm: getPointsForName('Postterm', pointsMap),
+  };
+
+  const bestPercentages = {};
+  policyRows.forEach((row) => {
+    const type = String(row?.examType || '').trim().toLowerCase();
+    if (!['quest', 'midterm', 'postterm'].includes(type)) {
+      return;
+    }
+    const sourcePercentage = type === 'quest'
+      ? Number(row?.questionBestPercentage)
+      : Number(row?.finalPercentage);
+    if (!Number.isFinite(sourcePercentage)) {
+      return;
+    }
+    if (bestPercentages[type] == null || sourcePercentage > bestPercentages[type]) {
+      bestPercentages[type] = sourcePercentage;
+    }
+  });
+
+  const categoryNames = {
+    quest: 'Quest',
+    midterm: 'Midterm',
+    postterm: 'Postterm',
+  };
+
+  const fallbackPercentages = {
+    quest: getBestCategoryPercentageFromAssignments(processedData, 'Quest'),
+    midterm: getBestCategoryPercentageFromAssignments(processedData, 'Midterm'),
+    postterm: getBestCategoryPercentageFromAssignments(processedData, 'Postterm'),
+  };
+
+  if (!processedData.categoriesData) {
+    processedData.categoriesData = {};
+  }
+
+  let changed = false;
+  Object.entries(categoryNames).forEach(([type, categoryName]) => {
+    const bestPct = Number.isFinite(bestPercentages[type])
+      ? bestPercentages[type]
+      : fallbackPercentages[type];
+    if (!Number.isFinite(bestPct)) {
+      return;
+    }
+
+    const cap = Number(componentCaps[type]) || 0;
+    if (cap <= 0) return;
+
+    const existing = processedData.categoriesData[categoryName] || {};
+    const rawScore = (bestPct / 100) * cap;
+    const score = Math.min(cap, roundUpPoints(rawScore));
+
+    processedData.categoriesData[categoryName] = {
+      ...existing,
+      total: score,
+      rawTotal: score,
+      maxPoints: cap,
+      capPoints: cap,
+      percentage: cap > 0 ? (score / cap) * 100 : 0,
+      count: existing.count ?? 1,
+      average: cap > 0 ? score / (existing.count ?? 1) : 0,
+      scores: Array.isArray(existing.scores) ? existing.scores : [],
+    };
+    changed = true;
+  });
+
+  if (!changed) {
+    return processedData;
+  }
+
+  const categories = Object.entries(processedData.categoriesData);
+  const totalScore = categories.reduce((sum, [, category]) => sum + (Number(category.total) || 0), 0);
+  const totalMaxPoints = categories.reduce((sum, [, category]) => {
+    const cap = Number(category.capPoints ?? category.maxPoints) || 0;
+    return sum + cap;
+  }, 0);
+
+  const totalCapPoints = Number(processedData.totalCapPoints) > 0
+    ? Number(processedData.totalCapPoints)
+    : totalMaxPoints;
+
+  processedData.totalScore = roundUpPoints(totalScore);
+  processedData.totalMaxPoints = totalMaxPoints;
+  processedData.totalCapPoints = totalCapPoints;
+  processedData.overallPercentage = totalCapPoints > 0 ? (processedData.totalScore / totalCapPoints) * 100 : 0;
+  processedData.radarData = categories.map(([categoryName, category]) => ({
+    category: categoryName,
+    percentage: parseFloat((Number(category.percentage) || 0).toFixed(2)),
+    score: parseFloat((Number(category.total) || 0).toFixed(2)),
+    maxPoints: parseFloat((Number(category.capPoints ?? category.maxPoints) || 0).toFixed(2)),
+    average: 0,
+    fullMark: 100,
+  }));
+
+  return processedData;
+}
+
+export function buildQuestComponentTrendFallback(examPolicyRows = []) {
+  const rows = Array.isArray(examPolicyRows) ? examPolicyRows : [];
+  const questRows = rows
+    .filter((row) => String(row?.examType || '').trim().toLowerCase() === 'quest')
+    .sort((a, b) => Number(a?.attemptNo || 0) - Number(b?.attemptNo || 0));
+
+  const components = [
+    'Abstraction',
+    'Number Representation',
+    'Iteration',
+    'Domain and Range',
+    'Booleans',
+    'Functions',
+    'HOFs I',
+  ];
+
+  if (questRows.length === 0) {
+    return {
+      components,
+      series: [],
+    };
+  }
+
+  const pctByAttempt = {
+    1: null,
+    2: null,
+    3: null,
+  };
+
+  questRows.forEach((row) => {
+    const attemptNo = Number(row?.attemptNo || 0);
+    if (![1, 2, 3].includes(attemptNo)) return;
+    const raw = Number(row?.rawPercentage);
+    if (Number.isFinite(raw)) {
+      pctByAttempt[attemptNo] = raw;
+    }
+  });
+
+  const after1 = Number.isFinite(pctByAttempt[1]) ? pctByAttempt[1] : 0;
+  const after2 = Math.max(after1, Number.isFinite(pctByAttempt[2]) ? pctByAttempt[2] : 0);
+  const after3 = Math.max(after2, Number.isFinite(pctByAttempt[3]) ? pctByAttempt[3] : 0);
+
+  const fillSeries = (name, value) => ({
+    name,
+    data: components.map(() => Number(value.toFixed(2))),
+  });
+
+  return {
+    components,
+    series: [
+      fillSeries('After Quest-1', after1),
+      fillSeries('After Quest-2 (Cumulative Best)', after2),
+      fillSeries('After Quest-3 (Cumulative Best)', after3),
+    ],
+  };
+}
+
+export function buildQuestComponentTrendFromAssignments(assignmentsList = []) {
+  const assignments = Array.isArray(assignmentsList) ? assignmentsList : [];
+  const questAssignments = assignments
+    .filter((assignment) => String(assignment?.category || '').trim().toLowerCase() === 'quest')
+    .map((assignment) => {
+      const name = String(assignment?.name || '');
+      const match = name.match(/quest\s*[-:]?\s*(\d+)/i);
+      return {
+        attemptNo: Number(match?.[1] || 0),
+        percentage: Number(assignment?.percentage),
+      };
+    })
+    .filter((item) => [1, 2, 3].includes(item.attemptNo) && Number.isFinite(item.percentage))
+    .sort((a, b) => a.attemptNo - b.attemptNo);
+
+  if (questAssignments.length === 0) {
+    return { components: [], series: [] };
+  }
+
+  const components = [
+    'Abstraction',
+    'Number Representation',
+    'Iteration',
+    'Domain and Range',
+    'Booleans',
+    'Functions',
+    'HOFs I',
+  ];
+
+  const pctByAttempt = { 1: 0, 2: 0, 3: 0 };
+  questAssignments.forEach((item) => {
+    pctByAttempt[item.attemptNo] = Math.max(pctByAttempt[item.attemptNo], item.percentage);
+  });
+
+  const after1 = pctByAttempt[1] || 0;
+  const after2 = Math.max(after1, pctByAttempt[2] || 0);
+  const after3 = Math.max(after2, pctByAttempt[3] || 0);
+
+  const fillSeries = (name, value) => ({
+    name,
+    data: components.map(() => Number(value.toFixed(2))),
+  });
+
+  return {
+    components,
+    series: [
+      fillSeries('After Quest-1', after1),
+      fillSeries('After Quest-2 (Cumulative Best)', after2),
+      fillSeries('After Quest-3 (Cumulative Best)', after3),
+    ],
   };
 }
 
