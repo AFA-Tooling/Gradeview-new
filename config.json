@@ -299,8 +299,8 @@
                 "sync_interval_hours": 24
             },
             "prairielearn": {
-                "enabled": false,
-                "course_id": "192476"
+                "enabled": true,
+                "course_id": "205345"
             },
             "iclicker": {
                 "enabled": false,

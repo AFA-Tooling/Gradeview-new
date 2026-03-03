@@ -81,6 +81,339 @@ function findCourseIndex(courses, courseId) {
     return courses.findIndex((course) => getCourseIdVariants(course).includes(normalizedCourseId));
 }
 
+function parseStoredConfigValue(value, valueType) {
+    if (valueType === 'integer') {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isNaN(parsed) ? 0 : parsed;
+    }
+    if (valueType === 'boolean') {
+        return value === true || value === 'true' || value === '1';
+    }
+    if (valueType === 'json') {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return null;
+        }
+    }
+    return value;
+}
+
+function toStoredConfigValue(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return { value: String(value), valueType: 'integer' };
+    }
+    if (typeof value === 'boolean') {
+        return { value: value ? 'true' : 'false', valueType: 'boolean' };
+    }
+    if (value && typeof value === 'object') {
+        return { value: JSON.stringify(value), valueType: 'json' };
+    }
+    return { value: String(value ?? ''), valueType: 'string' };
+}
+
+function resolveCourseSections(courseData) {
+    const base = courseData && typeof courseData === 'object' ? courseData : {};
+    const general = base.general && typeof base.general === 'object' ? base.general : base;
+    const gradesync = base.gradesync && typeof base.gradesync === 'object' ? base.gradesync : base;
+    const sourceContainer = gradesync.sources && typeof gradesync.sources === 'object'
+        ? gradesync.sources
+        : (base.sources && typeof base.sources === 'object' ? base.sources : {});
+
+    const gradescope = sourceContainer.gradescope && typeof sourceContainer.gradescope === 'object'
+        ? sourceContainer.gradescope
+        : (base.gradescope && typeof base.gradescope === 'object' ? base.gradescope : {});
+
+    const prairielearn = sourceContainer.prairielearn && typeof sourceContainer.prairielearn === 'object'
+        ? sourceContainer.prairielearn
+        : (base.prairielearn && typeof base.prairielearn === 'object' ? base.prairielearn : {});
+
+    const iclicker = sourceContainer.iclicker && typeof sourceContainer.iclicker === 'object'
+        ? sourceContainer.iclicker
+        : (base.iclicker && typeof base.iclicker === 'object' ? base.iclicker : {});
+
+    const database = gradesync.database && typeof gradesync.database === 'object'
+        ? gradesync.database
+        : (base.database && typeof base.database === 'object' ? base.database : {});
+
+    const assignmentCategories = Array.isArray(gradesync.assignment_categories)
+        ? gradesync.assignment_categories
+        : (Array.isArray(base.assignment_categories) ? base.assignment_categories : []);
+
+    return {
+        base,
+        general,
+        gradescope,
+        prairielearn,
+        iclicker,
+        database,
+        assignmentCategories,
+    };
+}
+
+async function loadGradeSyncConfigFromDatabase() {
+    const systemResult = await pool.query('SELECT key, value, value_type FROM system_config');
+    const coursesResult = await pool.query(
+        `
+        SELECT
+            c.id AS internal_id,
+            c.gradescope_course_id,
+            c.name,
+            c.department,
+            c.course_number,
+            c.semester,
+            c.year,
+            c.instructor,
+            cc.gradescope_enabled,
+            cc.gradescope_course_id AS cfg_gradescope_course_id,
+            cc.gradescope_sync_interval_hours,
+            cc.prairielearn_enabled,
+            cc.prairielearn_course_id,
+            cc.iclicker_enabled,
+            cc.iclicker_course_names,
+            cc.database_enabled,
+            cc.use_as_primary,
+            json_agg(
+                json_build_object(
+                    'name', ac.name,
+                    'patterns', ac.patterns,
+                    'display_order', ac.display_order
+                )
+                ORDER BY ac.display_order, ac.name
+            ) FILTER (WHERE ac.id IS NOT NULL) AS assignment_categories
+        FROM courses c
+        LEFT JOIN course_configs cc ON cc.course_id = c.id
+        LEFT JOIN assignment_categories ac ON ac.course_id = c.id
+        WHERE c.is_active = true
+        GROUP BY c.id, cc.id
+        ORDER BY c.year DESC NULLS LAST, c.semester ASC NULLS LAST, c.department ASC NULLS LAST, c.course_number ASC NULLS LAST, c.name ASC NULLS LAST
+        `,
+    );
+
+    const hasDbData = systemResult.rows.length > 0 || coursesResult.rows.length > 0;
+    if (!hasDbData) {
+        return null;
+    }
+
+    const globalSettings = {};
+    for (const row of systemResult.rows) {
+        globalSettings[row.key] = parseStoredConfigValue(row.value, row.value_type);
+    }
+
+    const courses = coursesResult.rows.map((row) => ({
+        id: String(row.cfg_gradescope_course_id || row.gradescope_course_id || row.internal_id || ''),
+        name: row.name || '',
+        department: row.department || '',
+        course_number: row.course_number || '',
+        semester: row.semester || 'Fall',
+        year: row.year || new Date().getFullYear(),
+        instructor: row.instructor || '',
+        sources: {
+            gradescope: {
+                enabled: row.gradescope_enabled ?? false,
+                course_id: row.cfg_gradescope_course_id || row.gradescope_course_id || '',
+                sync_interval_hours: row.gradescope_sync_interval_hours ?? 24,
+            },
+            prairielearn: {
+                enabled: row.prairielearn_enabled ?? false,
+                course_id: row.prairielearn_course_id || '',
+            },
+            iclicker: {
+                enabled: row.iclicker_enabled ?? false,
+                course_names: Array.isArray(row.iclicker_course_names) ? row.iclicker_course_names : [],
+            },
+        },
+        database: {
+            enabled: row.database_enabled ?? true,
+            use_as_primary: row.use_as_primary ?? true,
+        },
+        assignment_categories: Array.isArray(row.assignment_categories)
+            ? row.assignment_categories.map((item) => ({
+                name: item?.name || '',
+                patterns: Array.isArray(item?.patterns) ? item.patterns : [],
+            }))
+            : [],
+    }));
+
+    return {
+        global_settings: globalSettings,
+        courses,
+    };
+}
+
+async function saveGradeSyncConfigToDatabase(syncConfig) {
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const globalSettings = syncConfig?.global_settings && typeof syncConfig.global_settings === 'object'
+            ? syncConfig.global_settings
+            : {};
+
+        for (const [key, rawValue] of Object.entries(globalSettings)) {
+            const { value, valueType } = toStoredConfigValue(rawValue);
+            await client.query(
+                `
+                INSERT INTO system_config (key, value, value_type)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value, value_type = EXCLUDED.value_type, updated_at = CURRENT_TIMESTAMP
+                `,
+                [key, value, valueType],
+            );
+        }
+
+        const inputCourses = Array.isArray(syncConfig?.courses) ? syncConfig.courses : [];
+        const activeCourseIds = [];
+
+        for (const courseData of inputCourses) {
+            const {
+                general,
+                gradescope,
+                prairielearn,
+                iclicker,
+                database,
+                assignmentCategories,
+            } = resolveCourseSections(courseData);
+
+            const gradescopeCourseId = String(
+                gradescope?.course_id || general?.id || courseData?.id || '',
+            ).trim();
+
+            if (!gradescopeCourseId) {
+                continue;
+            }
+
+            const courseResult = await client.query(
+                `
+                INSERT INTO courses (
+                    gradescope_course_id,
+                    name,
+                    department,
+                    course_number,
+                    semester,
+                    year,
+                    instructor,
+                    is_active
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                ON CONFLICT (gradescope_course_id)
+                DO UPDATE SET
+                    name = EXCLUDED.name,
+                    department = EXCLUDED.department,
+                    course_number = EXCLUDED.course_number,
+                    semester = EXCLUDED.semester,
+                    year = EXCLUDED.year,
+                    instructor = EXCLUDED.instructor,
+                    is_active = true,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id
+                `,
+                [
+                    gradescopeCourseId,
+                    general?.name || null,
+                    general?.department || null,
+                    general?.course_number || null,
+                    general?.semester || null,
+                    general?.year || null,
+                    general?.instructor || null,
+                ],
+            );
+
+            const internalCourseId = courseResult.rows[0]?.id;
+            if (!internalCourseId) {
+                continue;
+            }
+            activeCourseIds.push(internalCourseId);
+
+            await client.query(
+                `
+                INSERT INTO course_configs (
+                    course_id,
+                    gradescope_enabled,
+                    gradescope_course_id,
+                    gradescope_sync_interval_hours,
+                    prairielearn_enabled,
+                    prairielearn_course_id,
+                    iclicker_enabled,
+                    iclicker_course_names,
+                    database_enabled,
+                    use_as_primary
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (course_id)
+                DO UPDATE SET
+                    gradescope_enabled = EXCLUDED.gradescope_enabled,
+                    gradescope_course_id = EXCLUDED.gradescope_course_id,
+                    gradescope_sync_interval_hours = EXCLUDED.gradescope_sync_interval_hours,
+                    prairielearn_enabled = EXCLUDED.prairielearn_enabled,
+                    prairielearn_course_id = EXCLUDED.prairielearn_course_id,
+                    iclicker_enabled = EXCLUDED.iclicker_enabled,
+                    iclicker_course_names = EXCLUDED.iclicker_course_names,
+                    database_enabled = EXCLUDED.database_enabled,
+                    use_as_primary = EXCLUDED.use_as_primary,
+                    updated_at = CURRENT_TIMESTAMP
+                `,
+                [
+                    internalCourseId,
+                    gradescope?.enabled ?? false,
+                    gradescope?.course_id || gradescopeCourseId,
+                    gradescope?.sync_interval_hours ?? 24,
+                    prairielearn?.enabled ?? false,
+                    prairielearn?.course_id || null,
+                    iclicker?.enabled ?? false,
+                    Array.isArray(iclicker?.course_names) ? iclicker.course_names : [],
+                    database?.enabled ?? true,
+                    database?.use_as_primary ?? true,
+                ],
+            );
+
+            await client.query('DELETE FROM assignment_categories WHERE course_id = $1', [internalCourseId]);
+            for (let index = 0; index < assignmentCategories.length; index += 1) {
+                const category = assignmentCategories[index] || {};
+                const name = String(category.name || '').trim();
+                if (!name) {
+                    continue;
+                }
+                await client.query(
+                    `
+                    INSERT INTO assignment_categories (course_id, name, patterns, display_order)
+                    VALUES ($1, $2, $3, $4)
+                    `,
+                    [
+                        internalCourseId,
+                        name,
+                        Array.isArray(category.patterns) ? category.patterns : [],
+                        index,
+                    ],
+                );
+            }
+        }
+
+        if (activeCourseIds.length > 0) {
+            await client.query(
+                `
+                UPDATE courses
+                SET is_active = false, updated_at = CURRENT_TIMESTAMP
+                WHERE is_active = true
+                  AND id <> ALL($1::int[])
+                `,
+                [activeCourseIds],
+            );
+        } else {
+            await client.query('UPDATE courses SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE is_active = true');
+        }
+
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 const PERMISSION_LEVELS = new Set(['owner', 'editor', 'viewer']);
 const USER_ROLES = new Set(['superadmin', 'admin', 'instructor', 'ta', 'readonly']);
 
@@ -207,8 +540,17 @@ router.get('/sync', async (req, res, next) => {
             return;
         }
 
+        try {
+            const dbConfig = await loadGradeSyncConfigFromDatabase();
+            if (dbConfig) {
+                return res.status(200).json(dbConfig);
+            }
+        } catch (dbError) {
+            console.warn('DB-backed GradeSync config read failed, falling back to config.json:', dbError?.message || dbError);
+        }
+
         const config = loadUnifiedConfig();
-        res.status(200).json(config.gradesync || {});
+        return res.status(200).json(config.gradesync || {});
     } catch (error) {
         console.error('Error getting GradeSync config:', error);
         next(error);
@@ -223,8 +565,12 @@ router.put('/sync', async (req, res, next) => {
             return;
         }
 
+        const syncConfig = req.body || {};
+
+        await saveGradeSyncConfigToDatabase(syncConfig);
+
         const config = loadUnifiedConfig();
-        config.gradesync = req.body || {};
+        config.gradesync = syncConfig;
         saveUnifiedConfig(config);
         res.status(200).json({ success: true, message: 'GradeSync configuration saved' });
     } catch (error) {

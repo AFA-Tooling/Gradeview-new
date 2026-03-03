@@ -61,49 +61,52 @@ export default function Settings() {
 
         const courses = Array.isArray(sourceConfig.courses) ? sourceConfig.courses : [];
         const normalizedCourses = courses.map((course) => {
+            const general = course.general || {};
+            const gradesyncSection = course.gradesync || {};
+            const sourceContainer = gradesyncSection.sources || course.sources || {};
             const legacySources = {
-                gradescope: course.gradescope,
-                prairielearn: course.prairielearn,
-                iclicker: course.iclicker,
+                gradescope: gradesyncSection.gradescope || course.gradescope,
+                prairielearn: gradesyncSection.prairielearn || course.prairielearn,
+                iclicker: gradesyncSection.iclicker || course.iclicker,
             };
 
             const sources = {
                 gradescope: {
-                    enabled: course.sources?.gradescope?.enabled ?? legacySources.gradescope?.enabled ?? false,
-                    course_id: course.sources?.gradescope?.course_id ?? legacySources.gradescope?.course_id ?? '',
-                    sync_interval_hours: course.sources?.gradescope?.sync_interval_hours ?? legacySources.gradescope?.sync_interval_hours ?? 24,
+                    enabled: sourceContainer?.gradescope?.enabled ?? legacySources.gradescope?.enabled ?? false,
+                    course_id: sourceContainer?.gradescope?.course_id ?? legacySources.gradescope?.course_id ?? '',
+                    sync_interval_hours: sourceContainer?.gradescope?.sync_interval_hours ?? legacySources.gradescope?.sync_interval_hours ?? 24,
                 },
                 prairielearn: {
-                    enabled: course.sources?.prairielearn?.enabled ?? legacySources.prairielearn?.enabled ?? false,
-                    course_id: course.sources?.prairielearn?.course_id ?? legacySources.prairielearn?.course_id ?? '',
+                    enabled: sourceContainer?.prairielearn?.enabled ?? legacySources.prairielearn?.enabled ?? false,
+                    course_id: sourceContainer?.prairielearn?.course_id ?? legacySources.prairielearn?.course_id ?? '',
                 },
                 iclicker: {
-                    enabled: course.sources?.iclicker?.enabled ?? legacySources.iclicker?.enabled ?? false,
-                    course_names: course.sources?.iclicker?.course_names ?? legacySources.iclicker?.course_names ?? [],
+                    enabled: sourceContainer?.iclicker?.enabled ?? legacySources.iclicker?.enabled ?? false,
+                    course_names: sourceContainer?.iclicker?.course_names ?? legacySources.iclicker?.course_names ?? [],
                 },
             };
 
             return {
-                id: course.id || `course_${Date.now()}`,
-                name: course.name || '',
-                department: course.department || '',
-                course_number: course.course_number || '',
-                semester: course.semester || 'Fall',
-                year: course.year || new Date().getFullYear(),
-                instructor: course.instructor || '',
+                id: general.id || course.id || sources.gradescope.course_id || `course_${Date.now()}`,
+                name: general.name || course.name || '',
+                department: general.department || course.department || '',
+                course_number: general.course_number || course.course_number || '',
+                semester: general.semester || course.semester || 'Fall',
+                year: general.year || course.year || new Date().getFullYear(),
+                instructor: general.instructor || course.instructor || '',
                 sources,
                 database: {
-                    enabled: course.database?.enabled ?? true,
-                    use_as_primary: course.database?.use_as_primary ?? true,
+                    enabled: gradesyncSection.database?.enabled ?? course.database?.enabled ?? true,
+                    use_as_primary: gradesyncSection.database?.use_as_primary ?? course.database?.use_as_primary ?? true,
                 },
                 buckets: {
-                    total_points_cap: course.buckets?.total_points_cap ?? '',
-                    rounding_policy: course.buckets?.rounding_policy ?? '',
-                    component_percentages: course.buckets?.component_percentages || [],
-                    grade_bins: course.buckets?.grade_bins || [],
-                    grading_breakdown: course.buckets?.grading_breakdown || [],
+                    total_points_cap: gradesyncSection.buckets?.total_points_cap ?? course.buckets?.total_points_cap ?? '',
+                    rounding_policy: gradesyncSection.buckets?.rounding_policy ?? course.buckets?.rounding_policy ?? '',
+                    component_percentages: gradesyncSection.buckets?.component_percentages || course.buckets?.component_percentages || [],
+                    grade_bins: gradesyncSection.buckets?.grade_bins || course.buckets?.grade_bins || [],
+                    grading_breakdown: gradesyncSection.buckets?.grading_breakdown || course.buckets?.grading_breakdown || [],
                 },
-                assignment_categories: course.assignment_categories || [],
+                assignment_categories: gradesyncSection.assignment_categories || course.assignment_categories || [],
             };
         });
 

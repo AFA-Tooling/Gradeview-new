@@ -25,7 +25,7 @@ def sync_course(course_id: str):
     同步指定课程的所有成绩（Gradescope + PrairieLearn + iClicker）
     
     Args:
-        course_id: 课程 ID（在 config.json 中配置）
+        course_id: 课程 ID（在仓库根目录 config.json 中配置）
     """
     print("=" * 70)
     print(f"📊 开始同步课程: {course_id}")
@@ -66,7 +66,7 @@ def sync_course(course_id: str):
         print(f"❌ 错误: {e}")
         print()
         print("请检查：")
-        print("  1. config.json 中是否有该课程配置")
+        print("  1. 仓库根目录 config.json 中是否有该课程配置")
         print("  2. 环境变量是否正确配置")
         return None
     except Exception as e:
@@ -90,7 +90,7 @@ def list_courses():
     
     if not course_configs:
         print("⚠️  未找到任何课程配置")
-        print("请在 config.json 中添加课程配置")
+        print("请在仓库根目录 config.json 中添加课程配置")
         return
     
     for config in course_configs:

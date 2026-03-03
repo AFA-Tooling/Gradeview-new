@@ -1,8 +1,7 @@
 """
 Unified Configuration Manager for GradeSync.
 
-Loads GradeSync settings from the repository root config.json (`gradesync` section)
-with backward compatibility for legacy gradesync/config.json format.
+Loads GradeSync settings from the repository root config.json (`gradesync` section).
 """
 import json
 import os
@@ -13,12 +12,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 def _resolve_default_config_path() -> Path:
-    """Resolve default config path with fallback to legacy location."""
+    """Resolve default config path at repository root."""
     root_config = Path(__file__).parent.parent.parent / "config.json"
-    legacy_config = Path(__file__).parent.parent / "config.json"
-    if root_config.exists():
-        return root_config
-    return legacy_config
+    return root_config
 
 
 DEFAULT_CONFIG_PATH = _resolve_default_config_path()

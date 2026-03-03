@@ -22,7 +22,7 @@ Grades/
   docker-compose.dev.yml # Dev compose with Cloud SQL Proxy
   .env.example        # Environment template
   config.example.json # Unified config template (gradeview + gradesync)
-  config.json         # Unified runtime config
+  config.json         # Unified runtime config (repository root)
 ```
 
 ## Key services
@@ -37,7 +37,7 @@ Grades/
 
 - Only `@berkeley.edu` accounts can authenticate (enforced by Google token domain check).
 - Runtime authorization is DB-only (`users` + `course_permissions`).
-- `config.json` role lists must be migrated into DB before login checks rely solely on DB.
+- Repository-root `config.json` role lists must be migrated into DB before login checks rely solely on DB.
 
 ## IAM roles
 
@@ -59,7 +59,7 @@ Grades/
 3. Fill in required values in `.env`:
   - Database connection (`GRADESYNC_DATABASE_URL` or `POSTGRES_*`)
   - Third-party credentials (`GRADESCOPE_*`, `PL_API_TOKEN`, `ICLICKER_*`)
-4. Fill in required values in `config.json`:
+4. Fill in required values in repository-root `config.json`:
   - `gradeview.googleconfig.oauth.clientid`: OAuth client ID used to verify tokens
   - `gradeview.admins`: global admin emails
   - `gradesync.courses[]`: each course is split into:
