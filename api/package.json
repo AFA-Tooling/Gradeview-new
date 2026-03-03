@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "migrateConfigToDb": "node v2/Routes/config/migrate_config_to_db.js",
     "testDb": "nodemon testDb.js",
     "testApi": "nodemon testApi.js",
     "server": "concurrently \"npm run start\" \"cd ../website && npm run react\"",

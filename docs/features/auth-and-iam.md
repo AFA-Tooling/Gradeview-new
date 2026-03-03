@@ -9,7 +9,7 @@
 
 ## Key Rules
 
-- Staff/admin authorization uses DB-backed permissions.
+- Staff/admin authorization is DB-only (`users` + `course_permissions`).
 - Student access is course-scoped.
 - Super admin is the only global bypass.
 

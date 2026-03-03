@@ -36,8 +36,8 @@ Grades/
 ## Authentication notes
 
 - Only `@berkeley.edu` accounts can authenticate (enforced by Google token domain check).
-- Global admins are defined in `config.json` under `gradeview.admins`.
-- Per-course admins are defined in `config.json` under `courses[].general.admins` (or `gradesync.courses[].general.admins` if wrapped format is used).
+- Runtime authorization is DB-only (`users` + `course_permissions`).
+- `config.json` role lists must be migrated into DB before login checks rely solely on DB.
 
 ## IAM roles
 
@@ -123,5 +123,5 @@ Notes:
 
 ## Troubleshooting
 
-- If login fails, confirm the account is `@berkeley.edu` and listed in `gradeview.admins` or the target course `admins` list.
+- If login fails, confirm the account is `@berkeley.edu` and has DB permissions in `users` + `course_permissions`.
 - For DB connection issues, confirm Cloud SQL Proxy settings and `POSTGRES_*` values.
