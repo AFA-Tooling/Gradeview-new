@@ -9,6 +9,7 @@ const GRADESYNC_URL = process.env.GRADESYNC_URL || 'http://gradesync:8000';
 const COURSES_PROXY_TIMEOUT_MS = Number(process.env.GRADESYNC_COURSES_TIMEOUT_MS || 60000);
 const SYNC_PROXY_TIMEOUT_MS = Number(process.env.GRADESYNC_SYNC_TIMEOUT_MS || 3600000);
 const SYNC_JOB_TTL_MS = Number(process.env.GRADESYNC_SYNC_JOB_TTL_MS || 12 * 60 * 60 * 1000);
+const SYNC_JOB_MAX_EVENTS = Number(process.env.GRADESYNC_SYNC_JOB_MAX_EVENTS || 300);
 
 const syncJobs = new Map();
 
@@ -183,9 +184,44 @@ function createSyncJob(courseId) {
         elapsedSeconds: 0,
         result: null,
         error: null,
+        events: [],
     };
     syncJobs.set(id, job);
     return job;
+}
+
+function appendSyncJobEvent(id, eventPatch = {}) {
+    const existing = syncJobs.get(id);
+    if (!existing) return null;
+
+    const nextEvent = {
+        at: nowIso(),
+        status: eventPatch.status || existing.status || 'running',
+        source: eventPatch.source ?? existing.source ?? null,
+        stage: eventPatch.stage || existing.stage || 'running',
+        message: eventPatch.message || existing.message || '',
+        progress: Number.isFinite(eventPatch.progress) ? eventPatch.progress : (Number.isFinite(existing.progress) ? existing.progress : 0),
+        currentStep: Number.isFinite(eventPatch.currentStep) ? eventPatch.currentStep : existing.currentStep,
+        totalSteps: Number.isFinite(eventPatch.totalSteps) ? eventPatch.totalSteps : existing.totalSteps,
+        subCurrent: Number.isFinite(eventPatch.subCurrent) ? eventPatch.subCurrent : existing.subCurrent,
+        subTotal: Number.isFinite(eventPatch.subTotal) ? eventPatch.subTotal : existing.subTotal,
+        subLabel: eventPatch.subLabel ?? existing.subLabel ?? '',
+    };
+
+    const previous = Array.isArray(existing.events) ? existing.events : [];
+    const nextEvents = [...previous, nextEvent];
+    if (nextEvents.length > SYNC_JOB_MAX_EVENTS) {
+        nextEvents.splice(0, nextEvents.length - SYNC_JOB_MAX_EVENTS);
+    }
+
+    const updated = {
+        ...existing,
+        events: nextEvents,
+        updatedAt: nowIso(),
+    };
+    updated.elapsedSeconds = toElapsedSeconds(updated.startedAt);
+    syncJobs.set(id, updated);
+    return updated;
 }
 
 function updateSyncJob(id, patch) {
@@ -243,12 +279,21 @@ async function runSyncJob(jobId) {
         error: null,
         result: null,
     });
+    appendSyncJobEvent(jobId, {
+        status: 'running',
+        source: null,
+        stage: 'start',
+        message: 'Sync in progress',
+        progress: 1,
+        currentStep: 0,
+        totalSteps: 0,
+    });
 
     try {
         let data = null;
         try {
             data = await requestSyncWithProgress(current.courseId, (event) => {
-                updateSyncJob(jobId, {
+                const patch = {
                     status: 'running',
                     message: event.message || 'Sync in progress',
                     progress: Number.isFinite(event.progress) ? event.progress : 1,
@@ -260,7 +305,9 @@ async function runSyncJob(jobId) {
                     subTotal: Number.isFinite(event.subTotal) ? event.subTotal : 0,
                     subLabel: event.subLabel || '',
                     error: null,
-                });
+                };
+                updateSyncJob(jobId, patch);
+                appendSyncJobEvent(jobId, patch);
             });
         } catch (streamErr) {
             const streamUnavailable = /returned 404/i.test(streamErr?.message || '');
@@ -280,6 +327,15 @@ async function runSyncJob(jobId) {
                 subTotal: 0,
                 subLabel: '',
                 error: null,
+            });
+            appendSyncJobEvent(jobId, {
+                status: 'running',
+                source: 'gradescope',
+                stage: 'fallback',
+                message: 'Realtime progress not available, running sync in compatibility mode...',
+                progress: 20,
+                currentStep: 1,
+                totalSteps: 1,
             });
 
             data = await requestJson(`${GRADESYNC_URL}/api/sync/${current.courseId}`, {
@@ -304,6 +360,13 @@ async function runSyncJob(jobId) {
             result: data,
             error: null,
         });
+        appendSyncJobEvent(jobId, {
+            status: 'completed',
+            source: null,
+            stage: 'completed',
+            message: 'Sync completed',
+            progress: 100,
+        });
     } catch (err) {
         updateSyncJob(jobId, {
             status: 'failed',
@@ -315,6 +378,15 @@ async function runSyncJob(jobId) {
             finishedAt: nowIso(),
             error: err?.message || 'Unknown sync error',
             result: null,
+        });
+        appendSyncJobEvent(jobId, {
+            status: 'failed',
+            source: null,
+            stage: 'failed',
+            message: isTimeoutError(err)
+                ? 'Grade sync timed out while waiting for GradeSync response'
+                : 'Failed to sync grades',
+            progress: 100,
         });
     } finally {
         pruneExpiredSyncJobs();

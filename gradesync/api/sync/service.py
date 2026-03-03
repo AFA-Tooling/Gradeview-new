@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from api.config_manager import get_course_config, get_config_manager, EnvConfig
 from api.core.db import SessionLocal
 from api.core.models import Course
-from api.core.ingest import save_summary_sheet_to_db
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +87,7 @@ class GradeSyncService:
             logger.info("iClicker sync disabled for this course")
 
         if self.config.database_enabled:
-            steps.append(("database", "Updating summary sheets", self._update_summary_sheets))
+            steps.append(("database", "Refreshing derived scores", self._refresh_derived_scores))
 
         total_steps = len(steps)
 
@@ -289,9 +288,9 @@ class GradeSyncService:
                 message=f"iClicker sync failed: {str(e)}"
             )
     
-    def _update_summary_sheets(self, progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> GradeSyncResult:
-        """Update summary sheets in database."""
-        logger.info(f"Updating summary sheets in database for {self.course_id}")
+    def _refresh_derived_scores(self, progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> GradeSyncResult:
+        """Refresh derived policy tables without writing summary_sheets."""
+        logger.info(f"Refreshing derived scores in database for {self.course_id}")
         
         try:
             from api.core.models import Assignment, Student, Submission
@@ -326,25 +325,6 @@ class GradeSyncService:
                     Assignment.course_id == course.id
                 ).all()
                 
-                submission_lookup = {
-                    (sub.assignment_id, sub.student_id): sub 
-                    for sub in submissions
-                }
-                
-                course_data = {
-                    "course": course,
-                    "assignments": assignments,
-                    "students": students,
-                    "submissions": submission_lookup
-                }
-                
-                # Save to summary_sheets table with course categories
-                save_summary_sheet_to_db(
-                    self.config.gradescope_course_id, 
-                    course_data,
-                    course_categories=self.config.categories
-                )
-
                 from api.core.exam_policy import compute_effective_exam_scores
                 policy_result = compute_effective_exam_scores(session, course.id)
                 session.commit()
@@ -352,7 +332,7 @@ class GradeSyncService:
                 return GradeSyncResult(
                     source="database",
                     success=True,
-                    message=f"Updated summary sheets: {len(students)} students, {len(assignments)} assignments",
+                    message=f"Refreshed derived scores: {len(students)} students, {len(assignments)} assignments",
                     details={
                         "students": len(students),
                         "assignments": len(assignments),
@@ -365,11 +345,11 @@ class GradeSyncService:
                 session.close()
                 
         except Exception as e:
-            logger.exception(f"Summary sheet update failed: {e}")
+            logger.exception(f"Derived score refresh failed: {e}")
             return GradeSyncResult(
                 source="database",
                 success=False,
-                message=f"Summary sheet update failed: {str(e)}"
+                message=f"Derived score refresh failed: {str(e)}"
             )
 
 

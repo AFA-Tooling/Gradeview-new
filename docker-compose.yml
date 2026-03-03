@@ -86,6 +86,7 @@ services:
     image: ${CI_REGISTRY_IMAGE:-gradeview}/gradesync:${GRADESYNC_VERSION:-development}
     build: ./gradesync
     volumes:
+      - ./config.json:/app/config.json:ro
     env_file:
       - .env
     environment:

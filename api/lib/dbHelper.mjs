@@ -12,6 +12,22 @@ let pool = null;
 const QUEST_SUMMARY_CAP = 25;
 const ATTENDANCE_SUMMARY_CAP = 15;
 
+const QUEST_CATEGORY_ALIASES = {
+    'abstraction': 'abstraction',
+    'number representation': 'number representation',
+    'iteration': 'iteration',
+    'domain and range': 'domain and range',
+    'booleans': 'booleans',
+    'boolean': 'booleans',
+    'conditional operators and booleans': 'booleans',
+    'functions': 'functions',
+    'hofs i': 'hofs i',
+    'hof i': 'hofs i',
+    'higher order functions': 'hofs i',
+    'higher-order functions': 'hofs i',
+};
+const QUEST_UNMAPPED_BUCKET = '__quest_unmapped__';
+
 /**
  * Gets or creates a PostgreSQL connection pool.
  * @returns {Pool} PostgreSQL pool instance
@@ -628,6 +644,25 @@ function getSummaryCapByCategory(category = '') {
     return null;
 }
 
+function normalizeQuestCategoryKey(value = '') {
+    const normalized = normalizeComponentKey(value)
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!normalized) return null;
+    const direct = QUEST_CATEGORY_ALIASES[normalized];
+    if (direct) return direct;
+
+    for (const [alias, canonical] of Object.entries(QUEST_CATEGORY_ALIASES)) {
+        if (normalized.includes(alias)) {
+            return canonical;
+        }
+    }
+
+    return null;
+}
+
 function toCeilNumber(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return 0;
@@ -818,7 +853,7 @@ async function getQuestSummaryDistribution(courseId = null) {
                 if (!key) return;
 
                 const categoryRaw = String(component?.category || component?.key || '').trim();
-                const categoryKey = normalizeComponentKey(categoryRaw);
+                const categoryKey = normalizeQuestCategoryKey(categoryRaw);
                 if (!categoryKey) return;
 
                 const score = Number(scoreLookup.get(key));
@@ -838,46 +873,28 @@ async function getQuestSummaryDistribution(courseId = null) {
                 }
             });
 
-            const rawScoreTotal = Array.from(assignmentCategoryScores.values()).reduce(
-                (sum, value) => sum + (Number(value) || 0),
-                0,
-            );
-            const rawCapTotal = Array.from(assignmentCategoryCaps.values()).reduce(
-                (sum, value) => sum + (Number(value) || 0),
-                0,
-            );
-            const assignmentMaxPoints = Number(row.assignment_max_points);
-            const assignmentTotal = Number(row.total_score);
-
-            let scoreScale = 1;
-            let capScale = 1;
-
-            if (Number.isFinite(assignmentMaxPoints) && assignmentMaxPoints > 0 && rawCapTotal > 0) {
-                capScale = assignmentMaxPoints / rawCapTotal;
-                scoreScale = capScale;
-            } else if (Number.isFinite(assignmentTotal) && assignmentTotal > 0 && rawScoreTotal > 0) {
-                scoreScale = assignmentTotal / rawScoreTotal;
-                capScale = scoreScale;
-            }
-
-            if (scoreScale !== 1) {
-                assignmentCategoryScores.forEach((value, categoryKey) => {
-                    assignmentCategoryScores.set(categoryKey, (Number(value) || 0) * scoreScale);
-                });
-            }
-
-            if (capScale !== 1) {
-                assignmentCategoryCaps.forEach((value, categoryKey) => {
-                    assignmentCategoryCaps.set(categoryKey, (Number(value) || 0) * capScale);
-                });
-            }
-
             assignmentCategoryScores.forEach((categoryScore, categoryKey) => {
                 const existing = Number(student.categoryBest.get(categoryKey));
                 if (!Number.isFinite(existing) || categoryScore > existing) {
                     student.categoryBest.set(categoryKey, categoryScore);
                 }
             });
+
+            const assignmentRecognizedTotal = Array.from(assignmentCategoryScores.values()).reduce(
+                (sum, value) => sum + (Number(value) || 0),
+                0,
+            );
+            const assignmentTotal = Number(row.total_score);
+            const residual = Number.isFinite(assignmentTotal)
+                ? Math.max(0, assignmentTotal - assignmentRecognizedTotal)
+                : 0;
+
+            if (residual > 0.0001) {
+                const existingResidual = Number(student.categoryBest.get(QUEST_UNMAPPED_BUCKET));
+                if (!Number.isFinite(existingResidual) || residual > existingResidual) {
+                    student.categoryBest.set(QUEST_UNMAPPED_BUCKET, residual);
+                }
+            }
 
             assignmentCategoryCaps.forEach((categoryCap, categoryKey) => {
                 const oldCap = Number(student.categoryCaps.get(categoryKey));
@@ -890,9 +907,12 @@ async function getQuestSummaryDistribution(courseId = null) {
         }
 
         scoreLookup.forEach((score, key) => {
-            const existing = Number(student.categoryBest.get(key));
+            const categoryKey = normalizeQuestCategoryKey(key);
+            if (!categoryKey) return;
+
+            const existing = Number(student.categoryBest.get(categoryKey));
             if (!Number.isFinite(existing) || score > existing) {
-                student.categoryBest.set(key, score);
+                student.categoryBest.set(categoryKey, score);
             }
         });
     });

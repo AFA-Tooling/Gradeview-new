@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     Box, 
     Typography, 
@@ -34,6 +34,8 @@ export default function GradeSyncControl() {
     const [syncSubCurrent, setSyncSubCurrent] = useState(0);
     const [syncSubTotal, setSyncSubTotal] = useState(0);
     const [syncSubLabel, setSyncSubLabel] = useState('');
+    const [syncEvents, setSyncEvents] = useState([]);
+    const logContainerRef = useRef(null);
 
     const formatSourceLabel = (value) => {
         if (!value) return '';
@@ -103,6 +105,7 @@ export default function GradeSyncControl() {
                     setSyncSubCurrent(Number.isFinite(job.subCurrent) ? job.subCurrent : 0);
                     setSyncSubTotal(Number.isFinite(job.subTotal) ? job.subTotal : 0);
                     setSyncSubLabel(job.subLabel || '');
+                    setSyncEvents(Array.isArray(job.events) ? job.events : []);
 
                     if (job.status === 'completed') {
                         setResult(job.result || null);
@@ -146,6 +149,7 @@ export default function GradeSyncControl() {
         setSyncSubCurrent(0);
         setSyncSubTotal(0);
         setSyncSubLabel('');
+        setSyncEvents([]);
         setResult(null);
         setError(null);
         
@@ -163,6 +167,7 @@ export default function GradeSyncControl() {
                 setSyncSubCurrent(Number.isFinite(job.subCurrent) ? job.subCurrent : 0);
                 setSyncSubTotal(Number.isFinite(job.subTotal) ? job.subTotal : 0);
                 setSyncSubLabel(job.subLabel || '');
+                setSyncEvents(Array.isArray(job.events) ? job.events : []);
             })
             .catch(err => {
                 console.error("Sync failed", err);
@@ -179,6 +184,11 @@ export default function GradeSyncControl() {
                 // Keep syncing=true while polling active job status.
             });
     };
+
+    useEffect(() => {
+        if (!logContainerRef.current) return;
+        logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }, [syncEvents]);
 
     const handleCourseChange = (event) => {
         const nextCourse = event.target.value;
@@ -260,6 +270,34 @@ export default function GradeSyncControl() {
                                     {`Assignment ${Math.max(0, syncSubCurrent)}/${syncSubTotal}${syncSubLabel ? ` · ${syncSubLabel}` : ''}`}
                                 </Typography>
                             )}
+                            <Paper
+                                variant="outlined"
+                                sx={{ mt: 1.5, p: 1.25, maxHeight: 180, overflowY: 'auto', bgcolor: '#111827', color: '#e5e7eb' }}
+                                ref={logContainerRef}
+                            >
+                                {(syncEvents || []).length === 0 ? (
+                                    <Typography variant="caption" sx={{ color: '#9ca3af' }}>
+                                        Waiting for progress events...
+                                    </Typography>
+                                ) : (
+                                    (syncEvents || []).map((evt, index) => (
+                                        <Typography
+                                            key={`${evt.at || 'evt'}-${index}`}
+                                            variant="caption"
+                                            sx={{ display: 'block', fontFamily: 'monospace', lineHeight: 1.5 }}
+                                        >
+                                            [{evt.at ? new Date(evt.at).toLocaleTimeString() : '--:--:--'}]
+                                            {evt.source ? ` [${formatSourceLabel(evt.source)}]` : ''}
+                                            {evt.stage ? ` [${evt.stage}]` : ''}
+                                            {` ${evt.message || ''}`}
+                                            {Number.isFinite(evt.progress) ? ` (${Math.round(evt.progress)}%)` : ''}
+                                            {Number.isFinite(evt.subCurrent) && Number.isFinite(evt.subTotal) && evt.subTotal > 0
+                                                ? ` · ${evt.subCurrent}/${evt.subTotal}${evt.subLabel ? ` ${evt.subLabel}` : ''}`
+                                                : ''}
+                                        </Typography>
+                                    ))
+                                )}
+                            </Paper>
                         </Box>
                     </Alert>
                 )}

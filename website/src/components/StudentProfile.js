@@ -21,6 +21,60 @@ import {
 } from '../utils/studentDataProcessor';
 import StudentProfileContent from './StudentProfileContent';
 
+function applyCanonicalSummaryTotals(processedData, summarySectionTotals = {}) {
+  if (!processedData || typeof processedData !== 'object') {
+    return processedData;
+  }
+
+  const next = {
+    ...processedData,
+    categoriesData: { ...(processedData.categoriesData || {}) },
+  };
+
+  Object.entries(summarySectionTotals || {}).forEach(([sectionName, rawScore]) => {
+    if (!sectionName) return;
+    const score = Number(rawScore);
+    if (!Number.isFinite(score)) return;
+
+    const existing = next.categoriesData[sectionName] || {};
+    const cap = Number(existing.capPoints ?? existing.maxPoints) || 0;
+
+    next.categoriesData[sectionName] = {
+      ...existing,
+      total: score,
+      rawTotal: score,
+      percentage: cap > 0 ? (score / cap) * 100 : 0,
+    };
+  });
+
+  const categoryEntries = Object.entries(next.categoriesData);
+  const totalScore = categoryEntries.reduce((sum, [, category]) => sum + (Number(category.total) || 0), 0);
+
+  next.totalScore = totalScore;
+  if (!(Number(next.totalCapPoints) > 0)) {
+    next.totalCapPoints = categoryEntries.reduce((sum, [, category]) => {
+      const cap = Number(category.capPoints ?? category.maxPoints) || 0;
+      return sum + cap;
+    }, 0);
+  }
+  next.overallPercentage = next.totalCapPoints > 0 ? (next.totalScore / next.totalCapPoints) * 100 : 0;
+
+  next.radarData = categoryEntries.map(([category, categoryData]) => {
+    const categoryScore = Number(categoryData.total) || 0;
+    const cap = Number(categoryData.capPoints ?? categoryData.maxPoints) || 0;
+    return {
+      category,
+      percentage: cap > 0 ? Number(((categoryScore / cap) * 100).toFixed(2)) : 0,
+      score: Number(categoryScore.toFixed(2)),
+      maxPoints: Number(cap.toFixed(2)),
+      average: 0,
+      fullMark: 100,
+    };
+  });
+
+  return next;
+}
+
 /**
  * StudentProfile Component - Dialog Version
  * Displays detailed student profile in a dialog
@@ -58,11 +112,13 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
       apiv2.get(`/students/category-stats${courseQuery}`),
       apiv2.get(`/bins${courseQuery}`),
       apiv2.get(`/students/${encodeURIComponent(studentEmail)}/exam-policy${courseQuery}`),
+      apiv2.get(`/admin/studentScores/summary/${encodeURIComponent(studentEmail)}${courseQuery}`),
     ])
-      .then(([gradesRes, statsRes, binsRes, policyRes]) => {
+      .then(([gradesRes, statsRes, binsRes, policyRes, summaryRes]) => {
         const data = gradesRes.data;
         const classAverages = statsRes.data;
         const policyRows = Array.isArray(policyRes?.data?.rows) ? policyRes.data.rows : [];
+        const summarySectionTotals = summaryRes?.data?.summarySectionTotals || {};
         const gradingConfig = {
           assignmentPoints: binsRes?.data?.assignment_points || {},
           totalCoursePoints:
@@ -72,7 +128,8 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
             || 0,
         };
         const processedBase = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig);
-        const processed = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+        const processedWithPolicy = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+        const processed = applyCanonicalSummaryTotals(processedWithPolicy, summarySectionTotals);
 
         const trendFromApi = policyRes?.data?.questComponentTrend;
         const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);

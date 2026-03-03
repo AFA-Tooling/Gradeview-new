@@ -6,6 +6,7 @@ High-level sync operations for PrairieLearn gradebook data.
 from typing import Dict, Any, Optional, List
 import logging
 import re
+import math
 from datetime import datetime, timezone
 from sqlalchemy.dialects.postgresql import insert
 
@@ -186,6 +187,35 @@ class PrairieLearnSync:
         assessment_component_caps: Dict[str, Dict[str, float]] = {}
 
         for instance_id, meta in assessment_instance_meta.items():
+            full_component_caps: Dict[str, float] = {}
+            try:
+                instance_questions = self.pl_client._call_api(
+                    f"/course_instances/{pl_course_id}/assessment_instances/{instance_id}/instance_questions"
+                )
+                for question in instance_questions if isinstance(instance_questions, list) else []:
+                    component_name = self._normalize_component_name(
+                        question.get("question_topic") or question.get("topic"),
+                        question.get("question_name") or question.get("title") or question.get("name"),
+                    )
+                    if not component_name:
+                        continue
+
+                    cap = (
+                        self._to_float(question.get("assessment_question_max_points"))
+                        or self._to_float(question.get("max_points"))
+                        or self._to_float(question.get("points"))
+                    )
+                    if cap is None:
+                        continue
+
+                    full_component_caps[component_name] = float(full_component_caps.get(component_name, 0.0)) + float(cap)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch PrairieLearn instance questions for %s: %s",
+                    instance_id,
+                    exc,
+                )
+
             try:
                 submissions = self.pl_client._call_api(
                     f"/course_instances/{pl_course_id}/assessment_instances/{instance_id}/submissions"
@@ -215,7 +245,7 @@ class PrairieLearnSync:
                 if not question_key:
                     continue
 
-                points = self._to_float(submission.get("instance_question_points"))
+                points = self._round_up_score(submission.get("instance_question_points"))
                 cap = self._to_float(submission.get("assessment_question_max_points"))
                 if points is None:
                     continue
@@ -236,6 +266,11 @@ class PrairieLearnSync:
                 cap_value = entry.get("cap")
                 if cap_value is not None:
                     component_caps[component] = float(component_caps.get(component, 0.0)) + float(cap_value)
+
+            if full_component_caps:
+                component_caps = {**full_component_caps}
+                for component_name in full_component_caps.keys():
+                    component_scores.setdefault(component_name, 0.0)
 
             instance_component_map[instance_id] = {
                 "component_scores": component_scores,
@@ -289,6 +324,15 @@ class PrairieLearnSync:
                 except ValueError:
                     return None
             return None
+
+    @staticmethod
+    def _round_up_score(value: Any) -> Optional[float]:
+        numeric = PrairieLearnSync._to_float(value)
+        if numeric is None:
+            return None
+        if not math.isfinite(numeric):
+            return None
+        return float(math.ceil(numeric))
 
     @staticmethod
     def _select_score_columns(rows: List[Dict[str, Any]]) -> List[str]:
@@ -551,7 +595,7 @@ class PrairieLearnSync:
                         if not assignment_db_id:
                             continue
 
-                        score = self._to_float(item.get("points"))
+                        score = self._round_up_score(item.get("points"))
                         if score is None:
                             continue
 
@@ -567,10 +611,15 @@ class PrairieLearnSync:
                         }
                         if component_data:
                             for component_name, component_score in (component_data.get("component_scores") or {}).items():
-                                scores_payload[component_name] = component_score
-                            component_caps = component_data.get("component_caps") or {}
+                                rounded_component = self._round_up_score(component_score)
+                                scores_payload[component_name] = rounded_component if rounded_component is not None else 0.0
+                            caps_from_instance = component_data.get("component_caps") or {}
+                            caps_from_assessment = assessment_component_caps.get(assessment_id) or {}
+                            component_caps = {**caps_from_instance, **caps_from_assessment}
                             if component_caps:
                                 scores_payload["component_caps"] = component_caps
+                                for component_name in component_caps.keys():
+                                    scores_payload.setdefault(component_name, 0.0)
 
                         submissions_data.append({
                             "assignment_id": assignment_db_id,
@@ -587,7 +636,7 @@ class PrairieLearnSync:
                         })
                 else:
                     for column, assignment_db_id in assignment_id_by_col.items():
-                        score = self._to_float(row.get(column))
+                        score = self._round_up_score(row.get(column))
                         if score is None:
                             continue
 
