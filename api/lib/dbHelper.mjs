@@ -202,6 +202,76 @@ export async function getStudentSubmissionsGrouped(email, courseId = null) {
 }
 
 /**
+ * Gets policy-computed exam scores for a student.
+ * @param {string} email - The student's email
+ * @param {string|null} courseId - Optional course filter (internal id or gradescope_course_id)
+ * @returns {Promise<Array>} Effective policy rows ordered by exam type and attempt
+ */
+export async function getStudentExamPolicyScores(email, courseId = null) {
+    const pool = getPool();
+
+    let query = `
+        SELECT
+            e.exam_type,
+            e.attempt_no,
+            e.raw_percentage,
+            e.question_best_percentage,
+            e.clobbered_percentage,
+            e.final_percentage,
+            e.assignment_id,
+            a.title AS assignment_title,
+            e.clobber_source_assignment_id,
+            src.title AS clobber_source_title,
+            e.details,
+            e.computed_at,
+            c.id AS course_id,
+            c.gradescope_course_id
+        FROM student_exam_effective_scores e
+        JOIN students st ON st.id = e.student_id
+        JOIN courses c ON c.id = e.course_id
+        LEFT JOIN assignments a ON a.id = e.assignment_id
+        LEFT JOIN assignments src ON src.id = e.clobber_source_assignment_id
+        WHERE st.email = $1
+    `;
+
+    const params = [email];
+    if (courseId) {
+        query += ` AND (c.id::text = $2 OR c.gradescope_course_id::text = $2)`;
+        params.push(String(courseId));
+    }
+
+    query += `
+        ORDER BY
+            CASE LOWER(e.exam_type)
+                WHEN 'quest' THEN 1
+                WHEN 'midterm' THEN 2
+                WHEN 'postterm' THEN 3
+                ELSE 9
+            END,
+            e.attempt_no ASC
+    `;
+
+    const result = await pool.query(query, params);
+
+    return result.rows.map((row) => ({
+        examType: row.exam_type,
+        attemptNo: Number(row.attempt_no) || 0,
+        assignmentId: row.assignment_id,
+        assignmentTitle: row.assignment_title || '',
+        rawPercentage: row.raw_percentage == null ? null : Number(row.raw_percentage),
+        questionBestPercentage: row.question_best_percentage == null ? null : Number(row.question_best_percentage),
+        clobberedPercentage: row.clobbered_percentage == null ? null : Number(row.clobbered_percentage),
+        finalPercentage: row.final_percentage == null ? null : Number(row.final_percentage),
+        clobberSourceAssignmentId: row.clobber_source_assignment_id,
+        clobberSourceTitle: row.clobber_source_title || null,
+        details: row.details || {},
+        computedAt: row.computed_at,
+        courseId: row.course_id,
+        gradescopeCourseId: row.gradescope_course_id,
+    }));
+}
+
+/**
  * Checks if a student exists in the database
  * @param {string} email - The student's email
  * @returns {Promise<boolean>} True if student exists

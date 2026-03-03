@@ -30,6 +30,7 @@ class AssessmentInfo:
     number: str
     type: str  # Homework, Exam, etc.
     points: float
+    short_name: str = ""
 
 
 class PrairieLearnClient:
@@ -165,7 +166,8 @@ class PrairieLearnClient:
                 title=item.get('title', ''),
                 number=item.get('number', ''),
                 type=item.get('type', ''),
-                points=float(item.get('max_points', 0))
+                points=float(item.get('max_points', 0) or 0),
+                short_name=item.get('short_name', '')
             ))
         
         logger.info(f"Found {len(assessments)} assessments in course {course_id}")

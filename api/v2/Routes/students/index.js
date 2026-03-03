@@ -4,6 +4,7 @@ import GradesRouter from './grades/index.js';
 import ProjectionsRouter from './projections/index.js';
 import ConceptStructureRouter from './concept-structure/index.js';
 import CategoryStatsRouter from './category-stats/index.js';
+import ExamPolicyRouter from './exam-policy/index.js';
 import {
     validateAdminOrStudentMiddleware,
     validateStaffOrAdminMiddleware,
@@ -55,6 +56,7 @@ router.use('/:email', validateStudentSelfOrStaffOrAdminMiddleware);
 router.use('/:email/grades', GradesRouter);
 router.use('/:email/projections', ProjectionsRouter);
 router.use('/:email/concept-structure', ConceptStructureRouter);
+router.use('/:email/exam-policy', ExamPolicyRouter);
 
 router.get('/', validateStaffOrAdminMiddleware, async (req, res) => {
     try {

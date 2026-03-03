@@ -286,16 +286,85 @@ def write_assignment_scores_optimized(
         
         # Parse CSV
         reader = csv.DictReader(io.StringIO(csv_content))
+        fieldnames = reader.fieldnames or []
+        primary_name_column = fieldnames[0] if fieldnames else "Name"
+
+        known_columns = {
+            primary_name_column,
+            'SID',
+            'Email',
+            'Sections',
+            'Total Score',
+            'Max Points',
+            'Status',
+            'Submission ID',
+            'Submission Time',
+            'Lateness (H:M:S)',
+            'View Count',
+            'Submission Count',
+        }
+
+        question_columns = [
+            column_name for column_name in fieldnames
+            if column_name and column_name not in known_columns
+        ]
+
+        def parse_float(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            if isinstance(value, (int, float)):
+                return float(value)
+            text = str(value).strip()
+            if not text:
+                return None
+            try:
+                return float(text)
+            except ValueError:
+                return None
+
+        def parse_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            text = str(value).strip()
+            if not text:
+                return None
+            try:
+                return int(float(text))
+            except ValueError:
+                return None
         
         # Collect data for batch operations
         students_data = []
         submissions_data = []
         seen_emails = set()
         assignment_max_points = 0.0
+        question_categories: Dict[str, str] = {}
+        question_max_points: Dict[str, float] = {}
         
         for row in reader:
-            email = row.get('Email', '').strip()
-            sid = row.get('SID', '').strip()
+            email_raw = str(row.get('Email', '') or '').strip()
+            sid = str(row.get('SID', '') or '').strip()
+
+            row_marker_source = email_raw or str(row.get(primary_name_column, '') or '').strip()
+            row_marker = row_marker_source.strip().upper()
+
+            if row_marker == 'CATEGORY':
+                for question_column in question_columns:
+                    category_value = str(row.get(question_column, '') or '').strip()
+                    if category_value:
+                        question_categories[question_column] = category_value
+                continue
+
+            if row_marker in {'MAX POINTS', 'MAX_POINTS', 'MAXPOINTS'}:
+                for question_column in question_columns:
+                    max_points_value = parse_float(row.get(question_column))
+                    if max_points_value is not None:
+                        question_max_points[question_column] = max_points_value
+                continue
+
+            email = email_raw
             
             if not email or email in seen_emails:
                 continue
@@ -307,24 +376,37 @@ def write_assignment_scores_optimized(
                 'course_id': course.id,
                 'email': email,
                 'sid': sid,
-                'legal_name': row.get(reader.fieldnames[0], '') if reader.fieldnames else ''
+                'legal_name': row.get(primary_name_column, '') if fieldnames else ''
             })
             
-            parsed_max_points = float(row.get('Max Points', 0) or 0)
-            if parsed_max_points > assignment_max_points:
+            per_question_scores: Dict[str, float] = {}
+            for question_column in question_columns:
+                question_score = parse_float(row.get(question_column))
+                if question_score is not None:
+                    per_question_scores[question_column] = question_score
+
+            parsed_max_points = parse_float(row.get('Max Points'))
+            if parsed_max_points is None and question_max_points:
+                parsed_max_points = float(sum(question_max_points.values()))
+
+            if parsed_max_points and parsed_max_points > assignment_max_points:
                 assignment_max_points = parsed_max_points
+
+            total_score = parse_float(row.get('Total Score'))
+            if total_score is None and per_question_scores:
+                total_score = float(sum(per_question_scores.values()))
 
             # Submission data (will add student_id later)
             submission = {
-                'total_score': float(row.get('Total Score', 0) or 0),
+                'total_score': total_score,
                 'max_points': parsed_max_points,
                 'status': row.get('Status', ''),
                 'submission_id': row.get('Submission ID', ''),
                 'submission_time': None,  # Initialize to None, will be set if parsing succeeds
                 'lateness': row.get('Lateness (H:M:S)', ''),
-                'view_count': int(row.get('View Count', 0) or 0),
-                'submission_count': int(row.get('Submission Count', 0) or 0),
-                'scores_by_question': {},  # Initialize to empty dict
+                'view_count': parse_int(row.get('View Count')),
+                'submission_count': parse_int(row.get('Submission Count')),
+                'scores_by_question': per_question_scores,
             }
             
             # Parse submission time, expecting "YYYY-MM-DD HH:MM:SS ZZZZ" format
@@ -340,7 +422,28 @@ def write_assignment_scores_optimized(
             
             submissions_data.append({**submission, 'email': email})
 
-        if assignment_max_points > 0 and (assignment.max_points is None or float(assignment.max_points or 0) <= 0):
+        assignment_metadata = assignment.assignment_metadata if isinstance(assignment.assignment_metadata, dict) else {}
+        if question_columns:
+            assignment_metadata['scores_schema'] = 'per_question_columns'
+            assignment_metadata['components'] = [
+                {
+                    'key': question_column,
+                    'category': question_categories.get(question_column),
+                    'max_points': question_max_points.get(question_column),
+                    'display_order': idx,
+                }
+                for idx, question_column in enumerate(question_columns)
+            ]
+            assignment.assignment_metadata = assignment_metadata
+
+        if assignment_max_points <= 0 and question_max_points:
+            assignment_max_points = float(sum(question_max_points.values()))
+
+        if assignment_max_points > 0 and (
+            assignment.max_points is None
+            or float(assignment.max_points or 0) <= 0
+            or float(assignment.max_points or 0) != assignment_max_points
+        ):
             assignment.max_points = assignment_max_points
             session.flush()
         

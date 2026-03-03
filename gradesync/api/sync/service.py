@@ -230,7 +230,10 @@ class GradeSyncService:
             # Sync grades
             result = sync.sync_course(
                 course_id=self.config.prairielearn_course_id,
-                save_to_db=self.config.database_enabled
+                save_to_db=self.config.database_enabled,
+                target_course_gradescope_id=self.config.gradescope_course_id,
+                target_course_name=self.config.name,
+                course_categories=self.config.categories,
             )
             
             return GradeSyncResult(
@@ -341,6 +344,10 @@ class GradeSyncService:
                     course_data,
                     course_categories=self.config.categories
                 )
+
+                from api.core.exam_policy import compute_effective_exam_scores
+                policy_result = compute_effective_exam_scores(session, course.id)
+                session.commit()
                 
                 return GradeSyncResult(
                     source="database",
@@ -349,7 +356,8 @@ class GradeSyncService:
                     details={
                         "students": len(students),
                         "assignments": len(assignments),
-                        "submissions": len(submissions)
+                        "submissions": len(submissions),
+                        "policy": policy_result,
                     }
                 )
                 

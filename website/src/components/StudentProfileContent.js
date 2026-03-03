@@ -134,6 +134,8 @@ export default function StudentProfileContent({ studentData }) {
     }
   }, [studentData.assignmentsList, sortMode]);
 
+  const examPolicyRows = Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [];
+
   // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return '-';
@@ -575,6 +577,64 @@ export default function StudentProfileContent({ studentData }) {
           </Paper>
         </Grid>
       </Grid>
+
+      {/* Exam Policy Effective Scores */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 4,
+          mb: 3,
+          backgroundColor: 'white',
+          borderRadius: 3,
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+        }}
+      >
+        <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
+          Exam Policy Scores
+        </Typography>
+        {examPolicyRows.length === 0 ? (
+          <Typography sx={{ color: '#6b7280' }}>No computed exam-policy rows yet.</Typography>
+        ) : (
+          <TableContainer sx={{ mt: 2, borderRadius: 2, overflow: 'hidden' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow sx={{ backgroundColor: '#f9fafb' }}>
+                  <TableCell><strong>Exam</strong></TableCell>
+                  <TableCell align="center"><strong>Attempt</strong></TableCell>
+                  <TableCell align="center"><strong>Raw %</strong></TableCell>
+                  <TableCell align="center"><strong>Question-best %</strong></TableCell>
+                  <TableCell align="center"><strong>Clobbered %</strong></TableCell>
+                  <TableCell align="center"><strong>Final %</strong></TableCell>
+                  <TableCell><strong>Source</strong></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {examPolicyRows.map((row, idx) => {
+                  const examLabel = `${String(row.examType || '').toUpperCase()} ${row.attemptNo || '-'}`;
+                  const raw = row.rawPercentage == null ? '-' : `${Number(row.rawPercentage).toFixed(2)}%`;
+                  const qbest = row.questionBestPercentage == null ? '-' : `${Number(row.questionBestPercentage).toFixed(2)}%`;
+                  const clob = row.clobberedPercentage == null ? '-' : `${Number(row.clobberedPercentage).toFixed(2)}%`;
+                  const finalPct = row.finalPercentage == null ? '-' : `${Number(row.finalPercentage).toFixed(2)}%`;
+                  const sourceText = row.clobberSourceTitle || row.assignmentTitle || '-';
+
+                  return (
+                    <TableRow key={`${row.examType}-${row.attemptNo}-${idx}`} hover>
+                      <TableCell>{examLabel}</TableCell>
+                      <TableCell align="center">{row.attemptNo}</TableCell>
+                      <TableCell align="center">{raw}</TableCell>
+                      <TableCell align="center">{qbest}</TableCell>
+                      <TableCell align="center">{clob}</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>{finalPct}</TableCell>
+                      <TableCell>{sourceText}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
 
       {/* Detailed Assignment Scores */}
       <Paper 

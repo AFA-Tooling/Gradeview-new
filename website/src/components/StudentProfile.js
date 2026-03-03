@@ -50,11 +50,13 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
     Promise.all([
       apiv2.get(gradesQuery),
       apiv2.get(`/students/category-stats${courseQuery}`),
-      apiv2.get(`/bins${courseQuery}`)
+      apiv2.get(`/bins${courseQuery}`),
+      apiv2.get(`/students/${encodeURIComponent(studentEmail)}/exam-policy${courseQuery}`),
     ])
-      .then(([gradesRes, statsRes, binsRes]) => {
+      .then(([gradesRes, statsRes, binsRes, policyRes]) => {
         const data = gradesRes.data;
         const classAverages = statsRes.data;
+        const policyRows = Array.isArray(policyRes?.data?.rows) ? policyRes.data.rows : [];
         const gradingConfig = {
           assignmentPoints: binsRes?.data?.assignment_points || {},
           totalCoursePoints:
@@ -63,7 +65,11 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
             || Number(binsRes?.data?.total_course_points)
             || 0,
         };
-        setStudentData(processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig));
+        const processed = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig);
+        setStudentData({
+          ...processed,
+          examPolicyRows: policyRows,
+        });
         setLoading(false);
       })
       .catch(err => {

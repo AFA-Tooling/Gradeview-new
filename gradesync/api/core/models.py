@@ -214,3 +214,45 @@ class SummarySheet(Base):
     __table_args__ = (
         UniqueConstraint('course_id', 'student_id', 'assignment_id', name='uq_summary_course_student_assignment'),
     )
+
+
+class ExamAttemptMap(Base):
+    __tablename__ = "exam_attempt_map"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False, unique=True, index=True)
+    exam_type = Column(String(32), nullable=False, index=True)  # quest, midterm, postterm
+    attempt_no = Column(Integer, nullable=False)
+    is_mandatory = Column(Boolean, default=False)
+    is_practice = Column(Boolean, default=False)
+    release_at = Column(DateTime(timezone=True))
+    due_at = Column(DateTime(timezone=True))
+    extra_metadata = Column('metadata', JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('course_id', 'exam_type', 'attempt_no', 'assignment_id', name='uq_exam_attempt_assignment'),
+    )
+
+
+class StudentExamEffectiveScore(Base):
+    __tablename__ = "student_exam_effective_scores"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    exam_type = Column(String(32), nullable=False, index=True)
+    attempt_no = Column(Integer, nullable=False)
+    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False, index=True)
+    raw_percentage = Column(Numeric)
+    question_best_percentage = Column(Numeric)
+    clobbered_percentage = Column(Numeric)
+    final_percentage = Column(Numeric)
+    clobber_source_assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    details = Column(JSONB)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('course_id', 'student_id', 'exam_type', 'attempt_no', name='uq_effective_exam_attempt'),
+    )
