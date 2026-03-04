@@ -80,6 +80,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
 
     steps:
       - name: Checkout
@@ -126,8 +127,8 @@ jobs:
           GCP_ZONE: ${{ secrets.GCP_ZONE }}
           GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
           GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           IMAGE_REGISTRY: ghcr.io/${{ env.OWNER_LC }}/gradeview
           IMAGE_TAG: ${{ github.sha }}
