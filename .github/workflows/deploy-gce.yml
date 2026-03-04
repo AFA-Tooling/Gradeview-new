@@ -22,6 +22,9 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute lowercase image namespace
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -35,8 +38,8 @@ jobs:
           context: ./reverseProxy
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/gradeview/reverse-proxy:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/gradeview/reverse-proxy:latest
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/reverse-proxy:${{ github.sha }}
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/reverse-proxy:latest
 
       - name: Build and push web image
         uses: docker/build-push-action@v6
@@ -45,8 +48,8 @@ jobs:
           file: ./website/server/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/gradeview/web:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/gradeview/web:latest
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/web:${{ github.sha }}
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/web:latest
 
       - name: Build and push api image
         uses: docker/build-push-action@v6
@@ -55,8 +58,8 @@ jobs:
           file: ./api/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/gradeview/server:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/gradeview/server:latest
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/server:${{ github.sha }}
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/server:latest
 
       - name: Build and push gradesync image
         uses: docker/build-push-action@v6
@@ -65,8 +68,8 @@ jobs:
           file: ./gradesync/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/gradeview/gradesync:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/gradeview/gradesync:latest
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/gradesync:${{ github.sha }}
+            ghcr.io/${{ env.OWNER_LC }}/gradeview/gradesync:latest
 
   deploy:
     name: Deploy on GCE VM
@@ -81,6 +84,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Compute lowercase image namespace
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -98,7 +104,7 @@ jobs:
           GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}/gradeview
+          IMAGE_REGISTRY: ghcr.io/${{ env.OWNER_LC }}/gradeview
           IMAGE_TAG: ${{ github.sha }}
         run: |
           gcloud compute ssh "$GCE_SSH_USER@$GCE_INSTANCE" \
