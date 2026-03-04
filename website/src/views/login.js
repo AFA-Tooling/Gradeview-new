@@ -35,6 +35,7 @@ export default function Login() {
 
     // Updates OAuth2 token to be the local token value
     async function handleGoogleLogin(authData) {
+        const decodedCredential = jwtDecode(authData.credential);
         const googleToken = `Bearer ${authData.credential}`;
         axios
             .get(`/api/v2/login`, {
@@ -50,7 +51,7 @@ export default function Login() {
                 } else {
                     localStorage.setItem('token', loginRes?.data?.token || '');
                     localStorage.setItem('permissions', JSON.stringify(loginRes?.data?.permissions || {}));
-                    const credData = jwtDecode(authData.credential);
+                    const credData = decodedCredential;
                     // TODO: this is pretty awful.  We should have this in a context or something.
                     localStorage.setItem('email', credData?.email);
                     localStorage.setItem('profilepicture', credData?.picture);

@@ -1,7 +1,28 @@
 import { OAuth2Client } from 'google-auth-library';
 import AuthorizationError from './errors/http/AuthorizationError.js';
-import { getGoogleOauthClientId, isAdmin as isUnifiedAdmin } from './unifiedConfig.mjs';
+import { isAdmin as isUnifiedAdmin } from './unifiedConfig.mjs';
 import { decodeAccessToken, verifyAccessToken } from './jwtAuth.mjs';
+import { getPool } from './dbHelper.mjs';
+
+const GOOGLE_OAUTH_CLIENT_ID_KEY = 'google_oauth_client_id';
+
+async function getGoogleOauthClientIdForAuth() {
+    try {
+        const result = await getPool().query(
+            'SELECT value FROM gradeview_config WHERE key = $1 LIMIT 1',
+            [GOOGLE_OAUTH_CLIENT_ID_KEY],
+        );
+
+        const dbValue = String(result?.rows?.[0]?.value || '').trim();
+        if (dbValue) {
+            return dbValue;
+        }
+    } catch (error) {
+        console.warn('Failed to load Google OAuth client id from DB config:', error?.message || error);
+    }
+
+    return '';
+}
 
 /**
  * Gets an email from a google auth token.
@@ -29,7 +50,10 @@ export async function getEmailFromAuth(authInput) {
         // Not a valid GradeView JWT, continue with Google ID token validation.
     }
 
-    const googleOauthAudience = getGoogleOauthClientId();
+    const googleOauthAudience = await getGoogleOauthClientIdForAuth();
+    if (!googleOauthAudience) {
+        throw new AuthorizationError('Google OAuth client ID is not configured in gradeview_config.');
+    }
     
     // Retry logic for handling Google key rotation
     let lastError;

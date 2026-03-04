@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { validateAdminOrStudentMiddleware } from '../../../lib/authlib.mjs';
+import { validateAuthenticatedMiddleware } from '../../../lib/authlib.mjs';
 import RateLimit from 'express-rate-limit';
 import { buildPermissionSnapshot } from '../../../lib/iam.mjs';
 import { signAccessToken } from '../../../lib/jwtAuth.mjs';
@@ -11,7 +11,7 @@ router.use(RateLimit({
     max: 100, // 100 requests
 }));
 
-router.get('/', validateAdminOrStudentMiddleware, async (req, res) => {
+router.get('/', validateAuthenticatedMiddleware, async (req, res) => {
     const email = req?.auth?.email;
     const snapshot = await buildPermissionSnapshot(email);
 
