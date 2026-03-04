@@ -56,6 +56,13 @@ ChartJS.register(
 export default function StudentProfileContent({ studentData }) {
   if (!studentData) return null;
 
+  const assignmentsList = Array.isArray(studentData?.assignmentsList) ? studentData.assignmentsList : [];
+  const categoriesData = studentData?.categoriesData && typeof studentData.categoriesData === 'object'
+    ? studentData.categoriesData
+    : {};
+  const radarData = Array.isArray(studentData?.radarData) ? studentData.radarData : [];
+  const trendData = Array.isArray(studentData?.trendData) ? studentData.trendData : [];
+
   const roundUpPoints = (value) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return 0;
@@ -100,8 +107,8 @@ export default function StudentProfileContent({ studentData }) {
 
   // Sort the trend data for line chart based on sortMode
   const sortedTrendData = useMemo(() => {
-    if (!studentData.trendData) return [];
-    const data = [...studentData.trendData];
+    if (trendData.length === 0) return [];
+    const data = [...trendData];
     
     console.log('Sorting trend data, mode:', sortMode);
     console.log('First item submissionTime:', data[0]?.submissionTime);
@@ -120,12 +127,12 @@ export default function StudentProfileContent({ studentData }) {
       console.log('Using assignment order');
       return data;
     }
-  }, [studentData.trendData, sortMode]);
+  }, [trendData, sortMode]);
 
   // Sort the assignments list for detail table based on sortMode
   const sortedAssignments = useMemo(() => {
-    if (!studentData.assignmentsList) return [];
-    const data = [...studentData.assignmentsList];
+    if (assignmentsList.length === 0) return [];
+    const data = [...assignmentsList];
     
     if (sortMode === 'time') {
       // Sort by submission time - newest first (descending)
@@ -138,7 +145,7 @@ export default function StudentProfileContent({ studentData }) {
       // Keep assignment order (already sorted by category and name)
       return data;
     }
-  }, [studentData.assignmentsList, sortMode]);
+  }, [assignmentsList, sortMode]);
 
   const examPolicyRows = Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [];
 
@@ -201,7 +208,7 @@ export default function StudentProfileContent({ studentData }) {
             <Box textAlign="center" sx={{ p: 2 }}>
               <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Assignments</Typography>
               <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600 }}>
-                {studentData.assignmentsList.length}
+                {assignmentsList.length}
               </Typography>
             </Box>
           </Grid>
@@ -236,7 +243,7 @@ export default function StudentProfileContent({ studentData }) {
               </TableRow>
             </TableHead>
             <TableBody>
-              {Object.entries(studentData.categoriesData).map(([category, data]) => {
+              {Object.entries(categoriesData).map(([category, data]) => {
                 return (
                   <TableRow key={category} hover>
                     <TableCell><strong>{category}</strong></TableCell>
@@ -273,11 +280,11 @@ export default function StudentProfileContent({ studentData }) {
             <Box sx={{ height: 400, position: 'relative' }}>
               <ChartRadar 
                 data={{
-                  labels: studentData.radarData.map(d => d.category),
+                  labels: radarData.map(d => d.category),
                   datasets: [
                     {
                       label: 'Score %',
-                      data: studentData.radarData.map(d => d.percentage),
+                      data: radarData.map(d => d.percentage),
                       borderColor: '#1565c0',
                       backgroundColor: 'rgba(25, 118, 210, 0.4)',
                       borderWidth: 3,
@@ -347,11 +354,11 @@ export default function StudentProfileContent({ studentData }) {
                       },
                       callbacks: {
                         title: function(context) {
-                          return studentData.radarData[context[0].dataIndex].category;
+                          return radarData[context[0].dataIndex]?.category || '';
                         },
                         label: function(context) {
                           const dataIndex = context.dataIndex;
-                          const data = studentData.radarData[dataIndex];
+                          const data = radarData[dataIndex] || {};
                           return `Score: ${context.parsed.r.toFixed(1)}% (${Math.round(data.score)}/${Math.round(data.maxPoints)})`;
                         }
                       }

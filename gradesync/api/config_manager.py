@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_default_config_path() -> Path:
     """Resolve default config path at repository root."""
-    root_config = Path(__file__).parent.parent.parent / "config.json"
+    root_config = Path(__file__).parent.parent / "config.json"
     return root_config
 
 

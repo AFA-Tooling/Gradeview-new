@@ -390,6 +390,17 @@ async def sync_gradescope_only(course_id: str):
             )
         
         result = service._sync_gradescope()
+
+        if result.success and service.config.database_enabled:
+            recompute = service._update_summary_sheets()
+            result.details = {
+                **(result.details or {}),
+                "post_sync_recompute": recompute.to_dict(),
+            }
+            if not recompute.success:
+                result.success = False
+                result.message = f"{result.message}; post-sync recompute failed: {recompute.message}"
+
         return JSONResponse(content=result.to_dict())
         
     except HTTPException:
@@ -438,6 +449,17 @@ async def sync_prairielearn_only(course_id: str):
             )
         
         result = service._sync_prairielearn()
+
+        if result.success and service.config.database_enabled:
+            recompute = service._update_summary_sheets()
+            result.details = {
+                **(result.details or {}),
+                "post_sync_recompute": recompute.to_dict(),
+            }
+            if not recompute.success:
+                result.success = False
+                result.message = f"{result.message}; post-sync recompute failed: {recompute.message}"
+
         return JSONResponse(content=result.to_dict())
         
     except HTTPException:
@@ -486,6 +508,17 @@ async def sync_iclicker_only(course_id: str):
             )
         
         result = service._sync_iclicker()
+
+        if result.success and service.config.database_enabled:
+            recompute = service._update_summary_sheets()
+            result.details = {
+                **(result.details or {}),
+                "post_sync_recompute": recompute.to_dict(),
+            }
+            if not recompute.success:
+                result.success = False
+                result.message = f"{result.message}; post-sync recompute failed: {recompute.message}"
+
         return JSONResponse(content=result.to_dict())
         
     except HTTPException:

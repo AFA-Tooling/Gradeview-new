@@ -126,8 +126,13 @@ class PrairieLearnSync:
         topic_text = str(question_topic or "").strip()
         name_text = str(question_name or "").strip()
 
-        candidate = topic_text or name_text.rsplit("/", 1)[-1]
-        normalized = candidate.lower().replace("-", " ").replace("_", " ").strip()
+        generic_topics = {"other", "template", "misc", "general"}
+        if topic_text.lower() in generic_topics and name_text:
+            candidate = name_text.rsplit("/", 1)[-1]
+        else:
+            candidate = topic_text or name_text.rsplit("/", 1)[-1]
+
+        normalized = candidate.lower().replace("-", " ").replace("_", " ").replace("/", " ").strip()
         normalized = re.sub(r"\s+", " ", normalized)
 
         aliases = {
@@ -135,13 +140,21 @@ class PrairieLearnSync:
             "number representation": "Number Representation",
             "iteration": "Iteration",
             "domain and range": "Domain and Range",
+            "domain range": "Domain and Range",
             "booleans": "Booleans",
             "boolean": "Booleans",
             "functions": "Functions",
+            "function": "Functions",
+            "function ordering": "Functions",
             "hofs i": "HOFs I",
             "hof i": "HOFs I",
+            "hofs": "HOFs I",
+            "hof": "HOFs I",
             "higher order functions": "HOFs I",
             "higher-order functions": "HOFs I",
+            "binary hex dec": "Number Representation",
+            "binary hexadecimal decimal": "Number Representation",
+            "number systems": "Number Representation",
         }
         direct = aliases.get(normalized)
         if direct:
@@ -238,14 +251,14 @@ class PrairieLearnSync:
                     continue
 
                 question_key = str(
-                    submission.get("question_id")
-                    or submission.get("instance_question_id")
+                    submission.get("instance_question_id")
+                    or submission.get("question_id")
                     or ""
                 ).strip()
                 if not question_key:
                     continue
 
-                points = self._round_up_score(submission.get("instance_question_points"))
+                points = self._to_float(submission.get("instance_question_points"))
                 cap = self._to_float(submission.get("assessment_question_max_points"))
                 if points is None:
                     continue
@@ -611,8 +624,8 @@ class PrairieLearnSync:
                         }
                         if component_data:
                             for component_name, component_score in (component_data.get("component_scores") or {}).items():
-                                rounded_component = self._round_up_score(component_score)
-                                scores_payload[component_name] = rounded_component if rounded_component is not None else 0.0
+                                numeric_component = self._to_float(component_score)
+                                scores_payload[component_name] = numeric_component if numeric_component is not None else 0.0
                             caps_from_instance = component_data.get("component_caps") or {}
                             caps_from_assessment = assessment_component_caps.get(assessment_id) or {}
                             component_caps = {**caps_from_instance, **caps_from_assessment}

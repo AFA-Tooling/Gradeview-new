@@ -728,7 +728,7 @@ function extractQuestComponentScores(scoresByQuestion = {}, componentCaps = new 
     return componentScores;
 }
 
-async function getQuestSummaryDistribution(courseId = null) {
+async function getQuestSummaryDistributionFromComponents(courseId = null) {
     const pool = getPool();
 
     let query = `
@@ -932,6 +932,59 @@ async function getQuestSummaryDistribution(courseId = null) {
             score: Math.min(QUEST_SUMMARY_CAP, toCeilNumber(categoryTotal)),
         };
     });
+}
+
+async function getQuestSummaryDistribution(courseId = null) {
+    const pool = getPool();
+
+    let policyQuery = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            MAX(COALESCE(e.question_best_percentage, e.final_percentage)) AS best_percentage
+        FROM students st
+        JOIN courses c ON st.course_id = c.id
+        LEFT JOIN student_exam_effective_scores e
+          ON e.student_id = st.id
+         AND e.course_id = c.id
+         AND LOWER(COALESCE(e.exam_type, '')) = 'quest'
+    `;
+
+    const params = [];
+    if (courseId) {
+        policyQuery += ` WHERE (c.gradescope_course_id::text = $1 OR c.id::text = $1)`;
+        params.push(String(courseId));
+    }
+
+    policyQuery += `
+        GROUP BY st.id, st.legal_name, st.email
+        ORDER BY st.legal_name
+    `;
+
+    try {
+        const policyResult = await pool.query(policyQuery, params);
+        const hasPolicyData = policyResult.rows.some((row) => Number.isFinite(Number(row.best_percentage)));
+
+        if (hasPolicyData) {
+            return policyResult.rows.map((row) => {
+                const bestPct = Number(row.best_percentage);
+                const rawScore = Number.isFinite(bestPct)
+                    ? (bestPct / 100) * QUEST_SUMMARY_CAP
+                    : 0;
+
+                return {
+                    studentName: row.student_name,
+                    studentEmail: row.student_email,
+                    score: Math.min(QUEST_SUMMARY_CAP, toCeilNumber(rawScore)),
+                };
+            });
+        }
+    } catch (err) {
+        console.warn('Quest policy summary query failed, falling back to component summary:', err?.message || err);
+    }
+
+    return getQuestSummaryDistributionFromComponents(courseId);
 }
 
 async function getAttendanceSummaryDistribution(category, courseId = null) {
