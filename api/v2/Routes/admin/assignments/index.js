@@ -26,9 +26,13 @@ router.get('/', async (req, res) => {
             SELECT 
                 COALESCE(a.category, 'Uncategorized') as category,
                 a.title as assignment_name,
-                a.max_points
+                a.max_points,
+                ac.display_order
             FROM assignments a
             JOIN courses c ON a.course_id = c.id
+            LEFT JOIN assignment_categories ac
+              ON ac.course_id = c.id
+             AND LOWER(TRIM(ac.name)) = LOWER(TRIM(COALESCE(a.category, 'Uncategorized')))
             WHERE a.title IS NOT NULL
         `;
 
@@ -41,6 +45,10 @@ router.get('/', async (req, res) => {
         const result = await pool.query(query, params);
 
         const sortedRows = [...result.rows].sort((a, b) => {
+            const orderA = Number.isFinite(Number(a.display_order)) ? Number(a.display_order) : Number.MAX_SAFE_INTEGER;
+            const orderB = Number.isFinite(Number(b.display_order)) ? Number(b.display_order) : Number.MAX_SAFE_INTEGER;
+            if (orderA !== orderB) return orderA - orderB;
+
             const categoryA = (a.category || '').trim();
             const categoryB = (b.category || '').trim();
             const categoryCmp = naturalCollator.compare(categoryA, categoryB);

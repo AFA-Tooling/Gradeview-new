@@ -30,7 +30,23 @@ if (!buildDir) {
 
 app.use(cors());
 if (buildDir) {
-    app.use(express.static(buildDir));
+    app.use('/static', express.static(path.join(buildDir, 'static'), {
+        immutable: true,
+        maxAge: '1y',
+    }));
+
+    app.use(express.static(buildDir, {
+        index: false,
+        maxAge: 0,
+        setHeaders: (res, filePath) => {
+            if (filePath.endsWith('.html')) {
+                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+                res.setHeader('Pragma', 'no-cache');
+                res.setHeader('Expires', '0');
+                res.setHeader('Surrogate-Control', 'no-store');
+            }
+        },
+    }));
 }
 
 // Set up API proxy middleware
@@ -52,6 +68,10 @@ app.get('/*', (_, res) => {
         );
     }
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
     return res.sendFile(path.join(buildDir, 'index.html'));
 });
 
