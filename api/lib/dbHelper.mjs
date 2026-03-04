@@ -55,8 +55,10 @@ export function getPool() {
                 password: POSTGRES_PASSWORD,
                 max: 20, // Max number of clients in the pool
                 idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-                connectionTimeoutMillis: 10000, // Increased to 10 seconds for Cloud SQL
+                connectionTimeoutMillis: 30000, // Allow more time under bursty load
                 keepAlive: true, // Enable keep-alive to avoid timeouts from the proxy
+                keepAliveInitialDelayMillis: 10000,
+                maxLifetimeSeconds: 300,
                 ssl: POSTGRES_HOST.includes('.') && !POSTGRES_HOST.includes('localhost') && POSTGRES_HOST !== 'cloud-sql-proxy'
                     ? { rejectUnauthorized: false } // Enable SSL for external IPs (Cloud SQL)
                     : false,
@@ -70,8 +72,10 @@ export function getPool() {
                 connectionString: databaseUrl,
                 max: 20,
                 idleTimeoutMillis: 30000,
-                connectionTimeoutMillis: 5000,
+                connectionTimeoutMillis: 30000,
                 keepAlive: true,
+                keepAliveInitialDelayMillis: 10000,
+                maxLifetimeSeconds: 300,
             };
         }
         

@@ -17,12 +17,11 @@ async function buildStudentsWithSummary(students = [], courseId = null) {
         });
     });
 
-    const summaryRowsBySection = await Promise.all(
-        Array.from(sectionNames).map(async (sectionName) => {
-            const rows = await getCategorySummaryDistribution(sectionName, courseId || null);
-            return [sectionName, rows];
-        })
-    );
+    const summaryRowsBySection = [];
+    for (const sectionName of sectionNames) {
+        const rows = await getCategorySummaryDistribution(sectionName, courseId || null);
+        summaryRowsBySection.push([sectionName, rows]);
+    }
 
     const summaryMapBySection = new Map();
     summaryRowsBySection.forEach(([sectionName, rows]) => {
