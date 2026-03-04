@@ -42,6 +42,57 @@ function getPointsForName(name, pointsMap) {
   return Number(pointsMap[normalizedName]) || 0;
 }
 
+function calculateUniqueAssignmentCapSum(scores = []) {
+  const capByAssignment = new Map();
+
+  (Array.isArray(scores) ? scores : []).forEach((item) => {
+    const assignmentKey = String(item?.name || '').trim().toLowerCase();
+    if (!assignmentKey) return;
+    const capPoints = Number(item?.capPoints) || 0;
+    const previous = Number(capByAssignment.get(assignmentKey)) || 0;
+    capByAssignment.set(assignmentKey, Math.max(previous, capPoints));
+  });
+
+  return Array.from(capByAssignment.values()).reduce((sum, cap) => sum + cap, 0);
+}
+
+function calculateCategoryCapFromBins(categoryName, scores = [], pointsMap = {}) {
+  const normalizedCategory = String(categoryName || '').trim().toLowerCase();
+  if (!normalizedCategory) return 0;
+
+  const directCategoryCap = getPointsForName(normalizedCategory, pointsMap);
+  if (directCategoryCap > 0) {
+    return directCategoryCap;
+  }
+
+  if (normalizedCategory.includes('project')) {
+    const projectCapSum = Object.entries(pointsMap).reduce((sum, [name, value]) => {
+      if (String(name).includes('project')) {
+        return sum + (Number(value) || 0);
+      }
+      return sum;
+    }, 0);
+
+    if (projectCapSum > 0) {
+      return projectCapSum;
+    }
+  }
+
+  const uniqueAssignmentCapsFromBins = new Map();
+  (Array.isArray(scores) ? scores : []).forEach((item) => {
+    const assignmentName = String(item?.name || '').trim();
+    if (!assignmentName) return;
+    const normalizedAssignment = assignmentName.toLowerCase();
+    const pointsFromBins = Number(pointsMap[normalizedAssignment]) || 0;
+    if (pointsFromBins <= 0) return;
+
+    const existing = Number(uniqueAssignmentCapsFromBins.get(normalizedAssignment)) || 0;
+    uniqueAssignmentCapsFromBins.set(normalizedAssignment, Math.max(existing, pointsFromBins));
+  });
+
+  return Array.from(uniqueAssignmentCapsFromBins.values()).reduce((sum, cap) => sum + cap, 0);
+}
+
 function isAttendanceCategory(categoryName = '') {
   const normalized = String(categoryName).trim().toLowerCase();
   return normalized.includes('attendance');
@@ -134,8 +185,8 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   // Calculate category percentages and averages
   Object.keys(categoriesData).forEach(category => {
     const data = categoriesData[category];
-    const configuredCategoryCap = getPointsForName(category, pointsMap);
-    const assignmentCapSum = data.scores.reduce((sum, item) => sum + (Number(item.capPoints) || 0), 0);
+    const configuredCategoryCap = calculateCategoryCapFromBins(category, data.scores, pointsMap);
+    const assignmentCapSum = calculateUniqueAssignmentCapSum(data.scores);
     const categoryCap = configuredCategoryCap > 0
       ? configuredCategoryCap
       : (assignmentCapSum > 0 ? assignmentCapSum : data.maxPoints);
@@ -256,8 +307,8 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
     });
 
     if (categoryMax > 0) {
-      const configuredCategoryCap = getPointsForName(category, pointsMap);
-      const assignmentCapSum = categoryScores.reduce((sum, item) => sum + (Number(item.capPoints) || 0), 0);
+      const configuredCategoryCap = calculateCategoryCapFromBins(category, categoryScores, pointsMap);
+      const assignmentCapSum = calculateUniqueAssignmentCapSum(categoryScores);
       const categoryCap = configuredCategoryCap > 0
         ? configuredCategoryCap
         : (assignmentCapSum > 0 ? assignmentCapSum : categoryMax);

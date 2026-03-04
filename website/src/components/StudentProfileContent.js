@@ -30,8 +30,44 @@ import {
   Tooltip as ChartTooltip,
   Legend as ChartLegend,
 } from 'chart.js';
-import { Line as ChartLine, Radar as ChartRadar, Bar as ChartBar } from 'react-chartjs-2';
+import { Line as ChartLine, Radar as ChartRadar, Doughnut as ChartDoughnut } from 'react-chartjs-2';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
+
+const categoryDonutGroupOutlinePlugin = {
+  id: 'categoryDonutGroupOutline',
+  afterDatasetsDraw(chart) {
+    const dataset = chart?.data?.datasets?.[0];
+    const categoryBounds = Array.isArray(dataset?.categoryBounds) ? dataset.categoryBounds : [];
+    if (categoryBounds.length === 0) return;
+
+    const meta = chart.getDatasetMeta(0);
+    const arcs = meta?.data || [];
+    if (arcs.length === 0) return;
+
+    const ctx = chart.ctx;
+    ctx.save();
+
+    categoryBounds.forEach((bound) => {
+      const startArc = arcs[bound.startIndex];
+      const endArc = arcs[bound.endIndex];
+      if (!startArc || !endArc) return;
+
+      const { x, y, outerRadius, innerRadius } = startArc;
+      const startAngle = startArc.startAngle;
+      const endAngle = endArc.endAngle;
+
+      ctx.beginPath();
+      ctx.arc(x, y, outerRadius, startAngle, endAngle);
+      ctx.arc(x, y, innerRadius, endAngle, startAngle, true);
+      ctx.closePath();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = bound.outlineColor || 'rgba(30, 58, 138, 0.65)';
+      ctx.stroke();
+    });
+
+    ctx.restore();
+  },
+};
 
 // Register Chart.js components
 ChartJS.register(
@@ -46,7 +82,8 @@ ChartJS.register(
   Title,
   ChartDataLabels,
   ChartTooltip,
-  ChartLegend
+  ChartLegend,
+  categoryDonutGroupOutlinePlugin
 );
 
 /**
@@ -104,6 +141,7 @@ export default function StudentProfileContent({ studentData }) {
 
   // Local state for sort mode (only affects line chart and detail table)
   const [sortMode, setSortMode] = useState('assignment');
+  const [hoveredDonutCategory, setHoveredDonutCategory] = useState(null);
 
   // Sort the trend data for line chart based on sortMode
   const sortedTrendData = useMemo(() => {
@@ -235,25 +273,139 @@ export default function StudentProfileContent({ studentData }) {
     return datasets;
   }, [questComponentTrend, toSafePercentage]);
 
-  const overallCategoryBar = useMemo(() => {
+  const overallCategoryDonut = useMemo(() => {
     const entries = Object.entries(categoriesData || {});
     if (entries.length === 0) {
-      return { labels: [], values: [] };
+      return {
+        labels: [],
+        values: [],
+        segmentMeta: [],
+        categoryBounds: [],
+        totalCap: 0,
+      };
     }
 
-    const sorted = entries
-      .map(([category, data]) => ({
+    const toRgba = (rgb, alpha) => `rgba(${rgb}, ${alpha})`;
+    const palette = [
+      { rgb: '37, 99, 235' },
+      { rgb: '217, 119, 6' },
+      { rgb: '5, 150, 105' },
+      { rgb: '124, 58, 237' },
+      { rgb: '220, 38, 38' },
+      { rgb: '8, 145, 178' },
+      { rgb: '79, 70, 229' },
+      { rgb: '180, 83, 9' },
+    ];
+
+    const values = [];
+    const labels = [];
+    const segmentMeta = [];
+    const categoryBounds = [];
+    let totalCap = 0;
+
+    const validEntries = entries.filter(([, data]) => Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0)) > 0);
+    const gapValue = Math.max(
+      0.15,
+      validEntries.reduce((sum, [, data]) => sum + Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0)), 0) * 0.005
+    );
+
+    validEntries.forEach(([category, data], index) => {
+      const cap = Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0));
+      const earned = Math.max(0, Math.min(cap, Number(data?.total ?? 0)));
+      const remaining = Math.max(0, cap - earned);
+      const selected = palette[index % palette.length];
+
+      if (cap <= 0) return;
+
+      const startIndex = values.length;
+
+      values.push(earned);
+      labels.push(category);
+      segmentMeta.push({
         category,
-        percentage: toSafePercentage(data?.percentage),
-      }))
-      .sort((a, b) => b.percentage - a.percentage)
-      .slice(0, 6);
+        cap,
+        earned,
+        remaining,
+        type: 'earned',
+        baseColor: toRgba(selected.rgb, 0.92),
+        highlightColor: toRgba(selected.rgb, 0.98),
+        dimColor: toRgba(selected.rgb, 0.45),
+      });
+
+      if (remaining > 0) {
+        values.push(remaining);
+        labels.push(category);
+        segmentMeta.push({
+          category,
+          cap,
+          earned,
+          remaining,
+          type: 'remaining',
+          baseColor: toRgba(selected.rgb, 0.20),
+          highlightColor: toRgba(selected.rgb, 0.34),
+          dimColor: toRgba(selected.rgb, 0.12),
+        });
+      }
+
+      const endIndex = values.length - 1;
+      categoryBounds.push({
+        category,
+        startIndex,
+        endIndex,
+        outlineColor: toRgba(selected.rgb, 0.68),
+      });
+
+      totalCap += cap;
+
+      const isLastCategory = index === validEntries.length - 1;
+      if (!isLastCategory) {
+        values.push(gapValue);
+        labels.push(`${category}-gap`);
+        segmentMeta.push({
+          category: null,
+          cap: 0,
+          earned: 0,
+          remaining: 0,
+          type: 'gap',
+          baseColor: 'rgba(255, 255, 255, 1)',
+          highlightColor: 'rgba(255, 255, 255, 1)',
+          dimColor: 'rgba(255, 255, 255, 1)',
+        });
+      }
+    });
 
     return {
-      labels: sorted.map((item) => item.category),
-      values: sorted.map((item) => Number(item.percentage.toFixed(2))),
+      labels,
+      values,
+      segmentMeta,
+      categoryBounds,
+      totalCap,
     };
   }, [categoriesData]);
+
+  const donutAppearance = useMemo(() => {
+    const hasHover = Boolean(hoveredDonutCategory);
+
+    const backgroundColor = overallCategoryDonut.segmentMeta.map((segment) => {
+      if (segment.type === 'gap') return segment.baseColor;
+      if (!hasHover) return segment.baseColor;
+      return segment.category === hoveredDonutCategory ? segment.highlightColor : segment.dimColor;
+    });
+
+    const borderColor = overallCategoryDonut.segmentMeta.map((segment) => {
+      if (segment.type === 'gap') return 'rgba(255, 255, 255, 0)';
+      if (!hasHover) return 'rgba(255, 255, 255, 0)';
+      return segment.category === hoveredDonutCategory ? 'rgba(15, 23, 42, 0.28)' : 'rgba(255, 255, 255, 0)';
+    });
+
+    const borderWidth = overallCategoryDonut.segmentMeta.map((segment) => {
+      if (segment.type === 'gap') return 0;
+      if (!hasHover) return 0;
+      return segment.category === hoveredDonutCategory ? 1 : 0;
+    });
+
+    return { backgroundColor, borderColor, borderWidth };
+  }, [overallCategoryDonut.segmentMeta, hoveredDonutCategory]);
 
   // Format date for display
   const formatDate = (dateString) => {
@@ -287,58 +439,122 @@ export default function StudentProfileContent({ studentData }) {
             <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
               Overall Summary
             </Typography>
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 2,
-                alignItems: 'stretch',
-              }}
-            >
-              <Box sx={{ flex: '1 1 220px', minWidth: 0, p: 2, textAlign: 'center' }}>
-                <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Score</Typography>
-                <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600, mb: 0.5 }}>
-                  {roundUpPoints(studentData.totalScore)}
-                </Typography>
-                <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-                  / {roundUpPoints(studentData.totalCapPoints ?? studentData.totalMaxPoints)}
-                </Typography>
-              </Box>
-
-              <Box sx={{ flex: '1 1 220px', minWidth: 0, p: 2, textAlign: 'center' }}>
-                <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Progress</Typography>
-                {renderProgressBattery(studentData.overallPercentage)}
-              </Box>
-
-              <Box sx={{ flex: '1 1 220px', minWidth: 0, p: 2, textAlign: 'center' }}>
-                <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Assignments</Typography>
-                <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600 }}>
-                  {assignmentsList.length}
-                </Typography>
-              </Box>
-            </Box>
-
-            <Box sx={{ mt: 2.5, pt: 2.5, borderTop: '1px solid #e5e7eb' }}>
-              <Typography variant="subtitle2" sx={{ color: '#4b5563', mb: 1.5, fontWeight: 600 }}>
-                Category Completion Snapshot
-              </Typography>
-              <Box sx={{ height: 180, position: 'relative' }}>
-                {overallCategoryBar.labels.length === 0 ? (
-                  <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Typography sx={{ color: '#9ca3af', fontSize: '0.875rem' }}>No category data yet.</Typography>
-                  </Box>
+            <Box sx={{ height: 380, display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+              <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {overallCategoryDonut.values.length === 0 ? (
+                  <Typography sx={{ color: '#9ca3af', fontSize: '0.875rem' }}>No category data yet.</Typography>
                 ) : (
-                  <ChartBar
+                  <>
+                    <Box sx={{ width: 260, height: 260, position: 'relative' }}>
+                      <ChartDoughnut
+                        data={{
+                          labels: overallCategoryDonut.labels,
+                          datasets: [
+                            {
+                              data: overallCategoryDonut.values,
+                              backgroundColor: donutAppearance.backgroundColor,
+                              borderColor: donutAppearance.borderColor,
+                              borderWidth: donutAppearance.borderWidth,
+                              hoverOffset: 5,
+                              spacing: 0,
+                              categoryBounds: overallCategoryDonut.categoryBounds,
+                            }
+                          ]
+                        }}
+                        options={{
+                          responsive: true,
+                          maintainAspectRatio: false,
+                          cutout: '68%',
+                          onHover: (_event, elements) => {
+                            if (!elements || elements.length === 0) {
+                              setHoveredDonutCategory(null);
+                              return;
+                            }
+                            const hoverIndex = elements[0].index;
+                            const hoveredSegment = overallCategoryDonut.segmentMeta[hoverIndex];
+                            if (!hoveredSegment || hoveredSegment.type === 'gap') {
+                              setHoveredDonutCategory(null);
+                              return;
+                            }
+                            setHoveredDonutCategory(hoveredSegment.category);
+                          },
+                          plugins: {
+                            legend: {
+                              display: false,
+                            },
+                            datalabels: {
+                              display: false,
+                            },
+                            tooltip: {
+                              filter: function(context) {
+                                const idx = context?.dataIndex ?? -1;
+                                const meta = overallCategoryDonut.segmentMeta[idx];
+                                return meta?.type !== 'gap';
+                              },
+                              callbacks: {
+                                title: function(context) {
+                                  const idx = context?.[0]?.dataIndex ?? -1;
+                                  const meta = overallCategoryDonut.segmentMeta[idx];
+                                  return meta?.category || '';
+                                },
+                                label: function(context) {
+                                  const idx = context?.dataIndex ?? -1;
+                                  const meta = overallCategoryDonut.segmentMeta[idx];
+                                  if (!meta) return '';
+                                  const pct = meta.cap > 0 ? (meta.earned / meta.cap) * 100 : 0;
+                                  if (meta.type === 'earned') {
+                                    return `Score: ${Math.round(meta.earned)} / ${Math.round(meta.cap)} (${pct.toFixed(2)}%)`;
+                                  }
+                                  return `Remaining: ${Math.round(meta.remaining)} / ${Math.round(meta.cap)}`;
+                                }
+                              }
+                            }
+                          }
+                        }}
+                      />
+                    </Box>
+
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        left: '50%',
+                        top: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        textAlign: 'center',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <Typography variant="caption" sx={{ color: '#6b7280', letterSpacing: 0.5 }}>
+                        TOTAL
+                      </Typography>
+                      <Typography variant="h5" sx={{ color: '#1e3a8a', fontWeight: 700, lineHeight: 1.2 }}>
+                        {roundUpPoints(studentData.totalScore)}
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: '#9ca3af' }}>
+                        / {roundUpPoints(overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints))}
+                      </Typography>
+                    </Box>
+                  </>
+                )}
+              </Box>
+
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Box sx={{ width: '100%', maxWidth: 320, aspectRatio: '1 / 1', position: 'relative' }}>
+                  <ChartRadar
                     data={{
-                      labels: overallCategoryBar.labels,
+                      labels: radarData.map(d => d.category),
                       datasets: [
                         {
-                          label: 'Completion %',
-                          data: overallCategoryBar.values,
-                          backgroundColor: 'rgba(25, 118, 210, 0.22)',
-                          borderColor: '#1976d2',
-                          borderWidth: 1,
-                          borderRadius: 6,
+                          label: 'Score %',
+                          data: radarData.map(d => d.percentage),
+                          borderColor: '#1565c0',
+                          backgroundColor: 'rgba(25, 118, 210, 0.35)',
+                          borderWidth: 3,
+                          pointRadius: 5,
+                          pointHoverRadius: 8,
+                          pointBackgroundColor: '#1565c0',
+                          pointBorderColor: '#fff',
+                          pointBorderWidth: 2,
                         }
                       ]
                     }}
@@ -346,46 +562,57 @@ export default function StudentProfileContent({ studentData }) {
                       responsive: true,
                       maintainAspectRatio: false,
                       scales: {
-                        y: {
+                        r: {
                           min: 0,
                           max: 100,
+                          beginAtZero: true,
                           ticks: {
-                            stepSize: 25,
+                            stepSize: 20,
+                            backdropColor: 'transparent',
+                            callback: function(value) {
+                              return value + '%';
+                            }
                           },
                           grid: {
-                            color: 'rgba(0, 0, 0, 0.08)',
+                            color: 'rgba(0, 0, 0, 0.1)'
                           },
-                        },
-                        x: {
-                          grid: {
-                            display: false,
+                          angleLines: {
+                            color: 'rgba(0, 0, 0, 0.1)'
                           },
-                          ticks: {
-                            maxRotation: 0,
-                            minRotation: 0,
+                          pointLabels: {
+                            display: false
                           }
                         }
                       },
                       plugins: {
                         legend: {
-                          display: false,
+                          position: 'bottom',
+                          labels: {
+                            usePointStyle: true,
+                          }
                         },
                         datalabels: {
-                          display: false,
+                          display: false
                         },
                         tooltip: {
                           callbacks: {
+                            title: function(context) {
+                              return radarData[context[0].dataIndex]?.category || '';
+                            },
                             label: function(context) {
-                              return `${Number(context.parsed.y || 0).toFixed(2)}%`;
+                              const dataIndex = context.dataIndex;
+                              const data = radarData[dataIndex] || {};
+                              return `Score: ${context.parsed.r.toFixed(1)}% (${Math.round(data.score)}/${Math.round(data.maxPoints)})`;
                             }
                           }
                         }
                       }
                     }}
                   />
-                )}
+                </Box>
               </Box>
             </Box>
+
           </Paper>
         </Grid>
 
@@ -496,7 +723,7 @@ export default function StudentProfileContent({ studentData }) {
                         color: 'rgba(0, 0, 0, 0.1)'
                       },
                       pointLabels: {
-                        display: false  // Hide category labels around the radar
+                        display: false
                       }
                     }
                   },
@@ -539,7 +766,7 @@ export default function StudentProfileContent({ studentData }) {
                       }
                     },
                     datalabels: {
-                      display: false  // Hide labels on chart, show only on hover via tooltip
+                      display: false
                     }
                     }
                   }}
