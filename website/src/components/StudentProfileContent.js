@@ -30,7 +30,7 @@ import {
   Tooltip as ChartTooltip,
   Legend as ChartLegend,
 } from 'chart.js';
-import { Line as ChartLine, Radar as ChartRadar } from 'react-chartjs-2';
+import { Line as ChartLine, Radar as ChartRadar, Bar as ChartBar } from 'react-chartjs-2';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 
 // Register Chart.js components
@@ -156,6 +156,105 @@ export default function StudentProfileContent({ studentData }) {
     return { components, series };
   }, [studentData?.questComponentTrend]);
 
+  const questTrendChartDatasets = useMemo(() => {
+    if (questComponentTrend.components.length === 0 || questComponentTrend.series.length === 0) {
+      return [];
+    }
+
+    const palette = [
+      {
+        line: '#3b82f6',
+        point: '#2563eb',
+        baseArea: 'rgba(59, 130, 246, 0.10)',
+        diffArea: 'rgba(59, 130, 246, 0.14)',
+      },
+      {
+        line: '#f59e0b',
+        point: '#d97706',
+        baseArea: 'rgba(245, 158, 11, 0.08)',
+        diffArea: 'rgba(245, 158, 11, 0.16)',
+      },
+      {
+        line: '#10b981',
+        point: '#059669',
+        baseArea: 'rgba(16, 185, 129, 0.08)',
+        diffArea: 'rgba(16, 185, 129, 0.16)',
+      },
+    ];
+
+    const datasets = [];
+    const lineDatasetIndexes = [];
+
+    questComponentTrend.series.forEach((seriesItem, index) => {
+      const selectedColor = palette[index] || palette[palette.length - 1];
+      const lineData = questComponentTrend.components.map((_, pointIndex) => {
+        const value = Array.isArray(seriesItem?.data) ? seriesItem.data[pointIndex] : 0;
+        return toSafePercentage(value);
+      });
+
+      datasets.push({
+        label: seriesItem?.name || `After Quest-${index + 1}`,
+        data: lineData,
+        borderColor: selectedColor.line,
+        backgroundColor: selectedColor.baseArea,
+        borderWidth: 3,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        pointBackgroundColor: selectedColor.point,
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        tension: 0.28,
+        fill: index === 0,
+        order: 2,
+      });
+
+      lineDatasetIndexes[index] = datasets.length - 1;
+
+      if (index > 0) {
+        const prevLineData = datasets[lineDatasetIndexes[index - 1]]?.data || [];
+        const overlayData = lineData.map((value, pointIndex) => Math.max(value, prevLineData[pointIndex] || 0));
+
+        datasets.push({
+          label: `${seriesItem?.name || `After Quest-${index + 1}`} (Area)`,
+          data: overlayData,
+          borderColor: 'rgba(0, 0, 0, 0)',
+          backgroundColor: selectedColor.diffArea,
+          borderWidth: 0,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          tension: 0.28,
+          fill: {
+            target: lineDatasetIndexes[index - 1],
+          },
+          order: 1,
+          areaOverlay: true,
+        });
+      }
+    });
+
+    return datasets;
+  }, [questComponentTrend, toSafePercentage]);
+
+  const overallCategoryBar = useMemo(() => {
+    const entries = Object.entries(categoriesData || {});
+    if (entries.length === 0) {
+      return { labels: [], values: [] };
+    }
+
+    const sorted = entries
+      .map(([category, data]) => ({
+        category,
+        percentage: toSafePercentage(data?.percentage),
+      }))
+      .sort((a, b) => b.percentage - a.percentage)
+      .slice(0, 6);
+
+    return {
+      labels: sorted.map((item) => item.category),
+      values: sorted.map((item) => Number(item.percentage.toFixed(2))),
+    };
+  }, [categoriesData]);
+
   // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return '-';
@@ -171,103 +270,178 @@ export default function StudentProfileContent({ studentData }) {
 
   return (
     <Box>
-      {/* Overall Summary */}
-      <Paper 
-        elevation={0} 
-        sx={{ 
-          p: 4, 
-          mb: 3, 
-          backgroundColor: 'white',
-          borderRadius: 3,
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-        }}
-      >
-        <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
-          Overall Summary
-        </Typography>
-        <Grid container spacing={3}>
-          <Grid item xs={12} sm={4}>
-            <Box textAlign="center" sx={{ p: 2 }}>
-              <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Score</Typography>
-              <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600, mb: 0.5 }}>
-                {roundUpPoints(studentData.totalScore)}
-              </Typography>
-              <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-                / {roundUpPoints(studentData.totalCapPoints ?? studentData.totalMaxPoints)}
-              </Typography>
-            </Box>
-          </Grid>
-          <Grid item xs={12} sm={4}>
-            <Box textAlign="center" sx={{ p: 2 }}>
-              <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Progress</Typography>
-              {renderProgressBattery(studentData.overallPercentage)}
-            </Box>
-          </Grid>
-          <Grid item xs={12} sm={4}>
-            <Box textAlign="center" sx={{ p: 2 }}>
-              <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Assignments</Typography>
-              <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600 }}>
-                {assignmentsList.length}
-              </Typography>
-            </Box>
-          </Grid>
-        </Grid>
-      </Paper>
+      <Grid container spacing={3} sx={{ mb: 3, alignItems: 'stretch' }}>
+        {/* Overall Summary */}
+        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+          <Paper 
+            elevation={0} 
+            sx={{ 
+              p: 4,
+              flex: 1,
+              backgroundColor: 'white',
+              borderRadius: 3,
+              border: '1px solid #e5e7eb',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
+              Overall Summary
+            </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 2,
+                alignItems: 'stretch',
+              }}
+            >
+              <Box sx={{ flex: '1 1 220px', minWidth: 0, p: 2, textAlign: 'center' }}>
+                <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Score</Typography>
+                <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600, mb: 0.5 }}>
+                  {roundUpPoints(studentData.totalScore)}
+                </Typography>
+                <Typography variant="body2" sx={{ color: '#9ca3af' }}>
+                  / {roundUpPoints(studentData.totalCapPoints ?? studentData.totalMaxPoints)}
+                </Typography>
+              </Box>
 
-      {/* Performance by Category */}
-      <Paper 
-        elevation={0} 
-        sx={{ 
-          p: 4, 
-          mb: 3,
-          backgroundColor: 'white',
-          borderRadius: 3,
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-        }}
-      >
-        <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
-          Performance by Category
-        </Typography>
-        <TableContainer sx={{ mt: 2, borderRadius: 2, overflow: 'hidden' }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#f9fafb' }}>
-                <TableCell><strong>Category</strong></TableCell>
-                <TableCell align="center"><strong>Score</strong></TableCell>
-                <TableCell align="center"><strong>Cap</strong></TableCell>
-                <TableCell align="center"><strong>%</strong></TableCell>
-                <TableCell align="center"><strong>Count</strong></TableCell>
-                <TableCell align="center"><strong>Avg</strong></TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {Object.entries(categoriesData).map(([category, data]) => {
-                return (
-                  <TableRow key={category} hover>
-                    <TableCell><strong>{category}</strong></TableCell>
-                    <TableCell align="center">{roundUpPoints(data.total)}</TableCell>
-                    <TableCell align="center">{roundUpPoints(data.capPoints ?? data.maxPoints)}</TableCell>
-                    <TableCell align="center">{renderProgressBattery(data.percentage)}</TableCell>
-                    <TableCell align="center">{data.count}</TableCell>
-                    <TableCell align="center">{data.average.toFixed(2)}</TableCell>
+              <Box sx={{ flex: '1 1 220px', minWidth: 0, p: 2, textAlign: 'center' }}>
+                <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Progress</Typography>
+                {renderProgressBattery(studentData.overallPercentage)}
+              </Box>
+
+              <Box sx={{ flex: '1 1 220px', minWidth: 0, p: 2, textAlign: 'center' }}>
+                <Typography variant="body2" sx={{ color: '#6b7280', fontSize: '0.875rem', mb: 1 }}>Total Assignments</Typography>
+                <Typography variant="h4" sx={{ color: '#1e3a8a', fontWeight: 600 }}>
+                  {assignmentsList.length}
+                </Typography>
+              </Box>
+            </Box>
+
+            <Box sx={{ mt: 2.5, pt: 2.5, borderTop: '1px solid #e5e7eb' }}>
+              <Typography variant="subtitle2" sx={{ color: '#4b5563', mb: 1.5, fontWeight: 600 }}>
+                Category Completion Snapshot
+              </Typography>
+              <Box sx={{ height: 180, position: 'relative' }}>
+                {overallCategoryBar.labels.length === 0 ? (
+                  <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Typography sx={{ color: '#9ca3af', fontSize: '0.875rem' }}>No category data yet.</Typography>
+                  </Box>
+                ) : (
+                  <ChartBar
+                    data={{
+                      labels: overallCategoryBar.labels,
+                      datasets: [
+                        {
+                          label: 'Completion %',
+                          data: overallCategoryBar.values,
+                          backgroundColor: 'rgba(25, 118, 210, 0.22)',
+                          borderColor: '#1976d2',
+                          borderWidth: 1,
+                          borderRadius: 6,
+                        }
+                      ]
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      scales: {
+                        y: {
+                          min: 0,
+                          max: 100,
+                          ticks: {
+                            stepSize: 25,
+                          },
+                          grid: {
+                            color: 'rgba(0, 0, 0, 0.08)',
+                          },
+                        },
+                        x: {
+                          grid: {
+                            display: false,
+                          },
+                          ticks: {
+                            maxRotation: 0,
+                            minRotation: 0,
+                          }
+                        }
+                      },
+                      plugins: {
+                        legend: {
+                          display: false,
+                        },
+                        datalabels: {
+                          display: false,
+                        },
+                        tooltip: {
+                          callbacks: {
+                            label: function(context) {
+                              return `${Number(context.parsed.y || 0).toFixed(2)}%`;
+                            }
+                          }
+                        }
+                      }
+                    }}
+                  />
+                )}
+              </Box>
+            </Box>
+          </Paper>
+        </Grid>
+
+        {/* Performance by Category */}
+        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+          <Paper 
+            elevation={0} 
+            sx={{ 
+              p: 4,
+              flex: 1,
+              backgroundColor: 'white',
+              borderRadius: 3,
+              border: '1px solid #e5e7eb',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
+              Performance by Category
+            </Typography>
+            <TableContainer sx={{ mt: 2, borderRadius: 2, overflow: 'hidden' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ backgroundColor: '#f9fafb' }}>
+                    <TableCell><strong>Category</strong></TableCell>
+                    <TableCell align="center"><strong>Score</strong></TableCell>
+                    <TableCell align="center"><strong>Cap</strong></TableCell>
+                    <TableCell align="center"><strong>%</strong></TableCell>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+                </TableHead>
+                <TableBody>
+                  {Object.entries(categoriesData).map(([category, data]) => {
+                    return (
+                      <TableRow key={category} hover>
+                        <TableCell><strong>{category}</strong></TableCell>
+                        <TableCell align="center">{roundUpPoints(data.total)}</TableCell>
+                        <TableCell align="center">{roundUpPoints(data.capPoints ?? data.maxPoints)}</TableCell>
+                        <TableCell align="center">{renderProgressBattery(data.percentage)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Paper>
+        </Grid>
+      </Grid>
 
       {/* Charts */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
+      <Grid container spacing={3} sx={{ mb: 3, alignItems: 'stretch' }}>
         {/* Radar Chart */}
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 3,
+              flex: 1,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -277,28 +451,29 @@ export default function StudentProfileContent({ studentData }) {
             <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600 }}>
               Category Performance Radar
             </Typography>
-            <Box sx={{ height: 400, position: 'relative' }}>
-              <ChartRadar 
-                data={{
-                  labels: radarData.map(d => d.category),
-                  datasets: [
-                    {
-                      label: 'Score %',
-                      data: radarData.map(d => d.percentage),
-                      borderColor: '#1565c0',
-                      backgroundColor: 'rgba(25, 118, 210, 0.4)',
-                      borderWidth: 3,
-                      pointRadius: 6,
-                      pointHoverRadius: 10,
-                      pointBackgroundColor: '#1565c0',
-                      pointBorderColor: '#fff',
-                      pointBorderWidth: 2,
-                    }
-                  ]
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
+            <Box sx={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Box sx={{ width: '100%', maxWidth: 420, aspectRatio: '1 / 1', position: 'relative' }}>
+                <ChartRadar 
+                  data={{
+                    labels: radarData.map(d => d.category),
+                    datasets: [
+                      {
+                        label: 'Score %',
+                        data: radarData.map(d => d.percentage),
+                        borderColor: '#1565c0',
+                        backgroundColor: 'rgba(25, 118, 210, 0.4)',
+                        borderWidth: 3,
+                        pointRadius: 6,
+                        pointHoverRadius: 10,
+                        pointBackgroundColor: '#1565c0',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                      }
+                    ]
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
                   scales: {
                     r: {
                       min: 0,
@@ -366,19 +541,21 @@ export default function StudentProfileContent({ studentData }) {
                     datalabels: {
                       display: false  // Hide labels on chart, show only on hover via tooltip
                     }
-                  }
-                }}
-              />
+                    }
+                  }}
+                />
+              </Box>
             </Box>
           </Paper>
         </Grid>
 
         {/* Quest Progress Trend */}
-        <Grid item xs={12}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 3,
+              flex: 1,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -388,7 +565,7 @@ export default function StudentProfileContent({ studentData }) {
             <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600 }}>
               Quest Progress Trend
             </Typography>
-            <Box sx={{ height: 300, position: 'relative' }}>
+            <Box sx={{ height: 400, position: 'relative' }}>
               {questComponentTrend.components.length === 0 || questComponentTrend.series.length === 0 ? (
                 <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Typography sx={{ color: '#6b7280' }}>Quest component progression is not available yet.</Typography>
@@ -397,26 +574,7 @@ export default function StudentProfileContent({ studentData }) {
               <ChartLine
                 data={{
                   labels: questComponentTrend.components,
-                  datasets: questComponentTrend.series.map((seriesItem, index) => {
-                    const colors = [
-                      { border: '#90caf9', background: 'rgba(144, 202, 249, 0.10)' },
-                      { border: '#42a5f5', background: 'rgba(66, 165, 245, 0.10)' },
-                      { border: '#1565c0', background: 'rgba(21, 101, 192, 0.12)' },
-                    ];
-                    const selectedColor = colors[index] || colors[colors.length - 1];
-                    return {
-                      label: seriesItem.name,
-                      data: (seriesItem.data || []).map((value) => toSafePercentage(value)),
-                      borderColor: selectedColor.border,
-                      backgroundColor: selectedColor.background,
-                      borderWidth: 3,
-                      pointRadius: 4,
-                      pointHoverRadius: 7,
-                      pointBackgroundColor: selectedColor.border,
-                      tension: 0.2,
-                      fill: false,
-                    };
-                  }),
+                  datasets: questTrendChartDatasets,
                 }}
                 options={{
                   responsive: true,
@@ -456,12 +614,23 @@ export default function StudentProfileContent({ studentData }) {
                   plugins: {
                     legend: {
                       display: true,
-                      position: 'top'
+                      position: 'top',
+                      labels: {
+                        usePointStyle: true,
+                        filter: (legendItem, chartData) => {
+                          const dataset = chartData.datasets?.[legendItem.datasetIndex];
+                          return !dataset?.areaOverlay;
+                        }
+                      }
                     },
                     datalabels: {
                       display: false  // Hide labels, show only on hover
                     },
                     tooltip: {
+                      filter: (tooltipItem) => {
+                        const dataset = tooltipItem?.dataset || {};
+                        return !dataset.areaOverlay;
+                      },
                       callbacks: {
                         label: function(context) {
                           const pct = Number(context.parsed.y || 0);
