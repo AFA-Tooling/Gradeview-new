@@ -194,8 +194,8 @@ jobs:
 
               echo "[INFO] Deploying tag $IMAGE_TAG"
               set_compose_versions "$IMAGE_TAG"
-              sudo docker compose -f docker-compose.yml pull
-              sudo docker compose -f docker-compose.yml up -d --no-build --remove-orphans
+              sudo -E docker compose -f docker-compose.yml pull
+              sudo -E docker compose -f docker-compose.yml up -d --no-build --remove-orphans
 
               if wait_for_health 240; then
                 echo "$IMAGE_TAG" > "$STATE_FILE"
@@ -209,8 +209,8 @@ jobs:
               if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ]; then
                 echo "[WARN] Rolling back to previous successful tag: $PREVIOUS_TAG"
                 set_compose_versions "$PREVIOUS_TAG"
-                sudo docker compose -f docker-compose.yml pull
-                sudo docker compose -f docker-compose.yml up -d --no-build --remove-orphans
+                sudo -E docker compose -f docker-compose.yml pull
+                sudo -E docker compose -f docker-compose.yml up -d --no-build --remove-orphans
 
                 if wait_for_health 180; then
                   echo "[INFO] Rollback successful to tag: $PREVIOUS_TAG"
