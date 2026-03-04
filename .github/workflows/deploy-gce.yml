@@ -96,6 +96,30 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Sync latest docker-compose to VM
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_ZONE: ${{ secrets.GCP_ZONE }}
+          GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
+          GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          TARGET_DIR="${DEPLOY_DIR:-/home/gradeview/Grades}"
+
+          gcloud compute scp docker-compose.yml "$GCE_SSH_USER@$GCE_INSTANCE:/tmp/gradeview-docker-compose.yml" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE"
+
+          gcloud compute ssh "$GCE_SSH_USER@$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE" \
+            --command "TARGET_DIR='$TARGET_DIR' GCE_SSH_USER='$GCE_SSH_USER' bash -se" <<'REMOTE'
+              set -euo pipefail
+              sudo mkdir -p "$TARGET_DIR"
+              sudo mv /tmp/gradeview-docker-compose.yml "$TARGET_DIR/docker-compose.yml"
+              sudo chown "$GCE_SSH_USER":"$GCE_SSH_USER" "$TARGET_DIR/docker-compose.yml"
+          REMOTE
+
       - name: Deploy latest commit to VM
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
