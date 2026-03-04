@@ -104,44 +104,26 @@ jobs:
           GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           IMAGE_REGISTRY: ghcr.io/${{ env.OWNER_LC }}/gradeview
           IMAGE_TAG: ${{ github.sha }}
         run: |
           gcloud compute ssh "$GCE_SSH_USER@$GCE_INSTANCE" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_ZONE" \
-            --command "IMAGE_REGISTRY='$IMAGE_REGISTRY' IMAGE_TAG='$IMAGE_TAG' GHCR_USERNAME='$GHCR_USERNAME' GHCR_TOKEN='$GHCR_TOKEN' bash -se" <<'REMOTE'
+            --command "IMAGE_REGISTRY='$IMAGE_REGISTRY' IMAGE_TAG='$IMAGE_TAG' GHCR_USERNAME='$GHCR_USERNAME' GHCR_TOKEN='$GHCR_TOKEN' DEPLOY_DIR='$DEPLOY_DIR' GCE_SSH_USER='$GCE_SSH_USER' bash -se" <<'REMOTE'
               set -euo pipefail
 
-              sudo chown -R "$USER":"$USER" /home/gradeview
-              git config --global --add safe.directory /home/gradeview/Grades
-              cd /home/gradeview/Grades
-
-              mkdir -p ~/.ssh
-              chmod 700 ~/.ssh
-              touch ~/.ssh/known_hosts
-              chmod 600 ~/.ssh/known_hosts
-              ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
-
-              KEY_FILE=''
-              if [ -f ~/.ssh/id_ed25519 ]; then
-                KEY_FILE=~/.ssh/id_ed25519
-              elif [ -f ~/.ssh/id_rsa ]; then
-                KEY_FILE=~/.ssh/id_rsa
-              fi
-
-              if [ -z "$KEY_FILE" ]; then
-                echo '[ERROR] No SSH private key found for GitHub access. Expected ~/.ssh/id_ed25519 or ~/.ssh/id_rsa.'
-                ls -la ~/.ssh || true
+              DEPLOY_DIR="${DEPLOY_DIR:-/home/gradeview/Grades}"
+              echo "[INFO] Using deploy directory: $DEPLOY_DIR"
+              if [ ! -f "$DEPLOY_DIR/docker-compose.yml" ]; then
+                echo "[ERROR] docker-compose.yml not found in $DEPLOY_DIR"
                 exit 1
               fi
 
-              chmod 600 "$KEY_FILE" || true
-              export GIT_SSH_COMMAND="ssh -i $KEY_FILE -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-              git remote set-url origin git@github.com:AFA-Tooling/Gradeview-new.git
-              git fetch --all --prune
-              git checkout -B main origin/main
-              git reset --hard origin/main
+              sudo mkdir -p "$DEPLOY_DIR"
+              sudo chown -R "$GCE_SSH_USER":"$GCE_SSH_USER" "$DEPLOY_DIR"
+              cd "$DEPLOY_DIR"
 
               if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
                 echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
@@ -149,7 +131,7 @@ jobs:
                 echo '[WARN] GHCR credentials not provided; proceeding without docker login.'
               fi
 
-              STATE_FILE=/home/gradeview/.gradeview_last_successful_tag
+              STATE_FILE="$DEPLOY_DIR/.gradeview_last_successful_tag"
               PREVIOUS_TAG=''
               if [ -f "$STATE_FILE" ]; then
                 PREVIOUS_TAG=$(cat "$STATE_FILE")
@@ -198,7 +180,8 @@ jobs:
               sudo -E docker compose -f docker-compose.yml up -d --no-build --remove-orphans
 
               if wait_for_health 240; then
-                echo "$IMAGE_TAG" > "$STATE_FILE"
+                printf '%s' "$IMAGE_TAG" | sudo tee "$STATE_FILE" >/dev/null
+                sudo chown "$GCE_SSH_USER":"$GCE_SSH_USER" "$STATE_FILE"
                 echo "[INFO] Deploy successful. Recorded tag: $IMAGE_TAG"
                 sudo docker image prune -f || true
                 exit 0
