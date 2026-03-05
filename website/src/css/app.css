@@ -277,42 +277,102 @@
       }
   }
 
-  /* Light mode final overrides (must stay at file end to beat dark defaults) */
+  /* ─── Light mode: final overrides (must stay at file end to win specificity) ── */
+
+  /* Paper / glass panels */
   .app.app-light .admin-shell .MuiPaper-root,
   .app.app-light .student-profile-shell .MuiPaper-root {
-      background: linear-gradient(145deg, rgba(255,255,255,0.95), rgba(245,249,255,0.96)) !important;
-      border: 1px solid rgba(40, 74, 149, 0.14) !important;
-      box-shadow: 0 12px 24px rgba(45, 82, 150, 0.12) !important;
+      background: linear-gradient(145deg, rgba(255,255,255,0.97), rgba(244,249,255,0.98)) !important;
+      border: 1px solid rgba(40, 74, 149, 0.12) !important;
+      box-shadow: 0 2px 12px rgba(30, 58, 138, 0.08), 0 1px 3px rgba(30, 58, 138, 0.06) !important;
   }
 
+  /* Typography (all text) */
   .app.app-light .admin-shell .MuiTypography-root,
   .app.app-light .student-profile-shell .MuiTypography-root,
   .app.app-light .MuiTypography-root {
       color: rgba(20, 40, 74, 0.92) !important;
   }
 
+  /* Tables */
   .app.app-light .admin-shell .MuiTableContainer-root,
   .app.app-light .student-profile-shell .MuiTableContainer-root,
   .app.app-light .MuiDialog-paper .MuiTableContainer-root {
-      background: rgba(255, 255, 255, 0.92) !important;
-      border: 1px solid rgba(53, 88, 168, 0.16) !important;
+      background: rgba(248, 251, 255, 0.96) !important;
+      border: 1px solid rgba(53, 88, 168, 0.12) !important;
   }
 
   .app.app-light .admin-shell .MuiTableCell-root,
   .app.app-light .student-profile-shell .MuiTableCell-root,
   .app.app-light .MuiDialog-paper .MuiTableCell-root {
-      color: rgba(24, 45, 78, 0.92) !important;
-      border-bottom-color: rgba(72, 106, 182, 0.14) !important;
+      color: rgba(20, 40, 74, 0.88) !important;
+      border-bottom-color: rgba(72, 106, 182, 0.1) !important;
+      background-color: transparent !important;
   }
 
   .app.app-light .admin-shell .MuiTableCell-head,
   .app.app-light .student-profile-shell .MuiTableCell-head,
   .app.app-light .MuiDialog-paper .MuiTableCell-head {
-      background: rgba(210, 223, 255, 0.9) !important;
-      color: #1e3a70 !important;
+      background: rgba(220, 232, 255, 0.85) !important;
+      color: #1a3470 !important;
       text-shadow: none !important;
+      font-weight: 600 !important;
   }
 
+  .app.app-light .admin-shell .MuiTableRow-root:hover td,
+  .app.app-light .student-profile-shell .MuiTableRow-root:hover td {
+      background-color: rgba(30, 58, 138, 0.04) !important;
+  }
+
+  /* Tab bar */
+  .app.app-light .admin-shell .MuiTabs-root .MuiTab-root {
+      color: rgba(30, 60, 120, 0.65) !important;
+  }
+  .app.app-light .admin-shell .MuiTabs-root .MuiTab-root.Mui-selected {
+      color: #1e3a8a !important;
+  }
+  .app.app-light .admin-shell .MuiTabs-root .MuiTabs-indicator {
+      background-color: #2563eb !important;
+  }
+
+  /* Toggle buttons (sort controls) */
+  .app.app-light .admin-shell .MuiToggleButton-root,
+  .app.app-light .student-profile-shell .MuiToggleButton-root {
+      color: rgba(30, 58, 138, 0.7) !important;
+      border-color: rgba(30, 58, 138, 0.22) !important;
+      background: rgba(255, 255, 255, 0.6) !important;
+  }
+  .app.app-light .admin-shell .MuiToggleButton-root.Mui-selected,
+  .app.app-light .student-profile-shell .MuiToggleButton-root.Mui-selected {
+      color: #1e3a8a !important;
+      background: rgba(30, 58, 138, 0.1) !important;
+      border-color: rgba(30, 58, 138, 0.4) !important;
+  }
+
+  /* General outlined buttons inside admin in light mode */
+  .app.app-light .admin-shell .MuiButton-outlined {
+      color: #1e3a8a !important;
+      border-color: rgba(30, 58, 138, 0.3) !important;
+  }
+  .app.app-light .admin-shell .MuiButton-outlined:hover {
+      background-color: rgba(30, 58, 138, 0.05) !important;
+      border-color: #1e3a8a !important;
+  }
+
+  /* Input fields */
+  .app.app-light .admin-shell .MuiOutlinedInput-root input,
+  .app.app-light .admin-shell .MuiOutlinedInput-root textarea {
+      color: #1e3565 !important;
+  }
+  .app.app-light .admin-shell .MuiOutlinedInput-root fieldset {
+      border-color: rgba(30, 58, 138, 0.22) !important;
+  }
+  .app.app-light .admin-shell .MuiInputBase-input::placeholder {
+      color: rgba(30, 58, 138, 0.45) !important;
+      opacity: 1 !important;
+  }
+
+  /* NavBar */
   .app.app-light .MuiAppBar-root,
   .app.app-light .MuiAppBar-root a,
   .app.app-light .MuiAppBar-root .MuiButton-root,

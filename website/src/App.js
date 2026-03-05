@@ -286,7 +286,7 @@ export default function App() {
 									<Route exact path='/' element={<Dashboard />} />
 									<Route exact path='/profile' element={<StudentProfile />} />
 									<Route element={<AdminRoutes />}>
-										<Route exact path='/admin' element={<Admin />} />
+								<Route exact path='/admin' element={<Admin displayMode={displayMode} />} />
 										<Route exact path='/gradesync' element={<GradeSyncControl />} />
 										<Route exact path='/alerts' element={<Alerts />} />
 										<Route exact path='/settings' element={<Settings />} />

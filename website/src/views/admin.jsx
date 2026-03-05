@@ -55,7 +55,20 @@ ChartJS.register(
 
 
 
-export default function Admin() {
+export default function Admin({ displayMode = 'dark' }) {
+  const isLight = displayMode === 'light';
+
+  // Adaptive palette — use once, ref everywhere
+  const hdrBg1        = isLight ? 'rgba(200, 218, 255, 0.92)' : 'rgba(53, 77, 154, 0.9)';
+  const hdrBg1s       = isLight ? 'rgba(200, 218, 255, 0.95)' : 'rgba(53, 77, 154, 0.94)';
+  const hdrBg2        = isLight ? 'rgba(215, 228, 255, 0.88)' : 'rgba(60, 88, 175, 0.88)';
+  const hdrBg2s       = isLight ? 'rgba(215, 228, 255, 0.92)' : 'rgba(60, 88, 175, 0.92)';
+  const hdrColor      = isLight ? '#1a3470'                   : 'rgba(242, 247, 255, 0.98)';
+  const hdrBorderH    = isLight ? '#a0b8d8'                   : '#999';
+  const hdrBorderV    = isLight ? '#b8cde8'                   : '#ccc';
+  const chartTick     = isLight ? 'rgba(26, 52, 112, 0.82)'   : 'rgba(210, 226, 255, 0.92)';
+  const chartTitle    = isLight ? 'rgba(26, 52, 112, 0.95)'   : 'rgba(224, 236, 255, 0.95)';
+  const chartGrid     = isLight ? 'rgba(30, 58, 138, 0.1)'    : 'rgba(255, 255, 255, 0.12)';
   // TAB STATE
   const [tab, setTab] = useState(0);
   const [courses, setCourses] = useState([]);
@@ -534,14 +547,14 @@ export default function Admin() {
                               minWidth: 140, 
                               height: 56, 
                               fontSize: '0.95rem',
-                              borderColor: 'rgba(191, 211, 255, 0.4)',
-                              color: 'rgba(232, 241, 255, 0.9)',
+                              borderColor: isLight ? 'rgba(30, 58, 138, 0.3)' : 'rgba(191, 211, 255, 0.4)',
+                              color: isLight ? '#1e3a8a' : 'rgba(232, 241, 255, 0.9)',
                               textTransform: 'none',
                               fontWeight: 500,
                               '&:hover': {
-                                borderColor: '#6a8cff',
-                                color: '#f7fbff',
-                                bgcolor: 'rgba(104, 144, 255, 0.18)'
+                                borderColor: isLight ? '#1e3a8a' : '#6a8cff',
+                                color: isLight ? '#0f2460' : '#f7fbff',
+                                bgcolor: isLight ? 'rgba(30, 58, 138, 0.06)' : 'rgba(104, 144, 255, 0.18)'
                               }
                             }}
                             onClick={() => handleAssignClick(item)}
@@ -640,7 +653,7 @@ export default function Admin() {
                         title: {
                           display: true,
                           text: 'Score',
-                          color: 'rgba(224, 236, 255, 0.95)'
+                          color: chartTitle
                         },
                         min: 0,
                         max: maxScore,
@@ -649,29 +662,29 @@ export default function Admin() {
                           autoSkip: numBins > 20,
                           maxRotation: 45,
                           minRotation: 45,
-                          color: 'rgba(210, 226, 255, 0.92)',
+                          color: chartTick,
                           font: {
                             size: numBins > 50 ? 10 : 12
                           }
                         },
                         grid: {
-                          color: 'rgba(255, 255, 255, 0.12)'
+                          color: chartGrid
                         }
                       },
                       y: {
                         title: {
                           display: true,
                           text: 'Count',
-                          color: 'rgba(224, 236, 255, 0.95)'
+                          color: chartTitle
                         },
                         beginAtZero: true,
                         ticks: {
                           stepSize: 1,
                           precision: 0,
-                          color: 'rgba(210, 226, 255, 0.92)'
+                          color: chartTick
                         },
                         grid: {
-                          color: 'rgba(255, 255, 255, 0.12)'
+                          color: chartGrid
                         }
                       }
                     },
@@ -685,7 +698,7 @@ export default function Admin() {
                   return (
                 <Box mt={4}>
                     <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-                      <Typography variant="body2" sx={{ color: 'rgba(224, 236, 255, 0.92)' }}>
+                      <Typography variant="body2" sx={{ color: isLight ? 'rgba(30, 58, 138, 0.72)' : 'rgba(224, 236, 255, 0.92)' }}>
                         💡 Click on {useLineChart ? 'points' : 'bars'} to select/deselect score ranges. Selected ranges will turn green.
                       </Typography>
                       {scoreSelected.length > 0 && (
@@ -700,7 +713,7 @@ export default function Admin() {
                       )}
                     </Box>
                     {useLineChart && (
-                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: '#fbbf24', fontStyle: 'italic' }}>
+                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: isLight ? '#b45309' : '#fbbf24', fontStyle: 'italic' }}>
                         📈 Switched to line chart for better readability with {numBins} data points
                       </Typography>
                     )}
@@ -849,7 +862,7 @@ export default function Admin() {
                 </Box>
                 
                 {/* Assignment Selector - Buttons for each section */}
-                <Box sx={{ p: 3, bgcolor: 'rgba(255,255,255,0.03)' }}>
+                <Box sx={{ p: 3, bgcolor: isLight ? 'rgba(240, 246, 255, 0.6)' : 'rgba(255,255,255,0.03)' }}>
                   <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                         Show Columns:
@@ -912,12 +925,12 @@ export default function Admin() {
                                     variant={allVisible ? "contained" : "outlined"}
                                     sx={{
                                         backgroundColor: allVisible ? '#4f46e5' : 'transparent',
-                                      color: allVisible ? 'white' : 'rgba(232,241,255,0.9)',
-                                      borderColor: allVisible ? '#4f46e5' : 'rgba(191,211,255,0.35)',
+                                        color: allVisible ? 'white' : (isLight ? '#1e3a8a' : 'rgba(232,241,255,0.9)'),
+                                        borderColor: allVisible ? '#4f46e5' : (isLight ? 'rgba(30,58,138,0.3)' : 'rgba(191,211,255,0.35)'),
                                         textTransform: 'none',
                                         fontWeight: 500,
                                         '&:hover': {
-                                          backgroundColor: allVisible ? '#4338ca' : 'rgba(104, 144, 255, 0.14)',
+                                          backgroundColor: allVisible ? '#4338ca' : (isLight ? 'rgba(30, 58, 138, 0.08)' : 'rgba(104, 144, 255, 0.14)'),
                                           borderColor: '#4f46e5'
                                         }
                                     }}
@@ -993,7 +1006,7 @@ export default function Admin() {
                                                         onChange={() => {}}
                                                       style={{ marginRight: '8px', cursor: 'pointer', accentColor: '#66b2ff' }}
                                                     />
-                                                    <span style={{ color: 'rgba(231, 241, 255, 0.96)' }}>{a.name}</span>
+                                                    <span style={{ color: isLight ? '#1e3a8a' : 'rgba(231, 241, 255, 0.96)' }}>{a.name}</span>
                                                 </Box>
                                             ))}
                                         </Box>
@@ -1011,7 +1024,7 @@ export default function Admin() {
                 {/* Main Table with Tree Structure Headers */}
                 <TableContainer 
                     sx={{ 
-                    bgcolor: 'rgba(8, 14, 30, 0.74)',
+                    bgcolor: isLight ? 'rgba(243, 248, 255, 0.95)' : 'rgba(8, 14, 30, 0.74)',
                     overflowX: 'auto',
                     overflowY: 'visible',
                         position: 'relative',
@@ -1020,19 +1033,19 @@ export default function Admin() {
                             width: '14px'
                         },
                         '&::-webkit-scrollbar-track': {
-                          backgroundColor: 'rgba(255,255,255,0.12)',
+                          backgroundColor: isLight ? 'rgba(30,58,138,0.08)' : 'rgba(255,255,255,0.12)',
                             borderRadius: '8px'
                         },
                         '&::-webkit-scrollbar-thumb': {
-                          backgroundColor: 'rgba(102, 175, 255, 0.9)',
+                          backgroundColor: isLight ? 'rgba(30,100,220,0.5)' : 'rgba(102, 175, 255, 0.9)',
                             borderRadius: '8px',
-                          border: '2px solid rgba(255,255,255,0.12)',
+                          border: isLight ? '2px solid rgba(200,220,255,0.6)' : '2px solid rgba(255,255,255,0.12)',
                             '&:hover': {
-                            backgroundColor: 'rgba(102, 175, 255, 1)'
+                            backgroundColor: isLight ? 'rgba(30,100,220,0.75)' : 'rgba(102, 175, 255, 1)'
                             }
                         },
                         '&::-webkit-scrollbar-corner': {
-                          backgroundColor: 'rgba(255,255,255,0.12)'
+                          backgroundColor: isLight ? 'rgba(30,58,138,0.06)' : 'rgba(255,255,255,0.12)'
                         }
                     }}
                 >
@@ -1048,8 +1061,8 @@ export default function Admin() {
                                 whiteSpace: 'nowrap'
                             },
                             '& .MuiTableCell-head': {
-                              backgroundColor: 'rgba(53, 77, 154, 0.9)',
-                              color: 'rgba(242, 247, 255, 0.98)',
+                              backgroundColor: hdrBg1,
+                              color: hdrColor,
                                 position: 'sticky',
                                 top: 0,
                                 zIndex: 100,
@@ -1059,20 +1072,20 @@ export default function Admin() {
                     >
                         <TableHead>
                             {/* FIRST HEADER ROW */}
-                            <TableRow sx={{ backgroundColor: 'rgba(53, 77, 154, 0.9)' }}>
+                            <TableRow sx={{ backgroundColor: hdrBg1 }}>
                                 <TableCell sx={{ 
                                     position: 'sticky', 
                                     left: 0, 
                                     zIndex: 101, 
-                                backgroundColor: 'rgba(53, 77, 154, 0.94)',
-                                color: 'rgba(242, 247, 255, 0.98)',
-                                    borderRight: '2px solid #999',
-                                    minWidth: '200px', // Student name column wider
+                                    backgroundColor: hdrBg1s,
+                                    color: hdrColor,
+                                    borderRight: `2px solid ${hdrBorderH}`,
+                                    minWidth: '200px',
                                     maxWidth: '250px'
                                 }}>
                                     <strong>Student</strong>
                                 </TableCell>
-                              <TableCell align="center" colSpan={2} sx={{ borderRight: '2px solid #999', backgroundColor: 'rgba(53, 77, 154, 0.94)', color: 'rgba(242, 247, 255, 0.98)' }}>
+                              <TableCell align="center" colSpan={2} sx={{ borderRight: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
                                     <strong>Summary</strong>
                                 </TableCell>
                                 
@@ -1082,7 +1095,7 @@ export default function Admin() {
                                     if (visibleInSection.length === 0) return null;
                                     
                                     return (
-                                        <TableCell key={section} colSpan={visibleInSection.length + 1} align="center" sx={{ borderLeft: '2px solid #999', backgroundColor: 'rgba(53, 77, 154, 0.94)', color: 'rgba(242, 247, 255, 0.98)' }}>
+                                        <TableCell key={section} colSpan={visibleInSection.length + 1} align="center" sx={{ borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
                                             <strong>{section}</strong> (Max: {sectionMaxPoints[section] || 0})
                                         </TableCell>
                                     );
@@ -1090,16 +1103,16 @@ export default function Admin() {
                             </TableRow>
                             
                             {/* SECOND HEADER ROW */}
-                                  <TableRow sx={{ backgroundColor: 'rgba(60, 88, 175, 0.88)' }}>
+                                  <TableRow sx={{ backgroundColor: hdrBg2 }}>
                                 <TableCell sx={{
                                     position: 'sticky',
                                     left: 0,
                                     zIndex: 101,
-                                      backgroundColor: 'rgba(60, 88, 175, 0.92)',
-                                      color: 'rgba(242, 247, 255, 0.98)',
-                                    borderRight: '2px solid #999'
+                                    backgroundColor: hdrBg2s,
+                                    color: hdrColor,
+                                    borderRight: `2px solid ${hdrBorderH}`
                                 }} />
-                                      <TableCell align="center" sx={{ borderRight: '1px solid #ccc', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
+                                      <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, backgroundColor: hdrBg2s, color: hdrColor }}>
                                     <Box display="flex" alignItems="center" justifyContent="center">
                                         <strong>Total</strong>
                                         <IconButton size="small" onClick={() => handleSort('total')}>
@@ -1107,7 +1120,7 @@ export default function Admin() {
                                         </IconButton>
                                     </Box>
                                 </TableCell>
-                                    <TableCell align="center" sx={{ borderRight: '2px solid #999', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
+                                    <TableCell align="center" sx={{ borderRight: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}>
                                     <strong>Final %</strong>
                                 </TableCell>
                                 
@@ -1118,7 +1131,7 @@ export default function Admin() {
                                     
                                     return (
                                         <>
-                                            <TableCell align="center" sx={{ borderRight: '1px solid #ccc', borderLeft: '2px solid #999', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
+                                            <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}>
                                                 <Box display="flex" alignItems="center" justifyContent="center">
                                                     <strong>{section} Total</strong>
                                                     <IconButton size="small" onClick={() => handleSort(section)}>
@@ -1127,7 +1140,7 @@ export default function Admin() {
                                                 </Box>
                                             </TableCell>
                                             {visibleInSection.map(a => (
-                                              <TableCell key={a.name} align="center" sx={{ minWidth: '120px', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
+                                              <TableCell key={a.name} align="center" sx={{ minWidth: '120px', backgroundColor: hdrBg2s, color: hdrColor }}>
                                                     <Box display="flex" alignItems="center" justifyContent="center">
                                                         <strong style={{ fontSize: '11px' }}>{a.name}</strong>
                                                         <IconButton size="small" onClick={() => handleSort(a.name)}>
@@ -1150,9 +1163,9 @@ export default function Admin() {
                                         position: 'sticky',
                                         left: 0,
                                         zIndex: 10,
-                                        backgroundColor: 'rgba(18, 28, 55, 0.94)',
-                                        borderRight: '2px solid #999',
-                                        minWidth: '200px', // Student name column wider
+                                        backgroundColor: isLight ? 'rgba(245, 249, 255, 0.98)' : 'rgba(18, 28, 55, 0.94)',
+                                        borderRight: `2px solid ${hdrBorderH}`,
+                                        minWidth: '200px',
                                         maxWidth: '250px'
                                     }}>
                                         <Box
@@ -1174,10 +1187,10 @@ export default function Admin() {
                                     </TableCell>
                                     
                                     {/* Summary Scores */}
-                                    <TableCell align="center" sx={{ borderRight: '1px solid #ccc' }}>
+                                    <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}` }}>
                                         {stu.total.toFixed(2)}
                                     </TableCell>
-                                    <TableCell align="center" sx={{ borderRight: '2px solid #999' }}>
+                                    <TableCell align="center" sx={{ borderRight: `2px solid ${hdrBorderH}` }}>
                                         {totalMaxPoints > 0 ? ((stu.total / totalMaxPoints) * 100).toFixed(2) : '0.00'}%
                                     </TableCell>
                                     
@@ -1188,7 +1201,7 @@ export default function Admin() {
                                         
                                         return (
                                             <>
-                                                <TableCell align="center" sx={{ borderRight: '1px solid #ccc', borderLeft: '2px solid #999', fontWeight: 'bold' }}>
+                                                <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, fontWeight: 'bold' }}>
                                                     {stu.sectionTotals[section]?.toFixed(2) || '0.00'}
                                                 </TableCell>
                                                 {visibleInSection.map(a => {
