@@ -213,7 +213,7 @@ function ConceptMapNode({
         style={{
           fontFamily: 'sans-serif',
           fontSize: '12px',
-          fill: '#333',
+          fill: 'rgba(232, 242, 255, 0.96)',
         }}
       >
         {nodeDatum.name}

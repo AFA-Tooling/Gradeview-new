@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import {
+    Box,
     OutlinedInput,
     Stack,
     Button,
@@ -81,24 +82,32 @@ export default function Login() {
     }
 
     return (
-        <>
+        <Box
+            sx={{
+                minHeight: 'calc(100vh - 130px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                px: 2,
+            }}
+        >
             <form>
                 <Stack
                     spacing={2}
+                    className='glass-panel'
                     sx={{
                         alignItems: 'center',
                         justifyContent: 'center',
-                        width: '100%',
-                        position: 'absolute',
-                        top: '50%',
-                        transform: 'translate(0, -50%)',
+                        width: 'min(420px, 88vw)',
+                        p: 4,
+                        borderRadius: 4,
                     }}
                 >
-                    <Typography variant='h3' sx={{ fontWeight: 500 }}>
+                    <Typography variant='h3' sx={{ fontWeight: 600, letterSpacing: '0.06em' }}>
                         Login
                     </Typography>
                     <FormControl
-                        sx={{ m: 1, width: '25ch' }}
+                        sx={{ width: '100%' }}
                         variant='outlined'
                     >
                         <InputLabel htmlFor='username'>Username</InputLabel>
@@ -112,7 +121,7 @@ export default function Login() {
                         />
                     </FormControl>
                     <FormControl
-                        sx={{ m: 1, width: '25ch' }}
+                        sx={{ width: '100%' }}
                         variant='outlined'
                     >
                         <InputLabel htmlFor='password'>Password</InputLabel>
@@ -142,20 +151,21 @@ export default function Login() {
                             }}
                         />
                     </FormControl>
-                    {error && <Alert severity='error'>{error}</Alert>}
+                    {error && <Alert severity='error' sx={{ width: '100%' }}>{error}</Alert>}
                     <Button
                         variant='contained'
                         size='large'
                         onClick={handleLogin}
+                        sx={{ width: '100%' }}
                     >
                         Login
                     </Button>
-                    <p>
+                    <Typography variant='body2' sx={{ opacity: 0.76 }}>
                         <i>or</i>
-                    </p>
+                    </Typography>
                     <div id='googleSignInButton'></div>
                 </Stack>
             </form>
-        </>
+        </Box>
     );
 }

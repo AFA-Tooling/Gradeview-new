@@ -401,7 +401,7 @@ export default function Settings() {
                 配置按层级组织：系统级设置 → 课程级设置 → 数据源 / 评分规则 / 分类映射。保存后对所有用户生效。
             </Alert>
 
-            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+            <Box className='glass-section' sx={{ borderBottom: 1, borderColor: 'divider', mb: 3, px: 2, py: 1, borderRadius: 2 }}>
                 <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
                     <Tab label="GradeView Configuration" />
                     <Tab label="GradeSync Configuration" icon={<SyncIcon />} iconPosition="start" />
@@ -412,7 +412,7 @@ export default function Settings() {
             <Box role="tabpanel" hidden={tabValue !== 0}>
 
             {/* Admin Users */}
-            <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+            <Paper elevation={2} className='glass-section' sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <SettingsIcon sx={{ mr: 1 }} />
                     <Typography variant="h6">Administrator Users</Typography>
@@ -461,7 +461,7 @@ export default function Settings() {
             </Paper>
 
             {/* Google OAuth */}
-            <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+            <Paper elevation={2} className='glass-section' sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <SettingsIcon sx={{ mr: 1 }} />
                     <Typography variant="h6">Google OAuth Configuration</Typography>
@@ -489,7 +489,7 @@ export default function Settings() {
                 {syncConfig && (
                     <>
                         {/* Global Settings */}
-                        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+                        <Paper elevation={2} className='glass-section' sx={{ p: 3, mb: 3 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                                 <SyncIcon sx={{ mr: 1 }} />
                                 <Typography variant="h6">Global Sync Settings</Typography>
@@ -550,7 +550,7 @@ export default function Settings() {
                         </Paper>
 
                         {/* Courses */}
-                        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+                        <Paper elevation={2} className='glass-section' sx={{ p: 3, mb: 3 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                     <School sx={{ mr: 1 }} />

@@ -88,8 +88,10 @@ g.node.collapsed > circle {
 .concept-map-container g.node text {
   font: 12px sans-serif !important;
   font-weight: normal !important;
-  fill: black !important;
-  stroke: none !important;
+  fill: rgba(232, 242, 255, 0.96) !important;
+  stroke: rgba(4, 8, 22, 0.85) !important;
+  stroke-width: 0.9px !important;
+  paint-order: stroke !important;
 }
 
 /* BRANCH/PATH STYLES BASED ON TAUGHT/NOT TAUGHT STATUS */

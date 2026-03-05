@@ -12,11 +12,13 @@ export default function Footer() {
                 flex: '0 0 auto',
                 py: 2,
                 px: 2,
-                backgroundColor: 'rgba(0, 0, 0, 0.05)',
-                borderTop: '1px solid rgba(0, 0, 0, 0.12)',
+                background: 'linear-gradient(120deg, rgba(31, 44, 82, 0.5), rgba(24, 34, 64, 0.42))',
+                backdropFilter: 'blur(14px)',
+                borderTop: '1px solid rgba(255, 255, 255, 0.2)',
                 textAlign: 'center',
                 width: '100%',
-                zIndex: 1,
+                zIndex: 3,
+                position: 'relative',
             }}
         >
             <Typography
@@ -28,13 +30,14 @@ export default function Footer() {
                     justifyContent: 'center',
                     gap: 1,
                     flexWrap: 'wrap',
+                    color: 'rgba(229, 238, 255, 0.86)',
                 }}
             >
                 <Email sx={{ fontSize: 16 }} />
                 <span>Questions or issues?</span>
                 <Link
                     href={`mailto:${contactEmail}`}
-                    color="primary"
+                    color="secondary.main"
                     underline="hover"
                     sx={{ fontWeight: 500 }}
                 >

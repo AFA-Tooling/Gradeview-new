@@ -7,15 +7,316 @@
       display: flex;
       flex-flow: column;
       align-items: stretch;
+      height: 100vh;
       min-height: 100vh;
+      position: relative;
+    overflow-x: hidden;
+        overflow-y: hidden;
+      background: radial-gradient(circle at 12% 8%, rgba(99, 115, 255, 0.3), rgba(12, 16, 35, 0) 36%),
+                  radial-gradient(circle at 84% 12%, rgba(77, 224, 255, 0.22), rgba(10, 14, 30, 0) 32%),
+                  radial-gradient(circle at 52% 120%, rgba(86, 103, 255, 0.15), rgba(10, 14, 30, 0) 40%),
+                  linear-gradient(155deg, #02040b 0%, #070c1d 36%, #09112b 64%, #03050b 100%);
+  }
+
+    .app.app-light {
+            background: radial-gradient(circle at 8% 8%, rgba(169, 193, 255, 0.55), rgba(239, 245, 255, 0) 36%),
+                                    radial-gradient(circle at 82% 10%, rgba(157, 227, 255, 0.5), rgba(239, 245, 255, 0) 34%),
+                                    radial-gradient(circle at 48% 120%, rgba(184, 205, 255, 0.36), rgba(239, 245, 255, 0) 44%),
+                                    linear-gradient(160deg, #f3f7ff 0%, #eaf1ff 38%, #e5eeff 66%, #f7faff 100%);
+    }
+
+  .app::before,
+  .app::after {
+      content: '';
+      position: absolute;
+      width: 42vw;
+      height: 42vw;
+      border-radius: 999px;
+      filter: blur(70px);
+      opacity: 0.55;
+      pointer-events: none;
+      z-index: 0;
+      animation: auraFloat 19s ease-in-out infinite;
+  }
+
+  .app::before {
+      top: -12vw;
+      left: -10vw;
+      background: radial-gradient(circle, rgba(96, 151, 255, 0.65) 0%, rgba(96, 151, 255, 0) 70%);
+  }
+
+  .app.app-light::before {
+      background: radial-gradient(circle, rgba(122, 167, 255, 0.52) 0%, rgba(122, 167, 255, 0) 72%);
+      opacity: 0.65;
+  }
+
+  .app::after {
+      right: -12vw;
+      bottom: -14vw;
+      animation-delay: -8s;
+      background: radial-gradient(circle, rgba(87, 247, 255, 0.52) 0%, rgba(87, 247, 255, 0) 72%);
+  }
+
+  .app.app-light::after {
+      background: radial-gradient(circle, rgba(124, 208, 255, 0.44) 0%, rgba(124, 208, 255, 0) 74%);
+      opacity: 0.52;
+  }
+
+  .app > .content::before,
+  .app > .content::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: -1;
+  }
+
+  .app > .content::before {
+      background-image: linear-gradient(rgba(161, 191, 255, 0.06) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(161, 191, 255, 0.05) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: radial-gradient(circle at 50% 30%, rgba(0,0,0,0.75), rgba(0,0,0,0.18) 58%, transparent 90%);
+      opacity: 0.2;
+      animation: gridDrift 22s linear infinite;
+  }
+
+  .app.app-light > .content::before {
+      background-image: linear-gradient(rgba(83, 120, 198, 0.12) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(83, 120, 198, 0.1) 1px, transparent 1px);
+      opacity: 0.3;
+      mask-image: radial-gradient(circle at 50% 30%, rgba(0,0,0,0.55), rgba(0,0,0,0.22) 58%, transparent 92%);
+  }
+
+  .app > .content::after {
+      background: radial-gradient(circle at 22% 18%, rgba(146, 169, 255, 0.12), transparent 42%),
+                  radial-gradient(circle at 70% 38%, rgba(106, 241, 255, 0.11), transparent 36%);
+      filter: blur(16px);
+      opacity: 0.34;
+      animation: pulseBloom 10s ease-in-out infinite;
+  }
+
+  .app.app-light > .content::after {
+      background: radial-gradient(circle at 22% 18%, rgba(112, 149, 236, 0.2), transparent 42%),
+                  radial-gradient(circle at 70% 38%, rgba(98, 182, 235, 0.18), transparent 36%);
+      opacity: 0.5;
   }
   
   .nav{
       flex: 0 1 auto;
+      position: relative;
+      z-index: 4;
   }
   
   .content{
       flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-gutter: stable;
+      position: relative;
+      z-index: 2;
+      padding: 16px;
+  }
+
+  .content > * {
+      animation: fadeInUp 0.35s ease-out;
+  }
+
+  .glass-panel {
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.03));
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      box-shadow: 0 20px 58px rgba(2, 9, 28, 0.45);
+      backdrop-filter: blur(18px);
+  }
+
+  .app.app-light .glass-panel {
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(244, 250, 255, 0.95));
+      border: 1px solid rgba(37, 71, 146, 0.14);
+      box-shadow: 0 12px 26px rgba(42, 72, 136, 0.14);
+  }
+
+  .glass-section {
+      background: linear-gradient(145deg, rgba(255,255,255,0.11), rgba(255,255,255,0.02));
+      border: 1px solid rgba(255,255,255,0.17);
+      border-radius: 16px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 14px 34px rgba(3, 8, 24, 0.32);
+  }
+
+  .app.app-light .glass-section {
+      background: linear-gradient(145deg, rgba(255,255,255,0.95), rgba(245,249,255,0.96));
+      border: 1px solid rgba(40, 74, 149, 0.14);
+      box-shadow: 0 12px 24px rgba(45, 82, 150, 0.12);
+  }
+
+  .app.app-light .admin-shell .MuiTypography-root,
+  .app.app-light .student-profile-shell .MuiTypography-root {
+      color: rgba(20, 40, 74, 0.92);
+  }
+
+  .app.app-light .admin-shell .MuiTableContainer-root,
+  .app.app-light .student-profile-shell .MuiTableContainer-root,
+  .app.app-light .MuiDialog-paper .MuiTableContainer-root {
+      background: rgba(255, 255, 255, 0.88) !important;
+      border: 1px solid rgba(53, 88, 168, 0.16) !important;
+  }
+
+  .app.app-light .admin-shell .MuiTableCell-root,
+  .app.app-light .student-profile-shell .MuiTableCell-root,
+  .app.app-light .MuiDialog-paper .MuiTableCell-root {
+      color: rgba(24, 45, 78, 0.92) !important;
+      border-bottom-color: rgba(72, 106, 182, 0.14) !important;
+  }
+
+  .app.app-light .admin-shell .MuiTableCell-head,
+  .app.app-light .student-profile-shell .MuiTableCell-head,
+  .app.app-light .MuiDialog-paper .MuiTableCell-head {
+      background: rgba(210, 223, 255, 0.9) !important;
+      color: #1e3a70 !important;
+      text-shadow: none;
+  }
+
+  .admin-shell .MuiPaper-root,
+  .student-profile-shell .MuiPaper-root {
+      background: linear-gradient(145deg, rgba(10, 18, 36, 0.78), rgba(12, 20, 40, 0.66)) !important;
+      border: 1px solid rgba(171, 196, 255, 0.22) !important;
+      box-shadow: 0 12px 28px rgba(2, 8, 24, 0.36) !important;
+  }
+
+  .admin-shell .MuiTypography-root,
+  .student-profile-shell .MuiTypography-root {
+      color: rgba(235, 242, 255, 0.92);
+  }
+
+  .admin-shell .MuiTableContainer-root,
+  .student-profile-shell .MuiTableContainer-root,
+  .MuiDialog-paper .MuiTableContainer-root {
+      background: rgba(8, 14, 30, 0.74) !important;
+      border: 1px solid rgba(171, 196, 255, 0.22) !important;
+  }
+
+  .admin-shell .MuiTableCell-root,
+  .student-profile-shell .MuiTableCell-root,
+  .MuiDialog-paper .MuiTableCell-root {
+      color: rgba(236, 243, 255, 0.92) !important;
+      border-bottom-color: rgba(157, 183, 255, 0.16) !important;
+  }
+
+  .admin-shell .MuiTableCell-head,
+  .student-profile-shell .MuiTableCell-head,
+  .MuiDialog-paper .MuiTableCell-head {
+      background: rgba(100, 132, 255, 0.32) !important;
+      color: #f2f7ff !important;
+      text-shadow: 0 1px 0 rgba(0,0,0,0.2);
+  }
+
+  .admin-shell .MuiTableCell-head strong,
+  .student-profile-shell .MuiTableCell-head strong,
+  .MuiDialog-paper .MuiTableCell-head strong {
+      color: #f4f8ff !important;
+      font-weight: 700;
+  }
+
+  .admin-shell .MuiTableRow-root:hover,
+  .student-profile-shell .MuiTableRow-root:hover,
+  .MuiDialog-paper .MuiTableRow-root:hover {
+      background: rgba(108, 150, 255, 0.12) !important;
+  }
+
+  .admin-shell .MuiToggleButton-root,
+  .student-profile-shell .MuiToggleButton-root {
+      color: #dbe8ff !important;
+      border-color: rgba(159, 188, 255, 0.35) !important;
+  }
+
+  .admin-shell .MuiToggleButton-root.Mui-selected,
+  .student-profile-shell .MuiToggleButton-root.Mui-selected {
+      color: #ffffff !important;
+      background: rgba(95, 141, 255, 0.3) !important;
+  }
+
+  @keyframes auraFloat {
+      0%,
+      100% {
+          transform: translate3d(0, 0, 0) scale(1);
+      }
+      50% {
+          transform: translate3d(1.8vw, -1.2vw, 0) scale(1.06);
+      }
+  }
+
+  @keyframes fadeInUp {
+      from {
+          opacity: 0;
+          transform: translateY(6px);
+      }
+      to {
+          opacity: 1;
+          transform: translateY(0);
+      }
+  }
+
+  @keyframes gridDrift {
+      0% {
+          transform: translate3d(0, 0, 0);
+      }
+      100% {
+          transform: translate3d(-42px, -42px, 0);
+      }
+  }
+
+  @keyframes pulseBloom {
+      0%,
+      100% {
+          opacity: 0.45;
+          transform: scale(1);
+      }
+      50% {
+          opacity: 0.72;
+          transform: scale(1.06);
+      }
+  }
+
+  /* Light mode final overrides (must stay at file end to beat dark defaults) */
+  .app.app-light .admin-shell .MuiPaper-root,
+  .app.app-light .student-profile-shell .MuiPaper-root {
+      background: linear-gradient(145deg, rgba(255,255,255,0.95), rgba(245,249,255,0.96)) !important;
+      border: 1px solid rgba(40, 74, 149, 0.14) !important;
+      box-shadow: 0 12px 24px rgba(45, 82, 150, 0.12) !important;
+  }
+
+  .app.app-light .admin-shell .MuiTypography-root,
+  .app.app-light .student-profile-shell .MuiTypography-root,
+  .app.app-light .MuiTypography-root {
+      color: rgba(20, 40, 74, 0.92) !important;
+  }
+
+  .app.app-light .admin-shell .MuiTableContainer-root,
+  .app.app-light .student-profile-shell .MuiTableContainer-root,
+  .app.app-light .MuiDialog-paper .MuiTableContainer-root {
+      background: rgba(255, 255, 255, 0.92) !important;
+      border: 1px solid rgba(53, 88, 168, 0.16) !important;
+  }
+
+  .app.app-light .admin-shell .MuiTableCell-root,
+  .app.app-light .student-profile-shell .MuiTableCell-root,
+  .app.app-light .MuiDialog-paper .MuiTableCell-root {
+      color: rgba(24, 45, 78, 0.92) !important;
+      border-bottom-color: rgba(72, 106, 182, 0.14) !important;
+  }
+
+  .app.app-light .admin-shell .MuiTableCell-head,
+  .app.app-light .student-profile-shell .MuiTableCell-head,
+  .app.app-light .MuiDialog-paper .MuiTableCell-head {
+      background: rgba(210, 223, 255, 0.9) !important;
+      color: #1e3a70 !important;
+      text-shadow: none !important;
+  }
+
+  .app.app-light .MuiAppBar-root,
+  .app.app-light .MuiAppBar-root a,
+  .app.app-light .MuiAppBar-root .MuiButton-root,
+  .app.app-light .MuiAppBar-root .MuiTypography-root,
+  .app.app-light .MuiAppBar-root .MuiSvgIcon-root {
+      color: #18315a !important;
   }

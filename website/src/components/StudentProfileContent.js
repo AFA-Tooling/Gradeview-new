@@ -61,7 +61,7 @@ const categoryDonutGroupOutlinePlugin = {
       ctx.arc(x, y, innerRadius, endAngle, startAngle, true);
       ctx.closePath();
       ctx.lineWidth = 2;
-      ctx.strokeStyle = bound.outlineColor || 'rgba(30, 58, 138, 0.65)';
+      ctx.strokeStyle = bound.outlineColor || 'rgba(245, 158, 11, 0.72)';
       ctx.stroke();
     });
 
@@ -126,13 +126,13 @@ export default function StudentProfileContent({ studentData }) {
                 width: 10,
                 height: 16,
                 borderRadius: '2px',
-                backgroundColor: index < filledSegments ? '#1e3a8a' : '#e5e7eb',
-                border: '1px solid #d1d5db'
+                backgroundColor: index < filledSegments ? '#f59e0b' : 'rgba(226, 232, 240, 0.28)',
+                border: '1px solid rgba(196, 210, 238, 0.26)'
               }}
             />
           ))}
         </Box>
-        <Typography variant="body2" sx={{ color: '#374151', fontWeight: 600, minWidth: 58, textAlign: 'left' }}>
+        <Typography variant="body2" sx={{ color: 'rgba(231, 241, 255, 0.94)', fontWeight: 600, minWidth: 58, textAlign: 'left' }}>
           {safeValue.toFixed(2)}%
         </Typography>
       </Box>
@@ -187,6 +187,36 @@ export default function StudentProfileContent({ studentData }) {
 
   const examPolicyRows = Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [];
 
+  const radarScaleOptions = {
+    min: 0,
+    max: 100,
+    beginAtZero: true,
+    ticks: {
+      stepSize: 20,
+      color: 'rgba(214, 228, 255, 0.9)',
+      showLabelBackdrop: false,
+      backdropColor: 'transparent',
+      font: {
+        size: 13,
+        weight: 600,
+      },
+      callback: function(value) {
+        return value + '%';
+      }
+    },
+    grid: {
+      color: 'rgba(176, 197, 240, 0.3)',
+      lineWidth: 1.4,
+    },
+    angleLines: {
+      color: 'rgba(176, 197, 240, 0.28)',
+      lineWidth: 1.2,
+    },
+    pointLabels: {
+      display: false,
+    }
+  };
+
   const questComponentTrend = useMemo(() => {
     const trend = studentData?.questComponentTrend;
     const components = Array.isArray(trend?.components) ? trend.components : [];
@@ -201,22 +231,22 @@ export default function StudentProfileContent({ studentData }) {
 
     const palette = [
       {
-        line: '#3b82f6',
-        point: '#2563eb',
-        baseArea: 'rgba(59, 130, 246, 0.10)',
-        diffArea: 'rgba(59, 130, 246, 0.14)',
-      },
-      {
         line: '#f59e0b',
         point: '#d97706',
-        baseArea: 'rgba(245, 158, 11, 0.08)',
-        diffArea: 'rgba(245, 158, 11, 0.16)',
+        baseArea: 'rgba(245, 158, 11, 0.10)',
+        diffArea: 'rgba(245, 158, 11, 0.14)',
       },
       {
         line: '#10b981',
         point: '#059669',
         baseArea: 'rgba(16, 185, 129, 0.08)',
         diffArea: 'rgba(16, 185, 129, 0.16)',
+      },
+      {
+        line: '#ef4444',
+        point: '#dc2626',
+        baseArea: 'rgba(239, 68, 68, 0.08)',
+        diffArea: 'rgba(239, 68, 68, 0.16)',
       },
     ];
 
@@ -424,12 +454,13 @@ export default function StudentProfileContent({ studentData }) {
     <Box>
       <Grid container spacing={3} sx={{ mb: 3, alignItems: 'stretch' }}>
         {/* Overall Summary */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 4,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -547,13 +578,13 @@ export default function StudentProfileContent({ studentData }) {
                         {
                           label: 'Score %',
                           data: radarData.map(d => d.percentage),
-                          borderColor: '#1565c0',
-                          backgroundColor: 'rgba(25, 118, 210, 0.35)',
-                          borderWidth: 3,
+                          borderColor: '#f59e0b',
+                          backgroundColor: 'rgba(245, 158, 11, 0.30)',
+                          borderWidth: 4,
                           pointRadius: 5,
                           pointHoverRadius: 8,
-                          pointBackgroundColor: '#1565c0',
-                          pointBorderColor: '#fff',
+                          pointBackgroundColor: '#f59e0b',
+                          pointBorderColor: '#0b1022',
                           pointBorderWidth: 2,
                         }
                       ]
@@ -562,33 +593,14 @@ export default function StudentProfileContent({ studentData }) {
                       responsive: true,
                       maintainAspectRatio: false,
                       scales: {
-                        r: {
-                          min: 0,
-                          max: 100,
-                          beginAtZero: true,
-                          ticks: {
-                            stepSize: 20,
-                            backdropColor: 'transparent',
-                            callback: function(value) {
-                              return value + '%';
-                            }
-                          },
-                          grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                          },
-                          angleLines: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                          },
-                          pointLabels: {
-                            display: false
-                          }
-                        }
+                        r: radarScaleOptions
                       },
                       plugins: {
                         legend: {
                           position: 'bottom',
                           labels: {
                             usePointStyle: true,
+                            color: 'rgba(231, 241, 255, 0.92)',
                           }
                         },
                         datalabels: {
@@ -617,12 +629,13 @@ export default function StudentProfileContent({ studentData }) {
         </Grid>
 
         {/* Performance by Category */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 4,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -632,7 +645,7 @@ export default function StudentProfileContent({ studentData }) {
             <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
               Performance by Category
             </Typography>
-            <TableContainer sx={{ mt: 2, borderRadius: 2, overflow: 'hidden' }}>
+            <TableContainer sx={{ mt: 2, borderRadius: 2, overflowX: 'auto', overflowY: 'hidden' }}>
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ backgroundColor: '#f9fafb' }}>
@@ -663,12 +676,13 @@ export default function StudentProfileContent({ studentData }) {
       {/* Charts */}
       <Grid container spacing={3} sx={{ mb: 3, alignItems: 'stretch' }}>
         {/* Radar Chart */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 3,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -687,13 +701,13 @@ export default function StudentProfileContent({ studentData }) {
                       {
                         label: 'Score %',
                         data: radarData.map(d => d.percentage),
-                        borderColor: '#1565c0',
-                        backgroundColor: 'rgba(25, 118, 210, 0.4)',
-                        borderWidth: 3,
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.34)',
+                        borderWidth: 4,
                         pointRadius: 6,
                         pointHoverRadius: 10,
-                        pointBackgroundColor: '#1565c0',
-                        pointBorderColor: '#fff',
+                        pointBackgroundColor: '#f59e0b',
+                        pointBorderColor: '#0b1022',
                         pointBorderWidth: 2,
                       }
                     ]
@@ -702,30 +716,7 @@ export default function StudentProfileContent({ studentData }) {
                     responsive: true,
                     maintainAspectRatio: false,
                   scales: {
-                    r: {
-                      min: 0,
-                      max: 100,
-                      beginAtZero: true,
-                      ticks: {
-                        stepSize: 20,
-                        backdropColor: 'transparent',
-                        font: {
-                          size: 13
-                        },
-                        callback: function(value) {
-                          return value + '%';
-                        }
-                      },
-                      grid: {
-                        color: 'rgba(0, 0, 0, 0.1)'
-                      },
-                      angleLines: {
-                        color: 'rgba(0, 0, 0, 0.1)'
-                      },
-                      pointLabels: {
-                        display: false
-                      }
-                    }
+                    r: radarScaleOptions
                   },
                   interaction: {
                     mode: 'point',
@@ -737,6 +728,7 @@ export default function StudentProfileContent({ studentData }) {
                       labels: {
                         padding: 15,
                         usePointStyle: true,
+                        color: 'rgba(231, 241, 255, 0.92)',
                         font: {
                           size: 13
                         }
@@ -777,12 +769,13 @@ export default function StudentProfileContent({ studentData }) {
         </Grid>
 
         {/* Quest Progress Trend */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 3,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -901,13 +894,13 @@ export default function StudentProfileContent({ studentData }) {
                     py: 0.5,
                     fontSize: '0.875rem',
                     textTransform: 'none',
-                    color: '#1976d2',
-                    border: '1px solid rgba(25, 118, 210, 0.5)',
+                    color: '#fbbf24',
+                    border: '1px solid rgba(251, 191, 36, 0.45)',
                     '&.Mui-selected': {
-                      backgroundColor: '#1976d2',
-                      color: 'white',
+                      backgroundColor: '#d97706',
+                      color: '#fff',
                       '&:hover': {
-                        backgroundColor: '#1565c0',
+                        backgroundColor: '#b45309',
                       }
                     }
                   }
@@ -931,12 +924,12 @@ export default function StudentProfileContent({ studentData }) {
                   datasets: [{
                     label: 'Percentage',
                     data: sortedTrendData.map(d => d.percentage),
-                    borderColor: '#1976d2',
-                    backgroundColor: 'rgba(25, 118, 210, 0.1)',
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.14)',
                     borderWidth: 2,
                     pointRadius: 4,
-                    pointBackgroundColor: '#1976d2',
-                    pointBorderColor: '#fff',
+                    pointBackgroundColor: '#f59e0b',
+                    pointBorderColor: '#0b1022',
                     pointBorderWidth: 2,
                     tension: 0.1,
                     fill: true,
@@ -1086,7 +1079,7 @@ export default function StudentProfileContent({ studentData }) {
         <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
           Detailed Assignment Scores
         </Typography>
-        <TableContainer sx={{ mt: 2, maxHeight: 600, borderRadius: 2, overflow: 'auto' }}>
+        <TableContainer sx={{ mt: 2, borderRadius: 2, overflowX: 'auto', overflowY: 'visible' }}>
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>

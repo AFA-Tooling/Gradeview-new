@@ -455,9 +455,9 @@ export default function Admin() {
   };
 
   return (
-    <Box sx={{ bgcolor: '#f5f7fa', minHeight: '100vh' }}>
+    <Box className='admin-shell' sx={{ minHeight: '100vh' }}>
       {/* Tabs */}
-      <Box sx={{ bgcolor: 'white', borderBottom: '1px solid #e5e7eb', px: 4 }}>
+      <Box className='glass-section' sx={{ px: 4, py: 1, mb: 2, borderRadius: 2 }}>
         <Tabs 
           value={tab} 
           onChange={handleTabChange}
@@ -481,7 +481,7 @@ export default function Admin() {
     <Box px={4} py={4}>
         {/* Search Field */}
         <Box mb={3}>
-          <Paper elevation={0} sx={{ p: 2, border: '1px solid #e5e7eb' }}>
+          <Paper elevation={0} className='glass-section' sx={{ p: 2 }}>
             <TextField
               placeholder="Search assignments…"
               size="small"
@@ -502,9 +502,9 @@ export default function Admin() {
         <>
             {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => (
               <Box key={section} mb={4}>
-                <Paper elevation={0} sx={{ p: 3, border: '1px solid #e5e7eb', borderRadius: 2 }}>
+                <Paper elevation={0} className='glass-section' sx={{ p: 3, borderRadius: 2 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600, color: '#1a202c', flex: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, flex: 1 }}>
                       {section}
                     </Typography>
                     <Button
@@ -534,14 +534,14 @@ export default function Admin() {
                               minWidth: 140, 
                               height: 56, 
                               fontSize: '0.95rem',
-                              borderColor: '#d1d5db',
-                              color: '#374151',
+                              borderColor: 'rgba(191, 211, 255, 0.4)',
+                              color: 'rgba(232, 241, 255, 0.9)',
                               textTransform: 'none',
                               fontWeight: 500,
                               '&:hover': {
-                                borderColor: '#4f46e5',
-                                color: '#4f46e5',
-                                bgcolor: '#eef2ff'
+                                borderColor: '#6a8cff',
+                                color: '#f7fbff',
+                                bgcolor: 'rgba(104, 144, 255, 0.18)'
                               }
                             }}
                             onClick={() => handleAssignClick(item)}
@@ -592,18 +592,18 @@ export default function Admin() {
                       label: 'Count',
                       data: (distribution.distribution || []).map(d => d.count),
                       backgroundColor: (distribution.distribution || []).map(d => 
-                        scoreSelected.includes(d.range) ? '#4caf50' : '#002676'
+                        scoreSelected.includes(d.range) ? '#4caf50' : '#f59e0b'
                       ),
-                      borderColor: useLineChart ? '#002676' : undefined,
+                      borderColor: useLineChart ? '#f59e0b' : undefined,
                       borderWidth: useLineChart ? 3 : 0,
                       pointRadius: useLineChart ? (distribution.distribution || []).map(d =>
                         scoreSelected.includes(d.range) ? 6 : 0  // Show small dot only when selected
                       ) : 0,
                       pointHoverRadius: useLineChart ? 8 : 0,  // Show hover dot
                       pointBackgroundColor: useLineChart ? (distribution.distribution || []).map(d =>
-                        scoreSelected.includes(d.range) ? '#4caf50' : '#002676'
+                        scoreSelected.includes(d.range) ? '#4caf50' : '#f59e0b'
                       ) : undefined,
-                      pointBorderColor: useLineChart ? '#fff' : undefined,
+                      pointBorderColor: useLineChart ? '#0b1022' : undefined,
                       pointBorderWidth: useLineChart ? 2 : 0,
                       tension: 0.1, // Slight curve for line chart
                     }]
@@ -639,7 +639,8 @@ export default function Admin() {
                       x: {
                         title: {
                           display: true,
-                          text: 'Score'
+                          text: 'Score',
+                          color: 'rgba(224, 236, 255, 0.95)'
                         },
                         min: 0,
                         max: maxScore,
@@ -648,20 +649,29 @@ export default function Admin() {
                           autoSkip: numBins > 20,
                           maxRotation: 45,
                           minRotation: 45,
+                          color: 'rgba(210, 226, 255, 0.92)',
                           font: {
                             size: numBins > 50 ? 10 : 12
                           }
+                        },
+                        grid: {
+                          color: 'rgba(255, 255, 255, 0.12)'
                         }
                       },
                       y: {
                         title: {
                           display: true,
-                          text: 'Count'
+                          text: 'Count',
+                          color: 'rgba(224, 236, 255, 0.95)'
                         },
                         beginAtZero: true,
                         ticks: {
                           stepSize: 1,
-                          precision: 0
+                          precision: 0,
+                          color: 'rgba(210, 226, 255, 0.92)'
+                        },
+                        grid: {
+                          color: 'rgba(255, 255, 255, 0.12)'
                         }
                       }
                     },
@@ -675,13 +685,13 @@ export default function Admin() {
                   return (
                 <Box mt={4}>
                     <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-                      <Typography variant="body2" color="textSecondary">
+                      <Typography variant="body2" sx={{ color: 'rgba(224, 236, 255, 0.92)' }}>
                         💡 Click on {useLineChart ? 'points' : 'bars'} to select/deselect score ranges. Selected ranges will turn green.
                       </Typography>
                       {scoreSelected.length > 0 && (
                         <Button 
                           variant="contained" 
-                          color="primary" 
+                          sx={{ bgcolor: '#d97706', '&:hover': { bgcolor: '#b45309' }, color: '#fff' }}
                           size="small"
                           onClick={() => setScoreDetailOpen(true)}
                         >
@@ -690,7 +700,7 @@ export default function Admin() {
                       )}
                     </Box>
                     {useLineChart && (
-                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: '#9c27b0', fontStyle: 'italic' }}>
+                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: '#fbbf24', fontStyle: 'italic' }}>
                         📈 Switched to line chart for better readability with {numBins} data points
                       </Typography>
                     )}
@@ -824,9 +834,9 @@ export default function Admin() {
             {errorSS && <Alert severity="error" sx={{ mb: 3 }}>{errorSS}</Alert>}
 
             {!loadingSS && !errorSS && (
-            <Paper elevation={0} sx={{ border: '1px solid #e5e7eb', borderRadius: 2, overflow: 'hidden' }}>
-                <Box sx={{ bgcolor: 'white', p: 3, borderBottom: '1px solid #e5e7eb' }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600, color: '#1a202c' }}>
+            <Paper elevation={0} className='glass-section' sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.14)' }}>
+                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
                     Student Scores Overview
                   </Typography>
                   <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
@@ -839,9 +849,9 @@ export default function Admin() {
                 </Box>
                 
                 {/* Assignment Selector - Buttons for each section */}
-                <Box sx={{ p: 3, bgcolor: '#f9fafb' }}>
+                <Box sx={{ p: 3, bgcolor: 'rgba(255,255,255,0.03)' }}>
                   <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#374151' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                         Show Columns:
                     </Typography>
                     {isPending && (
@@ -902,12 +912,12 @@ export default function Admin() {
                                     variant={allVisible ? "contained" : "outlined"}
                                     sx={{
                                         backgroundColor: allVisible ? '#4f46e5' : 'transparent',
-                                        color: allVisible ? 'white' : '#374151',
-                                        borderColor: allVisible ? '#4f46e5' : '#d1d5db',
+                                      color: allVisible ? 'white' : 'rgba(232,241,255,0.9)',
+                                      borderColor: allVisible ? '#4f46e5' : 'rgba(191,211,255,0.35)',
                                         textTransform: 'none',
                                         fontWeight: 500,
                                         '&:hover': {
-                                          backgroundColor: allVisible ? '#4338ca' : '#f3f4f6',
+                                          backgroundColor: allVisible ? '#4338ca' : 'rgba(104, 144, 255, 0.14)',
                                           borderColor: '#4f46e5'
                                         }
                                     }}
@@ -961,11 +971,14 @@ export default function Admin() {
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         padding: '8px',
-                                                        border: '1px solid #eee',
+                                                border: '1px solid rgba(168, 194, 255, 0.35)',
                                                         borderRadius: '4px',
                                                         cursor: 'pointer',
-                                                        backgroundColor: visibleAssignments[a.name] ? '#e3f2fd' : '#f5f5f5',
-                                                        '&:hover': { backgroundColor: '#f0f0f0' }
+                                                color: 'rgba(231, 241, 255, 0.96)',
+                                                backgroundColor: visibleAssignments[a.name] ? 'rgba(88, 132, 255, 0.28)' : 'rgba(20, 32, 66, 0.86)',
+                                                '&:hover': {
+                                                  backgroundColor: visibleAssignments[a.name] ? 'rgba(98, 146, 255, 0.34)' : 'rgba(30, 44, 86, 0.9)'
+                                                }
                                                     }}
                                                     onClick={() => {
                                                         setVisibleAssignments(prev => ({
@@ -978,9 +991,9 @@ export default function Admin() {
                                                         type="checkbox"
                                                         checked={visibleAssignments[a.name] || false}
                                                         onChange={() => {}}
-                                                        style={{ marginRight: '8px', cursor: 'pointer' }}
+                                                      style={{ marginRight: '8px', cursor: 'pointer', accentColor: '#66b2ff' }}
                                                     />
-                                                    <span>{a.name}</span>
+                                                    <span style={{ color: 'rgba(231, 241, 255, 0.96)' }}>{a.name}</span>
                                                 </Box>
                                             ))}
                                         </Box>
@@ -998,28 +1011,28 @@ export default function Admin() {
                 {/* Main Table with Tree Structure Headers */}
                 <TableContainer 
                     sx={{ 
-                        bgcolor: 'white',
-                        maxHeight: '70vh',
-                        overflow: 'auto',
+                    bgcolor: 'rgba(8, 14, 30, 0.74)',
+                    overflowX: 'auto',
+                    overflowY: 'visible',
                         position: 'relative',
                         '&::-webkit-scrollbar': {
                             height: '14px',
                             width: '14px'
                         },
                         '&::-webkit-scrollbar-track': {
-                            backgroundColor: '#e5e7eb',
+                          backgroundColor: 'rgba(255,255,255,0.12)',
                             borderRadius: '8px'
                         },
                         '&::-webkit-scrollbar-thumb': {
-                            backgroundColor: '#1976d2',
+                          backgroundColor: 'rgba(102, 175, 255, 0.9)',
                             borderRadius: '8px',
-                            border: '2px solid #e5e7eb',
+                          border: '2px solid rgba(255,255,255,0.12)',
                             '&:hover': {
-                                backgroundColor: '#1565c0'
+                            backgroundColor: 'rgba(102, 175, 255, 1)'
                             }
                         },
                         '&::-webkit-scrollbar-corner': {
-                            backgroundColor: '#e5e7eb'
+                          backgroundColor: 'rgba(255,255,255,0.12)'
                         }
                     }}
                 >
@@ -1035,7 +1048,8 @@ export default function Admin() {
                                 whiteSpace: 'nowrap'
                             },
                             '& .MuiTableCell-head': {
-                                backgroundColor: '#f9f9f9',
+                              backgroundColor: 'rgba(53, 77, 154, 0.9)',
+                              color: 'rgba(242, 247, 255, 0.98)',
                                 position: 'sticky',
                                 top: 0,
                                 zIndex: 100,
@@ -1045,19 +1059,20 @@ export default function Admin() {
                     >
                         <TableHead>
                             {/* FIRST HEADER ROW */}
-                            <TableRow sx={{ backgroundColor: '#f9f9f9' }}>
+                            <TableRow sx={{ backgroundColor: 'rgba(53, 77, 154, 0.9)' }}>
                                 <TableCell sx={{ 
                                     position: 'sticky', 
                                     left: 0, 
                                     zIndex: 101, 
-                                    backgroundColor: '#f9f9f9',
+                                backgroundColor: 'rgba(53, 77, 154, 0.94)',
+                                color: 'rgba(242, 247, 255, 0.98)',
                                     borderRight: '2px solid #999',
                                     minWidth: '200px', // Student name column wider
                                     maxWidth: '250px'
                                 }}>
                                     <strong>Student</strong>
                                 </TableCell>
-                                <TableCell align="center" colSpan={2} sx={{ borderRight: '2px solid #999', backgroundColor: '#f9f9f9' }}>
+                              <TableCell align="center" colSpan={2} sx={{ borderRight: '2px solid #999', backgroundColor: 'rgba(53, 77, 154, 0.94)', color: 'rgba(242, 247, 255, 0.98)' }}>
                                     <strong>Summary</strong>
                                 </TableCell>
                                 
@@ -1067,7 +1082,7 @@ export default function Admin() {
                                     if (visibleInSection.length === 0) return null;
                                     
                                     return (
-                                        <TableCell key={section} colSpan={visibleInSection.length + 1} align="center" sx={{ borderLeft: '2px solid #999', backgroundColor: '#f9f9f9' }}>
+                                        <TableCell key={section} colSpan={visibleInSection.length + 1} align="center" sx={{ borderLeft: '2px solid #999', backgroundColor: 'rgba(53, 77, 154, 0.94)', color: 'rgba(242, 247, 255, 0.98)' }}>
                                             <strong>{section}</strong> (Max: {sectionMaxPoints[section] || 0})
                                         </TableCell>
                                     );
@@ -1075,15 +1090,16 @@ export default function Admin() {
                             </TableRow>
                             
                             {/* SECOND HEADER ROW */}
-                            <TableRow sx={{ backgroundColor: '#fafafa' }}>
+                                  <TableRow sx={{ backgroundColor: 'rgba(60, 88, 175, 0.88)' }}>
                                 <TableCell sx={{
                                     position: 'sticky',
                                     left: 0,
                                     zIndex: 101,
-                                    backgroundColor: '#fafafa',
+                                      backgroundColor: 'rgba(60, 88, 175, 0.92)',
+                                      color: 'rgba(242, 247, 255, 0.98)',
                                     borderRight: '2px solid #999'
                                 }} />
-                                <TableCell align="center" sx={{ borderRight: '1px solid #ccc', backgroundColor: '#fafafa' }}>
+                                      <TableCell align="center" sx={{ borderRight: '1px solid #ccc', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
                                     <Box display="flex" alignItems="center" justifyContent="center">
                                         <strong>Total</strong>
                                         <IconButton size="small" onClick={() => handleSort('total')}>
@@ -1091,7 +1107,7 @@ export default function Admin() {
                                         </IconButton>
                                     </Box>
                                 </TableCell>
-                                <TableCell align="center" sx={{ borderRight: '2px solid #999', backgroundColor: '#fafafa' }}>
+                                    <TableCell align="center" sx={{ borderRight: '2px solid #999', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
                                     <strong>Final %</strong>
                                 </TableCell>
                                 
@@ -1102,7 +1118,7 @@ export default function Admin() {
                                     
                                     return (
                                         <>
-                                            <TableCell align="center" sx={{ borderRight: '1px solid #ccc', borderLeft: '2px solid #999', backgroundColor: '#fafafa' }}>
+                                            <TableCell align="center" sx={{ borderRight: '1px solid #ccc', borderLeft: '2px solid #999', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
                                                 <Box display="flex" alignItems="center" justifyContent="center">
                                                     <strong>{section} Total</strong>
                                                     <IconButton size="small" onClick={() => handleSort(section)}>
@@ -1111,7 +1127,7 @@ export default function Admin() {
                                                 </Box>
                                             </TableCell>
                                             {visibleInSection.map(a => (
-                                                <TableCell key={a.name} align="center" sx={{ minWidth: '120px', backgroundColor: '#fafafa' }}>
+                                              <TableCell key={a.name} align="center" sx={{ minWidth: '120px', backgroundColor: 'rgba(60, 88, 175, 0.92)', color: 'rgba(242, 247, 255, 0.98)' }}>
                                                     <Box display="flex" alignItems="center" justifyContent="center">
                                                         <strong style={{ fontSize: '11px' }}>{a.name}</strong>
                                                         <IconButton size="small" onClick={() => handleSort(a.name)}>
@@ -1134,7 +1150,7 @@ export default function Admin() {
                                         position: 'sticky',
                                         left: 0,
                                         zIndex: 10,
-                                        backgroundColor: 'white',
+                                        backgroundColor: 'rgba(18, 28, 55, 0.94)',
                                         borderRight: '2px solid #999',
                                         minWidth: '200px', // Student name column wider
                                         maxWidth: '250px'

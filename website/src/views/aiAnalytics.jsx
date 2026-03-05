@@ -199,7 +199,7 @@ export default function AIAnalytics() {
   ];
 
   return (
-    <Box sx={{ bgcolor: '#f5f7fa', minHeight: '100vh', p: 4 }}>
+    <Box sx={{ minHeight: '100vh', p: 4 }}>
       {/* AI Agent Settings Dialog */}
       <AIAgentSettings 
         open={settingsOpen}
@@ -209,20 +209,19 @@ export default function AIAnalytics() {
       {/* Module 1: Semantic Data Detective */}
       <Paper
         elevation={0}
+        className='glass-section'
         sx={{
           p: 4,
           mb: 3,
-          backgroundColor: 'white',
           borderRadius: 3,
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
+          boxShadow: '0 14px 34px rgba(3, 8, 24, 0.32)'
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Search sx={{ fontSize: 32, color: '#4f46e5', mr: 2 }} />
             <Box>
-              <Typography variant="h5" sx={{ fontWeight: 600, color: '#1e3a8a' }}>
+              <Typography variant="h5" sx={{ fontWeight: 600 }}>
                 Semantic Data Detective
               </Typography>
               <Typography variant="body2" color="textSecondary">
@@ -234,8 +233,8 @@ export default function AIAnalytics() {
             <IconButton 
               onClick={() => setSettingsOpen(true)}
               sx={{ 
-                bgcolor: '#f0f9ff',
-                '&:hover': { bgcolor: '#e0f2fe' }
+                bgcolor: 'rgba(104, 145, 255, 0.16)',
+                '&:hover': { bgcolor: 'rgba(104, 145, 255, 0.26)' }
               }}
             >
               <Settings sx={{ color: '#4f46e5' }} />
@@ -287,7 +286,7 @@ export default function AIAnalytics() {
                 onClick={() => setQueryInput(query)}
                 sx={{
                   cursor: 'pointer',
-                  '&:hover': { bgcolor: '#eef2ff' }
+                  '&:hover': { bgcolor: 'rgba(103, 148, 255, 0.24)' }
                 }}
               />
             ))}
@@ -303,9 +302,9 @@ export default function AIAnalytics() {
             elevation={2}
             sx={{ 
               p: 3, 
-              bgcolor: '#f0f9ff', 
+              bgcolor: 'rgba(79, 118, 255, 0.14)', 
               borderRadius: 2,
-              border: '1px solid #0ea5e9'
+              border: '1px solid rgba(122, 214, 255, 0.5)'
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 2 }}>
@@ -328,7 +327,7 @@ export default function AIAnalytics() {
                   <Box sx={{ mt: 2 }}>
                     <Grid container spacing={2}>
                       <Grid item xs={6}>
-                        <Paper sx={{ p: 2, bgcolor: 'white' }}>
+                        <Paper className='glass-section' sx={{ p: 2 }}>
                           <Typography variant="h6" color="primary">
                             {queryResult.data.groupA.name}
                           </Typography>
@@ -341,7 +340,7 @@ export default function AIAnalytics() {
                         </Paper>
                       </Grid>
                       <Grid item xs={6}>
-                        <Paper sx={{ p: 2, bgcolor: 'white' }}>
+                        <Paper className='glass-section' sx={{ p: 2 }}>
                           <Typography variant="h6" color="secondary">
                             {queryResult.data.groupB.name}
                           </Typography>
@@ -361,19 +360,19 @@ export default function AIAnalytics() {
                 {queryResult.data && queryResult.type === 'statistics' && (
                   <Grid container spacing={2} sx={{ mt: 1 }}>
                     <Grid item xs={4}>
-                      <Paper sx={{ p: 2, bgcolor: 'white', textAlign: 'center' }}>
+                      <Paper className='glass-section' sx={{ p: 2, textAlign: 'center' }}>
                         <Typography variant="body2" color="textSecondary">Average</Typography>
                         <Typography variant="h5">{queryResult.data.mean}</Typography>
                       </Paper>
                     </Grid>
                     <Grid item xs={4}>
-                      <Paper sx={{ p: 2, bgcolor: 'white', textAlign: 'center' }}>
+                      <Paper className='glass-section' sx={{ p: 2, textAlign: 'center' }}>
                         <Typography variant="body2" color="textSecondary">Median</Typography>
                         <Typography variant="h5">{queryResult.data.median}</Typography>
                       </Paper>
                     </Grid>
                     <Grid item xs={4}>
-                      <Paper sx={{ p: 2, bgcolor: 'white', textAlign: 'center' }}>
+                      <Paper className='glass-section' sx={{ p: 2, textAlign: 'center' }}>
                         <Typography variant="body2" color="textSecondary">Std Dev</Typography>
                         <Typography variant="h5">{queryResult.data.stdDev}</Typography>
                       </Paper>
@@ -397,9 +396,9 @@ export default function AIAnalytics() {
                           label={suggestion}
                           size="small"
                           sx={{
-                            bgcolor: 'white',
-                            border: '1px solid #0ea5e9',
-                            '&:hover': { bgcolor: '#e0f2fe', cursor: 'pointer' }
+                            bgcolor: 'rgba(96, 132, 255, 0.18)',
+                            border: '1px solid rgba(122, 214, 255, 0.42)',
+                            '&:hover': { bgcolor: 'rgba(96, 132, 255, 0.28)', cursor: 'pointer' }
                           }}
                         />
                       ))}
@@ -415,19 +414,18 @@ export default function AIAnalytics() {
       {/* Module 2: Knowledge Gap Diagnosis */}
       <Paper
         elevation={0}
+        className='glass-section'
         sx={{
           p: 4,
           mb: 3,
-          backgroundColor: 'white',
           borderRadius: 3,
-          border: '1px solid #e5e7eb',
           boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
           <Psychology sx={{ fontSize: 32, color: '#ec4899', mr: 2 }} />
           <Box>
-            <Typography variant="h5" sx={{ fontWeight: 600, color: '#1e3a8a' }}>
+            <Typography variant="h5" sx={{ fontWeight: 600 }}>
               Knowledge Gap Diagnosis
             </Typography>
             <Typography variant="body2" color="textSecondary">
@@ -442,7 +440,7 @@ export default function AIAnalytics() {
               <Card
                 elevation={0}
                 sx={{
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid rgba(255,255,255,0.16)',
                   borderRadius: 2,
                   height: '100%',
                   borderLeft: `4px solid ${
@@ -506,11 +504,10 @@ export default function AIAnalytics() {
         <Grid item xs={12} lg={6}>
           <Paper
             elevation={0}
+            className='glass-section'
             sx={{
               p: 4,
-              backgroundColor: 'white',
               borderRadius: 3,
-              border: '1px solid #e5e7eb',
               boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
               height: '100%'
             }}
@@ -518,7 +515,7 @@ export default function AIAnalytics() {
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
               <Warning sx={{ fontSize: 32, color: '#f59e0b', mr: 2 }} />
               <Box>
-                <Typography variant="h5" sx={{ fontWeight: 600, color: '#1e3a8a' }}>
+                <Typography variant="h5" sx={{ fontWeight: 600 }}>
                   Student Success Alert
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
@@ -533,8 +530,8 @@ export default function AIAnalytics() {
                 sx={{
                   p: 3,
                   mb: 2,
-                  bgcolor: '#fef3c7',
-                  border: '1px solid #fbbf24',
+                  bgcolor: 'rgba(245, 158, 11, 0.14)',
+                  border: '1px solid rgba(251, 191, 36, 0.45)',
                   borderRadius: 2
                 }}
               >
@@ -616,11 +613,10 @@ export default function AIAnalytics() {
         <Grid item xs={12} lg={6}>
           <Paper
             elevation={0}
+            className='glass-section'
             sx={{
               p: 4,
-              backgroundColor: 'white',
               borderRadius: 3,
-              border: '1px solid #e5e7eb',
               boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
               height: '100%'
             }}
@@ -628,7 +624,7 @@ export default function AIAnalytics() {
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
               <Assessment sx={{ fontSize: 32, color: '#06b6d4', mr: 2 }} />
               <Box>
-                <Typography variant="h5" sx={{ fontWeight: 600, color: '#1e3a8a' }}>
+                <Typography variant="h5" sx={{ fontWeight: 600 }}>
                   Question Quality Analysis
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
@@ -643,8 +639,8 @@ export default function AIAnalytics() {
                 sx={{
                   p: 3,
                   mb: 2,
-                  bgcolor: '#f0f9ff',
-                  border: '1px solid #0ea5e9',
+                  bgcolor: 'rgba(20, 184, 219, 0.12)',
+                  border: '1px solid rgba(34, 211, 238, 0.42)',
                   borderRadius: 2
                 }}
               >
@@ -657,8 +653,8 @@ export default function AIAnalytics() {
                     label={item.issue}
                     size="small"
                     sx={{
-                      bgcolor: '#fef3c7',
-                      color: '#f59e0b',
+                      bgcolor: 'rgba(245, 158, 11, 0.18)',
+                      color: '#ffd27d',
                       fontWeight: 600
                     }}
                   />
@@ -712,7 +708,7 @@ export default function AIAnalytics() {
                 color: '#06b6d4',
                 '&:hover': {
                   borderColor: '#0891b2',
-                  bgcolor: '#f0f9ff'
+                  bgcolor: 'rgba(20, 184, 219, 0.14)'
                 }
               }}
             >
