@@ -44,16 +44,20 @@ gcloud compute instances create $INSTANCE_NAME \
 #!/bin/bash
 set -e
 
-# Update system and install Docker
+# Update system and install Docker + Docker Compose v2 plugin
 apt-get update
-apt-get install -y docker.io git curl
+apt-get install -y docker.io docker-compose-plugin git curl
 
 # Start and enable Docker
 systemctl start docker
 systemctl enable docker
 
-# Allow current user to run Docker without sudo
-usermod -aG docker $(whoami)
+# Allow the intended login user to run Docker without sudo
+LOGIN_USER="${LOGIN_USER:-ubuntu}"
+if ! id -u "$LOGIN_USER" >/dev/null 2>&1; then
+  useradd -m -s /bin/bash "$LOGIN_USER"
+fi
+usermod -aG docker "$LOGIN_USER"
 
 # Clone the project
 cd /opt
@@ -111,11 +115,12 @@ echo ""
 # Step 3 — Configure firewall rules
 echo "[3/4] Configuring firewall rules..."
 
+# Restrict SSH to Google Cloud IAP TCP forwarding range.
 gcloud compute firewall-rules create allow-ssh \
   --project=$PROJECT_ID \
   --network=default \
   --allow=tcp:22 \
-  --source-ranges=0.0.0.0/0 \
+  --source-ranges=35.235.240.0/20 \
   --target-tags=gradeview-app \
   2>/dev/null || echo "  SSH firewall rule already exists."
 
@@ -139,7 +144,7 @@ if ! gcloud sql instances describe gradeview-db --project=$PROJECT_ID >/dev/null
     --database-version=POSTGRES_15 \
     --tier=db-f1-micro \
     --region=$REGION \
-    --no-backup
+    --backup-start-time=03:00
 else
   echo "  Cloud SQL instance already exists."
 fi
@@ -170,17 +175,20 @@ echo "     - PL_API_TOKEN"
 echo "     - ICLICKER_USERNAME / ICLICKER_PASSWORD"
 echo ""
 echo "3. Upload your GCP service account key:"
-echo "     scp key.json $INSTANCE_NAME:/opt/gradeview/secrets/key.json"
+echo "     gcloud compute ssh $INSTANCE_NAME --zone=${REGION}-a --project=$PROJECT_ID --command='sudo mkdir -p /opt/gradeview/secrets && sudo chmod 700 /opt/gradeview/secrets'"
+echo "     gcloud compute scp key.json $INSTANCE_NAME:~/key.json --zone=${REGION}-a --project=$PROJECT_ID"
+echo "     gcloud compute ssh $INSTANCE_NAME --zone=${REGION}-a --project=$PROJECT_ID --command='sudo mv ~/key.json /opt/gradeview/secrets/key.json && sudo chown root:root /opt/gradeview/secrets/key.json && sudo chmod 600 /opt/gradeview/secrets/key.json'"
 echo ""
-echo "4. Edit config.json and add your courses:"
+echo "4. Create and edit config.json, then add your courses:"
+echo "     cp /opt/gradeview/config.example.json /opt/gradeview/config.json"
 echo "     sudo nano /opt/gradeview/config.json"
 echo ""
 echo "5. Apply the database schema (first deploy only):"
 echo "     cd /opt/gradeview"
 echo "     docker compose up -d cloud-sql-proxy"
 echo "     sleep 5"
-echo "     docker run --rm --network=db -e PGPASSWORD=\$POSTGRES_PASSWORD postgres:16 \\"
-echo "       psql -h cloud-sql-proxy -U \$POSTGRES_USER -d \$POSTGRES_DB -f /dev/stdin \\"
+echo "     docker run --rm --network=db --env-file .env postgres:16 \\"
+echo "       sh -c 'psql -h cloud-sql-proxy -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -f /dev/stdin' \\"
 echo "       < docs/database/schema.sql"
 echo ""
 echo "6. Start the application:"

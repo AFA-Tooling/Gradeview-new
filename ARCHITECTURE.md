@@ -232,7 +232,7 @@ Return JWT (12h expiry)
   │ (5) All subsequent requests: Authorization: Bearer <jwt>
   ▼
 Route middleware: validateAdminMiddleware / validateStudentMiddleware
-  │ checks JWT signature, role, course scope
+  │ validates JWT signature, evaluates permission snapshot, enforces course scope
   ▼
 Handler returns data or 403
 ```
@@ -281,7 +281,7 @@ Two configuration surfaces exist:
 | Environment variables | `.env` | Docker / OS env | Secrets, ports, DB credentials, third-party API keys |
 | Unified runtime config | `config.json` (repo root) | `unifiedConfig.mjs`, `config_manager.py` | OAuth client ID, admin lists, per-course sync and display settings |
 
-`config.json` is mounted read-only into both `api` and `gradesync` containers. Changes require a container restart; there is no live-reload.
+`config.json` is mounted read-only into the `gradesync` container. API access to runtime config depends on API image/runtime setup rather than a Compose bind mount. Changes require a container restart; there is no live-reload.
 
 ---
 

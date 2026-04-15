@@ -142,11 +142,12 @@ Copy `.env.example` to `.env` at the repository root and fill in every value. Be
 
 ### Database
 
-Provide either `GRADESYNC_DATABASE_URL` **or** the individual `POSTGRES_*` variables. The full URL takes precedence when both are set.
+Provide either a full DB URL or the individual `POSTGRES_*` variables. The full URL takes precedence when both are set.
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `GRADESYNC_DATABASE_URL` | `postgresql://user:pass@host:5432/gradesync` | Full PostgreSQL DSN. Used by both the API and GradeSync services. Recommended for production. |
+| `DATABASE_URL` | `postgresql://user:pass@host:5432/gradesync` | Full PostgreSQL DSN used by the GradeSync service. |
+| `GRADESYNC_DATABASE_URL` | `postgresql://user:pass@host:5432/gradesync` | Full PostgreSQL DSN used by API code paths that expect this variable name. |
 | `POSTGRES_HOST` | `cloud-sql-proxy` | Hostname/IP of the Postgres server. Inside Docker use the service name `cloud-sql-proxy` (or `localhost` when port-forwarding). |
 | `POSTGRES_PORT` | `5432` | Postgres port. The Cloud SQL Proxy container listens on `5432` internally; it is mapped to `5433` on the host in dev compose to avoid collisions. |
 | `POSTGRES_USER` | `postgres` | Database username. |
@@ -181,7 +182,7 @@ Provide either `GRADESYNC_DATABASE_URL` **or** the individual `POSTGRES_*` varia
 
 ## Config File Reference (`config.json`)
 
-Copy `config.example.json` to `config.json` at the repository root. This file is mounted read-only into both the API and GradeSync containers.
+Copy `config.example.json` to `config.json` at the repository root. In the current Compose setup this file is mounted read-only into the GradeSync container (`/app/config.json`). If the API must consume runtime config from this file, also mount it into the API container at `/api/config.json`.
 
 ### Top-level structure
 
@@ -481,11 +482,10 @@ docker compose up -d cloud-sql-proxy
 sleep 5
 
 # Apply schema (first deploy only)
-docker run --rm --network=db \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+docker run --rm --network=db --env-file .env \
   postgres:16 \
-  psql -h cloud-sql-proxy -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
-  -f /dev/stdin < docs/database/schema.sql
+  sh -c 'psql -h cloud-sql-proxy -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /dev/stdin' \
+  < docs/database/schema.sql
 ```
 
 ### Step 5 — Build and start production stack

@@ -11,13 +11,10 @@
 
 ## Config File Location
 
-The unified runtime config is `config.json` at the **repository root**. It is volume-mounted read-only into both the `api` and `gradesync` containers:
+The unified runtime config is `config.json` at the **repository root**. In current Compose files, it is mounted read-only into the `gradesync` container:
 
 ```yaml
 # docker-compose.yml
-api:
-  volumes:
-    - ./config.json:/api/config/default.json:ro
 gradesync:
   volumes:
     - ./config.json:/app/config.json:ro
@@ -38,10 +35,10 @@ Full field-by-field reference: see `README.md` → **Config File Reference**.
 
 ## Loading Order (API)
 
-1. `api/server.js` imports `unifiedConfig.mjs` at startup.
-2. `unifiedConfig.mjs` reads `config/default.json` (which is the mounted `config.json`).
+1. Route modules that need config import `loadUnifiedConfig()` from `api/lib/unifiedConfig.mjs` (for example, `api/v2/Routes/config/index.js`).
+2. `loadUnifiedConfig()` reads `config.json` from the API container root path (`/api/config.json`).
 3. The config object is cached in memory for the lifetime of the process.
-4. Routes that need config call `getConfig()` from `unifiedConfig.mjs`.
+4. Subsequent config reads go through `loadUnifiedConfig()`/helper accessors in `unifiedConfig.mjs`.
 
 ## Config vs. Database — Rule of Thumb
 

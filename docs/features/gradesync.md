@@ -11,7 +11,7 @@
 | `gradesync/api/app.py` | FastAPI app factory, lifespan hooks, route registration |
 | `gradesync/api/config_manager.py` | Reads `config.json` mounted at `/app/config.json` |
 | `gradesync/api/schemas.py` | Pydantic models for all request/response bodies |
-| `gradesync/api/core/db.py` | SQLAlchemy engine + async session factory |
+| `gradesync/api/core/db.py` | SQLAlchemy engine + session factory |
 | `gradesync/api/core/models.py` | ORM table definitions (mirror of `docs/database/schema.sql`) |
 | `gradesync/api/core/ingest.py` | Core grade normalization and upsert logic |
 | `gradesync/api/core/ingest_optimized.py` | Bulk-upsert path for large courses (>500 students) |

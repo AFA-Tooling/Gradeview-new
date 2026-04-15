@@ -1,31 +1,24 @@
 # Demo Course Setup Guide
 
-This guide explains how to populate the database with a complete synthetic demo course for testing and demonstrations. No real student data is used.
+This guide explains how to set up a demo workflow using a sandbox course configuration and a manual GradeSync run.
 
 ## Quick Docs Access
 
 - GradeSync feature doc: `../docs/features/gradesync.md`
 - Database overview: `../docs/database/README.md`
 
-## What the Script Creates
+## Expected Demo Scale
 
-Running `create_demo_course.py` inserts:
+For a typical sandbox class configuration:
 
 | Data | Count |
 |------|-------|
 | Demo course | 1 |
 | Synthetic students | 30 (configurable) |
 | Assignments | 10 (across 6 categories) |
-| Grade records | ~3 000 (realistic distribution) |
+| Grade records | ~300 (30 students × 10 assignments) |
 
-Grade distribution:
-- 70% of students: 80–100% (strong)
-- 20% of students: 65–80% (passing)
-- 10% of students: 40–65% (struggling)
-- ~5% of records: missing / not submitted
-- ~15% of records: marked late
-
-All demo records use a `gradescope_course_id` that starts with `demo_` so they are easy to identify and clean up.
+Use a `gradescope_course_id` that starts with `demo_` for easier filtering and cleanup.
 
 ## Prerequisites
 
@@ -38,29 +31,16 @@ All demo records use a `gradescope_course_id` that starts with `demo_` so they a
 ```bash
 cd gradesync
 
-# Create demo course (clean existing demo data first)
-python create_demo_course.py --clean
+# Confirm configured courses
+python sync_grades.py --list
 
-# Custom options
-python create_demo_course.py \
-  --clean \
-  --course-id demo_eecs16a_sp26 \
-  --course-name "Demo: EECS 16A — Spring 2026" \
-  --students 50
+# Run sync for your demo/sandbox course id (configured in ../config.json)
+python sync_grades.py demo_course_id
 ```
-
-### Command Line Arguments
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--course-id` | `demo_cs10_spring2025` | Unique internal course ID |
-| `--course-name` | `Demo: CS10 - The Beauty and Joy of Computing` | Display name |
-| `--students` | `30` | Number of synthetic students to create |
-| `--clean` | (flag) | Delete existing demo data before creating |
 
 ## Running Inside Docker
 
-If you prefer to run the script inside the GradeSync container (connects to the same DB the container uses):
+If you prefer to run inside the GradeSync container (connects to the same DB the container uses):
 
 ```bash
 # From the repository root — start the stack first
@@ -68,7 +48,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 # Then exec into the container
 docker compose -f docker-compose.dev.yml exec gradesync \
-  python create_demo_course.py --clean
+  python sync_grades.py demo_course_id
 ```
 
 ## Verifying the Data
@@ -91,12 +71,7 @@ Expected output: one row with the demo course name, 30 students, and ~300 grade 
 ## Removing Demo Data
 
 ```bash
-# Clean up all demo courses and their associated data
-python create_demo_course.py --clean
-# (running --clean without creating new data is not supported;
-#  run with --students 0 equivalent by deleting manually if needed)
-
-# Or directly in psql:
+# Delete demo courses and associated data directly in psql:
 psql "$DATABASE_URL" -c "
 DELETE FROM courses WHERE gradescope_course_id LIKE 'demo_%';
 -- Cascade deletes students, assignments, submissions automatically
@@ -110,9 +85,8 @@ DELETE FROM courses WHERE gradescope_course_id LIKE 'demo_%';
 - If using Cloud SQL, ensure the Cloud SQL Proxy container is running.
 - Test connectivity: `psql "$DATABASE_URL" -c "SELECT 1;"`
 
-**Script runs slowly**
-- Inserting 3 000+ records takes 10–30 seconds depending on DB latency. This is normal.
-- Use `--students 10` for a faster test run.
+**Sync runs slowly**
+- Large sync jobs can take 10–30 seconds depending on API/DB latency. This is normal.
 
 **`relation "courses" does not exist`**
 - The schema has not been applied yet. Run: `psql "$DATABASE_URL" -f ../docs/database/schema.sql`

@@ -15,9 +15,10 @@ This directory contains the GradeSync service: a FastAPI application that pulls 
 ## Quick Start (standalone GradeSync)
 
 ```bash
+# Run from the gradesync/ directory
 # 1. Copy environment template and fill in credentials
-cp api/.env.example api/.env
-# Edit api/.env: set GRADESCOPE_EMAIL, GRADESCOPE_PASSWORD, PL_API_TOKEN, DATABASE_URL, etc.
+cp api/.env.example .env
+# Edit .env: set GRADESCOPE_EMAIL, GRADESCOPE_PASSWORD, PL_API_TOKEN, DATABASE_URL, etc.
 
 # 2. Copy config template and add at least one course
 cp ../config.example.json ../config.json
@@ -41,13 +42,14 @@ docker compose -f docker-compose.dev.yml up --build
 
 GradeSync will be available at `http://localhost:8001/docs` and via the Nginx proxy at `http://localhost/gradesync/`.
 
-## Creating Demo Data
+## Running a Manual Sync
 
-To create a full demo course with synthetic students and grades (no real student data):
+To verify your setup with an existing configured course:
 
 ```bash
 cd gradesync
-python create_demo_course.py --clean --students 30
+python sync_grades.py --list
+python sync_grades.py <course_id>
 ```
 
-See `DEMO_COURSE_README.md` for all options.
+For demo-course setup notes, see `SETUP_DEMO.md`.

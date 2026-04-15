@@ -22,7 +22,7 @@
 4. `userlib.mjs` queries the `users` table by `email`. If the user does not exist yet, a new row is inserted.
 5. `userlib.mjs` queries `course_permissions` to build a list of `{ course_id, permission_level }` pairs.
 6. A **JWT** is signed with `JWT_SECRET` (from `.env`) and returned to the browser.
-   - Payload includes `email`, `role`, and the `course_permissions` snapshot.
+   - Payload includes permission snapshot fields such as `is_super`, `course_roles`, `has_course_admin`, `has_instructor`, and `has_student`.
    - Expiry is controlled by `JWT_EXPIRES_IN` (default `12h`).
 7. All subsequent requests must carry `Authorization: Bearer <jwt>`.
 
@@ -30,8 +30,8 @@
 
 ### `validateAdminMiddleware`
 - Verifies JWT signature and expiry.
-- Checks that the user's `role` in the token is `super_admin`, `course_admin`, or `instructor`.
-- For course-scoped routes, checks `course_permissions` for the target `course_id`.
+- Resolves effective role via IAM helpers using the JWT snapshot (and DB lookups when needed).
+- Enforces admin/system permissions through `iam.mjs` checks.
 - Returns `403` if any check fails.
 
 ### `validateStudentMiddleware`
