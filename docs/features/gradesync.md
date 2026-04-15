@@ -82,11 +82,12 @@ Or use the GradeSync admin panel in the web UI (accessible to `super_admin` and 
 
 ## Demo / Testing Data
 
-To populate synthetic grade data without real students, use the demo-course script:
+To validate demo/sandbox setup, run a manual sync against a configured course:
 
 ```bash
 cd gradesync
-python create_demo_course.py --clean --students 30
+python sync_grades.py --list
+python sync_grades.py <course_id>
 ```
 
-See [DEMO_COURSE_README.md](../../gradesync/DEMO_COURSE_README.md) for full options.
+See [SETUP_DEMO.md](../../gradesync/SETUP_DEMO.md) for demo workflow details.

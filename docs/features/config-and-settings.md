@@ -4,7 +4,7 @@
 
 | File | Purpose |
 |------|---------|
-| `api/lib/unifiedConfig.mjs` | Loads, caches, and exposes `config.json` to the API |
+| `api/lib/unifiedConfig.mjs` | Loads and exposes `config.json` to the API |
 | `api/v2/Routes/config/index.js` | REST endpoints for reading/writing course config |
 | `gradesync/api/config_manager.py` | Python equivalent — loads `config.json` for GradeSync |
 | `config.example.json` | Full annotated template for `config.json` |
@@ -37,8 +37,8 @@ Full field-by-field reference: see `README.md` → **Config File Reference**.
 
 1. Route modules that need config import `loadUnifiedConfig()` from `api/lib/unifiedConfig.mjs` (for example, `api/v2/Routes/config/index.js`).
 2. `loadUnifiedConfig()` reads `config.json` from the API container root path (`/api/config.json`).
-3. The config object is cached in memory for the lifetime of the process.
-4. Subsequent config reads go through `loadUnifiedConfig()`/helper accessors in `unifiedConfig.mjs`.
+3. Each call reads and parses `config.json` from disk.
+4. Subsequent route calls re-invoke `loadUnifiedConfig()`/helper accessors in `unifiedConfig.mjs`.
 
 ## Config vs. Database — Rule of Thumb
 

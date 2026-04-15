@@ -85,7 +85,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component breakdown and data
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/your-org/gradeview.git
+git clone https://github.com/AFA-Tooling/Gradeview-new.git gradeview
 cd gradeview
 
 # 2. Copy config templates
@@ -94,9 +94,12 @@ cp config.example.json config.json
 
 # 3. Fill in credentials (see sections below for every field)
 #    Minimum required before first boot:
-#      - POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB  (or GRADESYNC_DATABASE_URL)
+#      - POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+#        (or set DATABASE_URL for GradeSync; this repo's compose files work with POSTGRES_* + DATABASE_URL)
+#        (set GRADESYNC_DATABASE_URL only for API environments that explicitly read that variable name)
 #      - JWT_SECRET  (any long random string, e.g. `openssl rand -hex 32`)
-#      - gradeview.googleconfig.oauth.clientid  in config.json
+#      - Google OAuth client ID stored in gradeview_config.google_oauth_client_id
+#        (set config.json at gradeview.googleconfig.oauth.clientid, then run `npm run migrateConfigToDb`)
 #      - INSTANCE_CONNECTION_NAME + secrets/key.json  (if using Cloud SQL)
 
 # 4. For Cloud SQL dev: place your GCP service account key
@@ -106,7 +109,10 @@ cp /path/to/your-key.json secrets/key.json
 # 5. Start the full dev stack
 docker compose -f docker-compose.dev.yml up --build
 
-# 6. Open http://localhost in your browser
+# 6. Initialize runtime config rows in DB (required for Google OAuth login)
+docker compose -f docker-compose.dev.yml exec api npm run migrateConfigToDb
+
+# 7. Open http://localhost in your browser
 ```
 
 > **Local Postgres alternative:** If you do not have a Cloud SQL instance, start a local Postgres container (see [docs/database/LOCAL_POSTGRES_DEV.md](docs/database/LOCAL_POSTGRES_DEV.md)) and skip `secrets/key.json`. Comment out the `cloud-sql-proxy` service in `docker-compose.dev.yml` and point `POSTGRES_HOST` at your local container.
@@ -452,7 +458,7 @@ Or provision manually in GCP Console. The VM needs:
 ```bash
 gcloud compute ssh gradeview-app --project=eecs-gradeview --zone=us-central1-a
 cd /opt
-git clone https://github.com/your-org/gradeview.git
+git clone https://github.com/AFA-Tooling/Gradeview-new.git gradeview
 cd gradeview
 ```
 
@@ -557,13 +563,13 @@ Set `REVERSE_PROXY_LISTEN=0.0.0.0:443` in `.env` if you want Nginx to only serve
 
 | Role | Scope | Permissions |
 |------|-------|-------------|
-| `super_admin` | Global | Full access to all courses, settings, and GradeSync admin UI. Defined in `gradeview.admins` in `config.json`. |
+| `super_admin` | Global | Full access to all courses, settings, and GradeSync admin UI. Defined by the `SUPER_ADMIN_EMAIL` constant in `api/lib/iam.mjs` (not by config.json role lists). This is a current implementation limitation: changing it requires a code change + redeploy. |
 | `course_admin` | Per-course | Manage GradeSync sync jobs and course config for their bound courses. |
 | `instructor` | Per-course | View class roster and grade data. Cannot access GradeSync admin. |
 | `ta` | Per-course | Same view permissions as instructor. |
 | `student` | Per-course | View own grades only, scoped to enrolled courses. |
 
-Permissions are enforced primarily via the `users` and `course_permissions` database tables. Config file role lists (`admins`, `instructors`, `tas`) should be treated as **migration targets** only — migrate them into the DB tables before relying solely on DB-driven auth.
+Permissions for `course_admin`, `instructor`, `ta`, and `student` are enforced primarily via the `users` and `course_permissions` database tables (with student enrollment checks against `students`). Config file role lists (`admins`, `instructors`, `tas`) are migration inputs only and do not grant runtime permissions by themselves. `super_admin` access remains controlled separately by the hard-coded `SUPER_ADMIN_EMAIL`.
 
 ---
 

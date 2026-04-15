@@ -11,6 +11,9 @@ PROJECT_ID="${1:-eecs-gradeview}"
 REGION="${2:-us-central1}"
 INSTANCE_NAME="gradeview-app"
 MACHINE_TYPE="e2-standard-4"
+SSH_FIREWALL_RULE="${INSTANCE_NAME}-allow-ssh-iap"
+APP_FIREWALL_RULE="${INSTANCE_NAME}-allow-gradeview-web"
+IAP_SOURCE_RANGE="35.235.240.0/20"
 
 echo "Deploying GradeView to project: $PROJECT_ID"
 echo "Region: $REGION"
@@ -32,15 +35,18 @@ echo ""
 
 # Step 1 — Create the GCE VM instance
 echo "[1/4] Creating Compute Engine VM..."
-gcloud compute instances create $INSTANCE_NAME \
-  --project=$PROJECT_ID \
-  --zone=${REGION}-a \
-  --machine-type=$MACHINE_TYPE \
-  --image-family=ubuntu-2204-lts \
-  --image-project=ubuntu-os-cloud \
-  --scopes=cloud-platform \
-  --network=default \
-  --metadata-from-file startup-script=<(cat << 'EOF'
+if gcloud compute instances describe "$INSTANCE_NAME" --zone=${REGION}-a --project=$PROJECT_ID >/dev/null 2>&1; then
+  echo "  VM $INSTANCE_NAME already exists, skipping creation."
+else
+  gcloud compute instances create $INSTANCE_NAME \
+    --project=$PROJECT_ID \
+    --zone=${REGION}-a \
+    --machine-type=$MACHINE_TYPE \
+    --image-family=ubuntu-2204-lts \
+    --image-project=ubuntu-os-cloud \
+    --scopes=cloud-platform \
+    --network=default \
+    --metadata-from-file startup-script=<(cat << 'EOF'
 #!/bin/bash
 set -e
 
@@ -59,9 +65,9 @@ if ! id -u "$LOGIN_USER" >/dev/null 2>&1; then
 fi
 usermod -aG docker "$LOGIN_USER"
 
-# Clone the project
+# Clone the project into /opt/gradeview to match the post-deploy instructions
 cd /opt
-git clone https://github.com/your-org/gradeview.git
+git clone https://github.com/AFA-Tooling/Gradeview-new.git gradeview
 cd gradeview
 
 # Create a placeholder .env — edit this after the VM starts
@@ -97,9 +103,10 @@ ENVFILE
 echo "VM initialization complete. Edit /opt/gradeview/.env before starting the stack."
 EOF
 ) \
-  --tags=gradeview-app
+    --tags=gradeview-app
 
-echo "VM created."
+  echo "VM created."
+fi
 echo ""
 
 # Step 2 — Get external IP
@@ -116,21 +123,31 @@ echo ""
 echo "[3/4] Configuring firewall rules..."
 
 # Restrict SSH to Google Cloud IAP TCP forwarding range.
-gcloud compute firewall-rules create allow-ssh \
-  --project=$PROJECT_ID \
-  --network=default \
-  --allow=tcp:22 \
-  --source-ranges=35.235.240.0/20 \
-  --target-tags=gradeview-app \
-  2>/dev/null || echo "  SSH firewall rule already exists."
+if gcloud compute firewall-rules describe "$SSH_FIREWALL_RULE" --project=$PROJECT_ID >/dev/null 2>&1; then
+  echo "  Enforcing IAP-only source range on $SSH_FIREWALL_RULE..."
+  gcloud compute firewall-rules update "$SSH_FIREWALL_RULE" \
+    --project=$PROJECT_ID \
+    --source-ranges=$IAP_SOURCE_RANGE \
+    --target-tags=gradeview-app
+else
+  gcloud compute firewall-rules create "$SSH_FIREWALL_RULE" \
+    --project=$PROJECT_ID \
+    --network=default \
+    --allow=tcp:22 \
+    --source-ranges=$IAP_SOURCE_RANGE \
+    --target-tags=gradeview-app
+fi
 
-gcloud compute firewall-rules create allow-gradeview \
-  --project=$PROJECT_ID \
-  --network=default \
-  --allow=tcp:80,tcp:443 \
-  --source-ranges=0.0.0.0/0 \
-  --target-tags=gradeview-app \
-  2>/dev/null || echo "  HTTP/HTTPS firewall rule already exists."
+if gcloud compute firewall-rules describe "$APP_FIREWALL_RULE" --project=$PROJECT_ID >/dev/null 2>&1; then
+  echo "  $APP_FIREWALL_RULE already exists."
+else
+  gcloud compute firewall-rules create "$APP_FIREWALL_RULE" \
+    --project=$PROJECT_ID \
+    --network=default \
+    --allow=tcp:80,tcp:443 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags=gradeview-app
+fi
 
 echo "Firewall configured."
 echo ""
@@ -196,5 +213,5 @@ echo "     cd /opt/gradeview && docker compose up -d"
 echo ""
 echo "7. Verify:"
 echo "     curl -fs http://$EXTERNAL_IP/api/health"
-echo "     open http://$EXTERNAL_IP"
+echo "     Open URL in your browser: http://$EXTERNAL_IP"
 echo "========================================"
