@@ -1,39 +1,37 @@
 #!/bin/bash
 
-# GradeView 部署到 EECS Gradeview 项目
-# 使用: bash deploy_to_gcp.sh [region]
-# 例子: bash deploy_to_gcp.sh us-central1
+# Deploy GradeView to GCP (eecs-gradeview project)
+# Usage: bash deploy_to_gcp.sh [project_id] [region]
+# Example: bash deploy_to_gcp.sh eecs-gradeview us-central1
 
 set -e
 
-# 为 eecs-gradeview 项目优化
+# Defaults tuned for the eecs-gradeview project
 PROJECT_ID="${1:-eecs-gradeview}"
 REGION="${2:-us-central1}"
 INSTANCE_NAME="gradeview-app"
 MACHINE_TYPE="e2-standard-4"
 
-echo "🚀 部署 GradeView 到 eecs-gradeview 项目..."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "项目: $PROJECT_ID"
-echo "区域: $REGION"
+echo "Deploying GradeView to project: $PROJECT_ID"
+echo "Region: $REGION"
 echo ""
 
-# 检查和创建网络（如果需要）
-echo "0️⃣  检查VPC网络..."
+# Step 0 — Ensure default VPC network exists
+echo "[0/4] Checking VPC network..."
 if ! gcloud compute networks describe default --project=$PROJECT_ID >/dev/null 2>&1; then
-  echo "  创建默认网络..."
+  echo "  Creating default network..."
   gcloud compute networks create default \
     --subnet-mode=auto \
     --project=$PROJECT_ID
-  echo "  ✅ 默认网络已创建"
+  echo "  Default network created."
 else
-  echo "  ✅ 默认网络已存在"
+  echo "  Default network already exists."
 fi
 
 echo ""
 
-# 1. 创建VM实例
-echo "1️⃣  创建Compute Engine VM..."
+# Step 1 — Create the GCE VM instance
+echo "[1/4] Creating Compute Engine VM..."
 gcloud compute instances create $INSTANCE_NAME \
   --project=$PROJECT_ID \
   --zone=${REGION}-a \
@@ -46,25 +44,25 @@ gcloud compute instances create $INSTANCE_NAME \
 #!/bin/bash
 set -e
 
-# 更新系统
+# Update system and install Docker
 apt-get update
 apt-get install -y docker.io git curl
 
-# 启动Docker
+# Start and enable Docker
 systemctl start docker
 systemctl enable docker
 
-# 创建非root用户运行Docker
+# Allow current user to run Docker without sudo
 usermod -aG docker $(whoami)
 
-# 克隆项目
+# Clone the project
 cd /opt
 git clone https://github.com/your-org/gradeview.git
 cd gradeview
 
-# 创建.env文件（需要手动配置）
+# Create a placeholder .env — edit this after the VM starts
 cat > .env << 'ENVFILE'
-# ⚠️ 请在部署后登录VM修改这些值！
+# WARNING: Edit all values below before starting the application!
 API_PORT=8000
 PROGRESS_REPORT_PORT=8080
 REVERSE_PROXY_LISTEN=0.0.0.0:80
@@ -72,66 +70,70 @@ REACT_APP_PROXY_SERVER="http://api:8000"
 REACT_APP_PORT=3000
 ENVIRONMENT=production
 
-# Cloud SQL连接名（从GCP Console获取）
+# Cloud SQL instance connection name — get from GCP Console > SQL > instance > Overview
 INSTANCE_CONNECTION_NAME=your-project:REGION:gradeview-db
 
-# 数据库凭证
+# Database credentials — use strong values in production
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=change_me_please
 POSTGRES_DB=gradesync
 
+# JWT secret — replace with a long random string: openssl rand -hex 32
+JWT_SECRET=replace_with_long_random_secret
+JWT_EXPIRES_IN=12h
+
+# GradeSync external source credentials
+GRADESCOPE_EMAIL=you@berkeley.edu
+GRADESCOPE_PASSWORD=your_gradescope_password
+PL_API_TOKEN=your_pl_api_token
+ICLICKER_USERNAME=your_iclicker_username
+ICLICKER_PASSWORD=your_iclicker_password
 ENVFILE
 
-# 拉取最新的Docker镜像
-docker compose build
-
-echo "✅ 初始化完成！"
-echo "需要修改 /opt/gradeview/.env 文件中的配置"
+echo "VM initialization complete. Edit /opt/gradeview/.env before starting the stack."
 EOF
 ) \
   --tags=gradeview-app
 
-echo "✅ VM创建完成！"
+echo "VM created."
 echo ""
 
-# 2. 获取VM的外部IP
-echo "2️⃣  获取VM信息..."
+# Step 2 — Get external IP
+echo "[2/4] Resolving VM external IP..."
 EXTERNAL_IP=$(gcloud compute instances describe $INSTANCE_NAME \
   --zone=${REGION}-a \
   --project=$PROJECT_ID \
   --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
 
-echo "✅ VM外部IP: $EXTERNAL_IP"
+echo "VM external IP: $EXTERNAL_IP"
 echo ""
 
-# 3. 创建防火墙规则
-echo "3️⃣  配置防火墙..."
+# Step 3 — Configure firewall rules
+echo "[3/4] Configuring firewall rules..."
 
-# SSH规则
 gcloud compute firewall-rules create allow-ssh \
   --project=$PROJECT_ID \
   --network=default \
   --allow=tcp:22 \
   --source-ranges=0.0.0.0/0 \
   --target-tags=gradeview-app \
-  2>/dev/null || echo "  SSH防火墙规则已存在"
+  2>/dev/null || echo "  SSH firewall rule already exists."
 
-# HTTP/HTTPS规则
 gcloud compute firewall-rules create allow-gradeview \
   --project=$PROJECT_ID \
   --network=default \
   --allow=tcp:80,tcp:443 \
   --source-ranges=0.0.0.0/0 \
   --target-tags=gradeview-app \
-  2>/dev/null || echo "  HTTP/HTTPS防火墙规则已存在"
+  2>/dev/null || echo "  HTTP/HTTPS firewall rule already exists."
 
-echo "✅ 防火墙已配置"
+echo "Firewall configured."
 echo ""
 
-# 创建或检查Cloud SQL数据库
-echo "4️⃣  检查Cloud SQL实例..."
+# Step 4 — Create Cloud SQL instance (if it does not exist)
+echo "[4/4] Checking Cloud SQL instance..."
 if ! gcloud sql instances describe gradeview-db --project=$PROJECT_ID >/dev/null 2>&1; then
-  echo "  创建新的Cloud SQL实例..."
+  echo "  Creating Cloud SQL instance (this may take a few minutes)..."
   gcloud sql instances create gradeview-db \
     --project=$PROJECT_ID \
     --database-version=POSTGRES_15 \
@@ -139,38 +141,52 @@ if ! gcloud sql instances describe gradeview-db --project=$PROJECT_ID >/dev/null
     --region=$REGION \
     --no-backup
 else
-  echo "  Cloud SQL实例已存在"
+  echo "  Cloud SQL instance already exists."
 fi
 
-echo "✅ Cloud SQL已准备"
+echo "Cloud SQL ready."
 echo ""
 
-# 5. 显示后续步骤
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📋 后续步骤："
+# Post-deploy instructions
+echo "========================================"
+echo "Deployment complete. Next steps:"
 echo ""
-echo "1. SSH登录VM修改配置（两种方式任选其一）:"
-echo "   方式A - 直接SSH:"
-echo "   gcloud compute ssh $INSTANCE_NAME --zone=${REGION}-a --project=$PROJECT_ID"
+echo "1. SSH into the VM to finish configuration:"
+echo "   Option A (direct SSH):"
+echo "     gcloud compute ssh $INSTANCE_NAME --zone=${REGION}-a --project=$PROJECT_ID"
+echo "   Option B (IAP tunnel, recommended for production):"
+echo "     gcloud compute ssh $INSTANCE_NAME --zone=${REGION}-a --project=$PROJECT_ID --tunnel-through-iap"
+echo "   Option C (browser SSH):"
+echo "     https://console.cloud.google.com/compute/instances?project=$PROJECT_ID"
 echo ""
-echo "   方式B - IAP隧道（更安全，推荐）:"
-echo "   gcloud compute ssh $INSTANCE_NAME --zone=${REGION}-a --project=$PROJECT_ID --tunnel-through-iap"
+echo "2. Edit .env on the VM:"
+echo "     cd /opt/gradeview && sudo nano .env"
+echo "   Required changes:"
+echo "     - POSTGRES_PASSWORD       (use a strong password)"
+echo "     - INSTANCE_CONNECTION_NAME (should be: $PROJECT_ID:${REGION}:gradeview-db)"
+echo "     - JWT_SECRET              (openssl rand -hex 32)"
+echo "     - GRADESCOPE_EMAIL / GRADESCOPE_PASSWORD"
+echo "     - PL_API_TOKEN"
+echo "     - ICLICKER_USERNAME / ICLICKER_PASSWORD"
 echo ""
-echo "   方式C - 浏览器SSH（最简单）:"
-echo "   https://console.cloud.google.com/compute/instances?project=$PROJECT_ID"
+echo "3. Upload your GCP service account key:"
+echo "     scp key.json $INSTANCE_NAME:/opt/gradeview/secrets/key.json"
 echo ""
-echo "2. 编辑.env文件:"
-echo "   cd /opt/gradeview && sudo nano .env"
-echo "   重点修改这些变量："
-echo "   - POSTGRES_PASSWORD    (改为强密码)"
-echo "   - INSTANCE_CONNECTION_NAME 已自动填充为"
-echo "     eecs-gradeview:${REGION}:gradeview-db"
+echo "4. Edit config.json and add your courses:"
+echo "     sudo nano /opt/gradeview/config.json"
 echo ""
-echo "3. 启动应用:"
-echo "   cd /opt/gradeview"
-echo "   docker compose up -d"
+echo "5. Apply the database schema (first deploy only):"
+echo "     cd /opt/gradeview"
+echo "     docker compose up -d cloud-sql-proxy"
+echo "     sleep 5"
+echo "     docker run --rm --network=db -e PGPASSWORD=\$POSTGRES_PASSWORD postgres:16 \\"
+echo "       psql -h cloud-sql-proxy -U \$POSTGRES_USER -d \$POSTGRES_DB -f /dev/stdin \\"
+echo "       < docs/database/schema.sql"
 echo ""
-echo "4. 访问应用:"
-echo "   http://$EXTERNAL_IP"
+echo "6. Start the application:"
+echo "     cd /opt/gradeview && docker compose up -d"
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "7. Verify:"
+echo "     curl -fs http://$EXTERNAL_IP/api/health"
+echo "     open http://$EXTERNAL_IP"
+echo "========================================"

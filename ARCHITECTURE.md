@@ -1,332 +1,327 @@
-# GradeView Project Structure & Workflow
+# GradeView — Architecture Reference
 
 ## Overview
 
-GradeView is a multi-component grade management system consisting of:
-- **Frontend**: React Web UI
-- **Backend API**: Node.js (data queries, authentication)
-- **Grade Sync**: FastAPI GradeSync (pulls grades from external systems)
-- **Report Generation**: Python Progress Report service
-- **Infrastructure**: PostgreSQL, Nginx reverse proxy
+GradeView is a multi-service grade management platform consisting of five runtime services:
 
-## Quick Documentation Access
+| Service | Stack | Role |
+|---------|-------|------|
+| `gradeview-reverse-proxy` | Nginx | TLS termination, request routing |
+| `gradeview-web` | React + Node static server | Student/instructor web UI |
+| `gradeview-api` | Node.js (Express) | Auth, grade queries, IAM enforcement |
+| `gradeview-gradesync` | Python (FastAPI) | Grade ingestion from Gradescope / PrairieLearn / iClicker |
+| `gradeview-cloud-sql-proxy` | Cloud SQL Proxy | Authenticated tunnel to GCP Cloud SQL |
 
-- Hub: `docs/README.md`
-- Database: `docs/features/database.md`
+All services are defined in `docker-compose.yml` (production) and `docker-compose.dev.yml` (development).
+
+---
+
+## Documentation Hub
+
 - Auth & IAM: `docs/features/auth-and-iam.md`
 - Config & Settings: `docs/features/config-and-settings.md`
 - GradeSync: `docs/features/gradesync.md`
+- Database: `docs/features/database.md`
 - Dev & Deployment: `docs/features/dev-and-deploy.md`
 
 ---
 
-## Project Directory Breakdown
+## Data Flow Diagram
 
-### 1. **api/** - Node.js API Server
+```
+Browser
+  │  (HTTPS)
+  ▼
+┌───────────────────────────┐
+│  Nginx Reverse Proxy      │  :80 / :443
+│  reverseProxy/            │
+└───────┬───────────┬───────┘
+        │           │
+  GET / │           │ GET /api/*
+        ▼           ▼
+  ┌──────────┐  ┌──────────────────┐
+  │ React UI │  │  Node.js API     │   GET /gradesync/*
+  │ website/ │  │  api/            │◄───────────────────┐
+  └──────────┘  └────────┬─────────┘                    │
+                         │ SQL queries                   │
+                         ▼                               │
+               ┌─────────────────┐             ┌─────────────────┐
+               │   PostgreSQL    │◄────────────│  FastAPI        │
+               │   (Cloud SQL)   │  grade      │  GradeSync      │
+               └─────────────────┘  writes     └────────┬────────┘
+                                                        │ HTTP/scrape
+                                              ┌─────────┴──────────┐
+                                              │  External Systems  │
+                                              │  · Gradescope      │
+                                              │  · PrairieLearn    │
+                                              │  · iClicker        │
+                                              └────────────────────┘
+```
 
-Main responsibilities: user authentication, grade data queries, student information management
+---
+
+## Directory Breakdown
+
+### `api/` — Node.js API Server
+
+Entry point: `api/server.js`  
+Route registration: `api/Router.js`
 
 ```
 api/
-├── server.js              # Main server entry point
-├── Router.js              # Route definitions (versioned routes)
+├── server.js              # Express app init, middleware, port binding
+├── Router.js              # Mounts versioned routes
+├── config/
+│   └── default.json       # Service-level config (port, DB pool, etc.)
 ├── lib/
-│   ├── authlib.mjs        # Auth middleware (Admin/Student validation)
-│   ├── googleAuthHelper.mjs  # Google OAuth token verification
-│   ├── userlib.mjs        # User permission checks
-│   ├── dbHelper.mjs       # Database connection and queries
-│   ├── studentHelper.mjs  # Student query logic
-│   ├── uploadHandler.mjs  # File upload handling
-│   └── errors/            # Custom error classes
-├── v2/
-│   └── index.js           # v2 route implementation
-└── uploads/               # Upload file storage
+│   ├── authlib.mjs        # validateAdminMiddleware / validateStudentMiddleware
+│   ├── googleAuthHelper.mjs  # Verifies Google ID tokens, checks @berkeley.edu
+│   ├── jwtAuth.mjs        # Signs/verifies permission-snapshot JWTs
+│   ├── iam.mjs            # Permission check helpers (course-scoped)
+│   ├── userlib.mjs        # Resolves user role from DB or config
+│   ├── dbHelper.mjs       # pg pool + parameterized query helpers
+│   ├── studentHelper.mjs  # Student grade query logic
+│   ├── unifiedConfig.mjs  # Loads and caches repository-root config.json
+│   ├── uploadHandler.mjs  # Multipart file upload (multer)
+│   └── logger.mjs         # Structured logger (pino / winston)
+└── v2/
+    └── Routes/
+        ├── login/         # POST /api/v2/login — verify token, return JWT
+        ├── isadmin/       # GET  /api/v2/isadmin — check admin status
+        ├── admin/         # Admin-only grade management routes
+        ├── students/      # Student grade read routes
+        ├── bins/          # Grade bin / bucket display data
+        ├── config/        # Course config read/write endpoints
+        └── verifyaccess/  # Permission check endpoint
 ```
 
-**Key workflow:**
-1. User login → obtains Google OAuth token
-2. API validates token (checks `@berkeley.edu` domain)
-3. Queries repository-root `config.json` (`gradeview.admins` or `gradesync.courses[].admins`) to determine admin status
-4. Returns appropriate data based on permissions
+**Authentication flow:**
+1. `POST /api/v2/login` receives a Google ID token from the browser.
+2. `googleAuthHelper.mjs` verifies the token with Google's public keys and checks the `hd` (hosted domain) field — only `berkeley.edu` tokens are accepted.
+3. `userlib.mjs` queries `users` + `course_permissions` tables to resolve the user's role.
+4. A short-lived JWT is returned. All subsequent API calls must carry `Authorization: Bearer <jwt>`.
+5. Route middleware runs `validateAdminMiddleware` or `validateStudentMiddleware` on every protected endpoint.
 
 ---
 
-### 2. **website/** - React Web UI & Server
-
-Frontend application and static file serving
+### `website/` — React Web UI
 
 ```
 website/
-├── server/                # Node.js server (serves static files and proxies)
-│   ├── index.js
-│   ├── middleware.js
-│   └── package.json
-├── src/                   # React source code
-├── public/                # Static assets
-└── build/                 # Compiled frontend (mounted in docker dev)
+├── server/                # Node.js Express server — serves the built React app and
+│   ├── index.js           # proxies /api/* to the API container
+│   └── middleware.js      # Request logging, security headers
+├── src/
+│   ├── App.js             # Root React component, routing
+│   ├── views/             # Page-level components (dashboard, grades view, admin)
+│   ├── components/        # Shared UI components
+│   ├── services/          # API client functions (fetch wrappers)
+│   └── utils/             # Formatting helpers, grade calculators
+└── public/                # Static assets, index.html
 ```
 
-**Responsibilities:**
-- Serve React UI interface
-- Proxy backend API requests
-- Display grades, reports, and other data
+In development (`docker-compose.dev.yml`) the React dev server runs with hot-reload via `npm run react`. In production (`docker-compose.yml`) the pre-built static bundle is served by the Node server.
 
 ---
 
-### 3. **gradesync/** - Grade Sync Service (FastAPI)
+### `gradesync/` — Grade Sync Service (FastAPI)
 
-Fetches grades from external systems (Gradescope, PrairieLearn, iClicker) and syncs to PostgreSQL
+Entry point: `gradesync/api/app.py`
 
 ```
 gradesync/
 ├── api/
-│   ├── app.py           # Main FastAPI application
-│   ├── config_manager.py # Config loader
-│   ├── schemas.py        # Data models
-│   ├── services/         # Business logic layer
-│   └── sync/             # Sync logic
-└── docs/                # GradeSync docs
+│   ├── app.py             # FastAPI app factory, route registration, lifespan
+│   ├── config_manager.py  # Loads config.json (mounted at /app/config.json)
+│   ├── schemas.py         # Pydantic request/response models
+│   ├── core/
+│   │   ├── db.py          # SQLAlchemy engine + session factory
+│   │   ├── models.py      # ORM models (courses, students, assignments, submissions…)
+│   │   ├── ingest.py      # Core grade ingestion logic
+│   │   ├── ingest_optimized.py  # Bulk-upsert path for large courses
+│   │   └── exam_policy.py # Exam drop/bonus policy engine
+│   ├── services/          # One module per external source
+│   │   ├── gradescope.py  # Gradescope login + grade scraper
+│   │   ├── prairielearn.py# PrairieLearn REST API client
+│   │   └── iclicker.py    # iClicker session + attendance sync
+│   ├── sync/              # Orchestration layer
+│   │   └── service.py     # Schedules and runs per-course sync jobs
+│   ├── queries/
+│   │   └── summary.py     # Summary sheet materialization queries
+│   └── migrations/        # Numbered SQL migration files
+└── scripts/               # DB backfill and validation scripts
 ```
 
-**Workflow:**
-```
-External Systems (Gradescope/PL/iClicker)
-    ↓
-GradeSync crawler/API fetches data
-    ↓
-Normalize & categorize data (assignment_categories)
-    ↓
-Update PostgreSQL
-```
+**Sync flow:**
+1. `sync/service.py` reads the course list from `config.json`.
+2. For each course whose sources are `enabled`, it calls the corresponding service module.
+3. Fetched grades are normalized into `assignments` + `submissions` rows.
+4. `assignment_categories` patterns in `config.json` classify each assignment.
+5. Bulk upsert writes to PostgreSQL.
+6. `summary_sheets` table is refreshed for fast grade-view reads.
 
 ---
 
-### 4. **progressReport/** - Report Generation Service
-
-Python Flask/uWSGI application that generates student progress reports
-
-```
-progressReport/
-├── app.py              # Main application
-├── parser.py          # Data parser
-├── templates/         # HTML templates
-├── meta/              # Course metadata (grade distributions, etc.)
-└── data/              # Report data
-```
-
-**Purpose:** Generate visualized reports from grades and provide student feedback
-
----
-
-### 6. **reverseProxy/** - Nginx Reverse Proxy
+### `reverseProxy/` — Nginx
 
 ```
 reverseProxy/
-└── default.conf.template  # Nginx config template
+└── default.conf.template  # Envsubst template; NGINX_SERVER_NAME is injected at container start
 ```
 
-**Responsibilities:**
-- Route requests to Web UI / API / Progress Report
-- Configure HTTPS (letsencrypt)
-- Load balancing
+Routing rules:
+- `/` → `http://gradeview-web:3000`
+- `/api` → `http://gradeview-api:${API_PORT}`
+- `/gradesync/` → `http://gradeview-gradesync:8000/`
+
+The HTTPS server block is present but commented out. Enable it after provisioning TLS certificates (see `README.md` → HTTPS / TLS Setup).
 
 ---
 
-### 7. **scripts/** & **docs/**
+### `scripts/`
 
-- **scripts/setup_cloud_sql.sh** - Cloud SQL Proxy initialization
-- **docs/test_db_integration.sh** - Test script
-- **docs/demo.html** - Demo page
-
----
-
-## Data Flow Architecture
-
-```mermaid
-graph LR
-    User["👤 User<br/>Browser"]
-    
-    RP["Nginx<br/>Reverse Proxy"]
-    Web["React<br/>Web UI"]
-    API["Node.js<br/>API"]
-    PR["Python<br/>Progress Report"]
-    
-    DB[(PostgreSQL<br/>DB)]
-    
-    GS["FastAPI<br/>GradeSync"]
-    CSP["Cloud SQL<br/>Proxy"]
-    
-    ES["🔗 External<br/>Systems<br/>Gradescope<br/>PrairieLearn<br/>iClicker"]
-    
-    
-    User -->|HTTP/S| RP
-    RP --> Web
-    RP --> API
-    RP --> PR
-    
-    Web -->|fetch/auth| API
-    API -->|query| DB
-    
-    ES -->|sync| GS
-    GS -->|write| DB
-    
-    DB -->|via proxy| CSP
-    
-    PR -->|read| DB
-    PR -->|generate| User
-    
-    style User fill:#e1f5ff
-    style RP fill:#fff3e0
-    style Web fill:#f3e5f5
-    style API fill:#e8f5e9
-    style PR fill:#fce4ec
-    style DB fill:#fff9c4
-    style GS fill:#ede7f6
-    style CSP fill:#f5f5f5
-    style ES fill:#ffebee
-```
+| Script | Purpose |
+|--------|---------|
+| `dev-local.sh` | Starts deps in Docker, runs API and web server natively |
+| `preflight.sh` | Full production smoke-test (build → healthcheck → curl) |
+| `refresh.sh` | Pull latest images + restart production stack |
+| `deploy_to_gcp.sh` | One-shot GCE VM provisioning script |
+| `lib/common.sh` | Shared shell helpers (port checks, logging) |
 
 ---
 
-## 核心工作流
+## Database Schema Summary
 
-### 1️⃣ 用户登录与权限校验
+Full DDL: `docs/database/schema.sql`  
+ORM models: `gradesync/api/core/models.py`  
+Migrations: `gradesync/api/migrations/`
 
-```
-Browser 用户
-    ↓
-点击登录 (Google OAuth)
-    ↓
-前端获取 token → 发送给 API
-    ↓
-API: authlib.mjs validateAdminMiddleware() 或 validateStudentMiddleware()
-    ├─ 验证 token (googleAuthHelper.mjs)
-    ├─ 检查 @berkeley.edu 域名（如果不是直接拒绝）
-    └─ 查询仓库根目录 config.json（global 或 course admins）判断 admin 身份 (userlib.mjs)
-    ↓
-返回数据或 403 权限不足
-```
+| Table | Purpose |
+|-------|---------|
+| `users` | Platform identities (staff, admins). Source of truth for role. |
+| `courses` | Course tenant boundary. Unique on `gradescope_course_id`. |
+| `course_permissions` | Per-course role mapping (`owner`/`editor`/`viewer`). |
+| `students` | Course-scoped student identities. `(email, course_id)` unique. |
+| `assignments` | Assignment metadata per course. |
+| `submissions` | Student scores per assignment. `(assignment_id, student_id)` unique. |
+| `summary_sheets` | Precomputed per-student-per-assignment summaries for fast reads. |
+| `course_configs` | Per-course sync configuration (mirrors and extends config.json sync fields). |
+| `assignment_categories` | Per-course category rules (name → pattern list). |
+| `system_config` | Global key-value config store. |
+| `config_audit_log` | Write-audit trail for every config mutation. |
 
-### 2️⃣ 成绩数据同步流程
+**Tenant isolation rule:** Every query on grade or student data must carry a `course_id` scope. Cross-course reads are forbidden unless the caller is `super_admin`.
 
-```
-GradeSync 定时任务 / 手动触发
-    ↓
-根据仓库根目录 config.json 的 gradesync 配置课程列表
-    ↓
-对每个课程：
-    ├─ Gradescope: 爬虫登录 → 拉成绩 → 整理为标准格式
-    ├─ PrairieLearn: API 调用 → 获取分数
-    └─ iClicker: 登录 → 同步考勤
-    ↓
-按 assignment_categories 分类聚合
-    ↓
-写入 PostgreSQL
-```
+---
 
-### 3️⃣ 学生查询成绩流程
+## Key Workflows
+
+### 1. User Login and Permission Resolution
 
 ```
-学生访问页面（已登录）
-    ↓
-前端 GET /api/student/{email}/grades
-    ↓
-API 中间件校验（token 和权限）
-    ↓
-API 查询 PostgreSQL
-    ↓
-前端展示成绩
+Browser
+  │ (1) Click "Sign in with Google" → receive Google ID token
+  ▼
+POST /api/v2/login  { token }
+  │ (2) googleAuthHelper: verify token, check hd === "berkeley.edu"
+  │ (3) userlib: SELECT from users + course_permissions
+  │ (4) build permission snapshot
+  ▼
+Return JWT (12h expiry)
+  │
+  │ (5) All subsequent requests: Authorization: Bearer <jwt>
+  ▼
+Route middleware: validateAdminMiddleware / validateStudentMiddleware
+  │ checks JWT signature, role, course scope
+  ▼
+Handler returns data or 403
+```
+
+### 2. Grade Sync
+
+```
+GradeSync scheduled job OR manual POST /gradesync/sync/{course_id}
+  │
+  ▼ Read config.json → get enabled sources for course
+  │
+  ├── Gradescope: login session → fetch submissions CSV → parse
+  ├── PrairieLearn: REST API call with PL_API_TOKEN
+  └── iClicker: login → fetch attendance records
+  │
+  ▼ Normalize into standard grade rows
+  │ Classify by assignment_categories patterns
+  │
+  ▼ Bulk upsert → assignments, submissions, students tables
+  │
+  ▼ Refresh summary_sheets
+```
+
+### 3. Student Grade View
+
+```
+Student browser: GET /api/v2/students/{email}/grades?course_id=XXX
+  │
+  ▼ validateStudentMiddleware: verify JWT, check enrollment in course
+  │
+  ▼ studentHelper: query submissions JOIN assignments WHERE student.email = $1 AND course_id = $2
+  │
+  ▼ API maps raw scores → gradeview.buckets display structure from config.json
+  │
+  ▼ JSON response → React renders grade breakdown
 ```
 
 ---
 
-## Environment & Configuration
+## Configuration Architecture
 
-### Environment Variables (`.env`)
-- **API**: PORT, DATABASE_URL
-- **Database**: POSTGRES_HOST, POSTGRES_USER, POSTGRES_PASSWORD
-- **GradeSync**: Gradescope/PrairieLearn/iClicker credentials
+Two configuration surfaces exist:
 
-### Config Files
-- **Unified** (repository-root `config.json`)
-    - `gradeview.googleconfig.oauth.clientid` (OAuth client ID)
-    - `gradeview.admins` (global admin list)
-    - `gradesync.courses[]` (course list, source settings, course-specific `admins`)
-    - `gradesync.global_settings` (global sync settings)
+| Surface | File | Loaded by | Purpose |
+|---------|------|-----------|---------|
+| Environment variables | `.env` | Docker / OS env | Secrets, ports, DB credentials, third-party API keys |
+| Unified runtime config | `config.json` (repo root) | `unifiedConfig.mjs`, `config_manager.py` | OAuth client ID, admin lists, per-course sync and display settings |
+
+`config.json` is mounted read-only into both `api` and `gradesync` containers. Changes require a container restart; there is no live-reload.
 
 ---
 
 ## Deployment Topology
 
-### Docker Compose Dev Mode
-```
-docker compose -f docker-compose.dev.yml up
-```
-- Web UI (3000)
-- API (8000)
-- GradeSync (8001)
-- Progress Report (8080)
-- Cloud SQL Proxy (5432 → Cloud SQL)
+### Development (`docker-compose.dev.yml`)
 
-### Docker Compose Production Mode
 ```
-docker compose -f docker-compose.yml up
+Host ports exposed:
+  :80    → Nginx (entry point)
+  :3000  → React dev server (hot-reload)
+  :5433  → Cloud SQL Proxy (host-side DB access)
+  :8001  → GradeSync FastAPI (debug)
+
+Source code bind-mounts: api/, website/, gradesync/ → hot-reload via nodemon / uvicorn --reload
 ```
-- Reverse Proxy (80/443)
-- Production DB connection (no Cloud SQL Proxy)
+
+### Production (`docker-compose.yml`)
+
+```
+Host ports exposed:
+  :80    → Nginx
+  :443   → Nginx (TLS)
+  :8001  → GradeSync (optional, can be removed)
+
+No bind-mounts; images are built and pushed by CI.
+Healthchecks: all containers use wget/curl checks before dependents start.
+Log rotation: json-file driver, max 10 MB × 3 files per service.
+```
 
 ---
 
-## New Team Member Onboarding Checklist
+## New Developer Onboarding Checklist
 
-### Step 0: Understand Architecture
-- [ ] Read this document
-- [ ] Review `docker-compose.dev.yml` to understand service dependencies
-
-### Step 1: Prepare Local Environment
-- [ ] Clone repository
-- [ ] `cp .env.example .env` and `cp config.example.json config.json`
-- [ ] Fill in environment variables and config
-
-### Step 2: Start Dev Environment
+- [ ] Read `README.md` (setup, config, and deploy)
+- [ ] Read this file (ARCHITECTURE.md)
+- [ ] `cp .env.example .env` and fill in all variables
+- [ ] `cp config.example.json config.json` and add at least one course entry
+- [ ] Place `secrets/key.json` (GCP service account) if using Cloud SQL
 - [ ] `docker compose -f docker-compose.dev.yml up --build`
-- [ ] Verify all services start successfully
-
-### Step 3: Test Authentication & Permissions
-- [ ] Login with Berkeley account (need to be added to repository-root `config.json` admins list)
-- [ ] Verify student grade query functionality
-
-### Step 4: Modify Code
-- [ ] Pick a component to start modifying (e.g., API routes or frontend page)
-- [ ] Test your changes
-
-### Step 5: Deploy
-- [ ] Merge to main branch
-- [ ] CI/CD automatically builds images and deploys
-
----
-
-## Troubleshooting Guide
-
-| Issue | Root Cause | Solution |
-|-------|-----------|----------|
-| Login fails (domain mismatch) | Non-Berkeley account used | Only @berkeley.edu accounts allowed |
-| 403 permission denied | Account not in admins list | Admin must add your email to repository-root `config.json` (`gradeview.admins` or target course `admins`) |
-| Gradescope sync fails | Credentials expired or XPath changed | Verify GRADESCOPE_* credentials in `.env` |
-| Sync not reflected in UI | GradeSync failed to write into DB or API query scoped to wrong course | Check GradeSync logs and database rows for target course |
-
----
-
-## Core Files Reference
-
-Files you typically need to modify:
-
-| Requirement | File Location |
-|-------------|---------------|
-| Modify login logic | `api/lib/authlib.mjs`, `api/lib/googleAuthHelper.mjs` |
-| Add new API endpoint | `api/Router.js`, `api/v2/index.js` |
-| Modify frontend page | `website/src/**` |
-| Change grade sync logic | `gradesync/api/**`, `gradesync/{gradescope,prairieLearn,iclicker}/` |
-| Modify database operations | `api/lib/dbHelper.mjs`, `gradesync/api/core/**` |
-| Configure permissions | repository-root `config.json` → `gradeview.admins` / `gradesync.courses[].admins` |
-| Configure course sync settings | repository-root `config.json` → `gradesync` |
+- [ ] Verify `http://localhost` loads and login works
+- [ ] Read `docs/database/README.md` before touching DB queries
+- [ ] Read `docs/features/auth-and-iam.md` before touching auth code
