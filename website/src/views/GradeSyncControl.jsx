@@ -199,7 +199,7 @@ export default function GradeSyncControl() {
 
     return (
         <Box px={4} py={4}>
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid #e5e7eb', borderRadius: 2, maxWidth: 800 }}>
+            <Paper elevation={0} className='glass-section' sx={{ p: 4, borderRadius: 2, maxWidth: 800 }}>
                 <Box mb={3} display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                         GradeSync Control
@@ -272,7 +272,7 @@ export default function GradeSyncControl() {
                             )}
                             <Paper
                                 variant="outlined"
-                                sx={{ mt: 1.5, p: 1.25, maxHeight: 180, overflowY: 'auto', bgcolor: '#111827', color: '#e5e7eb' }}
+                                sx={{ mt: 1.5, p: 1.25, maxHeight: 180, overflowY: 'auto', bgcolor: 'rgba(8, 13, 30, 0.72)', color: '#e5e7eb', borderColor: 'rgba(159, 187, 255, 0.22)' }}
                                 ref={logContainerRef}
                             >
                                 {(syncEvents || []).length === 0 ? (

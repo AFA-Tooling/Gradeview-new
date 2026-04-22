@@ -268,20 +268,19 @@ export default function StudentProfile() {
   }
 
   return (
-    <Box sx={{ bgcolor: '#f5f7fa', minHeight: '100vh', pb: 4 }}>
+    <Box className='student-profile-shell' sx={{ minHeight: '100vh', pb: 4, overflowX: 'hidden' }}>
       {/* Page Header with Student Name and Admin Student Selector */}
       <Paper 
         elevation={0} 
+        className='glass-section'
         sx={{ 
           p: 3, 
           mb: 3,
-          backgroundColor: 'white',
-          borderRadius: 0,
-          borderBottom: '1px solid #e5e7eb'
+          borderRadius: 2,
         }}
       >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h4" component="h1" sx={{ color: '#1e3a8a', fontWeight: 600 }}>
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
             {studentData?.studentName || studentName || 'Loading...'}
           </Typography>
           
@@ -308,7 +307,7 @@ export default function StudentProfile() {
         </Box>
       </Paper>
 
-      <Box sx={{ px: 4 }}>
+      <Box sx={{ px: { xs: 1.5, sm: 2, md: 4 }, width: '100%', overflowX: 'hidden' }}>
         {/* Tabs */}
         <Tabs 
           value={tab} 

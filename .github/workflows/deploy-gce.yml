@@ -127,8 +127,8 @@ jobs:
           GCP_ZONE: ${{ secrets.GCP_ZONE }}
           GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
           GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           IMAGE_REGISTRY: ghcr.io/${{ env.OWNER_LC }}/gradeview
           IMAGE_TAG: ${{ github.sha }}
@@ -201,6 +201,20 @@ jobs:
 
               echo "[INFO] Deploying tag $IMAGE_TAG"
               set_compose_versions "$IMAGE_TAG"
+
+              for image in \
+                "$IMAGE_REGISTRY/reverse-proxy:$IMAGE_TAG" \
+                "$IMAGE_REGISTRY/web:$IMAGE_TAG" \
+                "$IMAGE_REGISTRY/server:$IMAGE_TAG" \
+                "$IMAGE_REGISTRY/gradesync:$IMAGE_TAG"
+              do
+                if ! sudo docker manifest inspect "$image" >/dev/null; then
+                  echo "[ERROR] Unable to access image manifest: $image"
+                  echo "[ERROR] Check that the workflow GITHUB_TOKEN has read access to the GHCR package."
+                  exit 18
+                fi
+              done
+
               sudo -E docker compose -f docker-compose.yml pull
               sudo -E docker compose -f docker-compose.yml up -d --no-build --remove-orphans
 

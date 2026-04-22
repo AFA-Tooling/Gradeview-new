@@ -189,7 +189,7 @@ export default function ConceptMap({ embedded = false }) {
               <Typography
                 variant="subtitle1"
                 align="center"
-                sx={{ color: '#000', fontSize: '0.7rem', px: 1 }}
+                sx={{ color: 'rgba(231, 241, 255, 0.96)', fontSize: '0.7rem', px: 1 }}
               >
                 {lvl.name}
               </Typography>
@@ -222,7 +222,7 @@ export default function ConceptMap({ embedded = false }) {
             <Typography
               variant="subtitle1"
               align="center"
-              sx={{ color: '#000', fontSize: '0.9rem' }}
+              sx={{ color: 'rgba(231, 241, 255, 0.96)', fontSize: '0.9rem' }}
             >
               {lvl.name}
             </Typography>

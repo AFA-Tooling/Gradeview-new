@@ -23,6 +23,8 @@ import {
     Warning,
     Logout,
     Settings as SettingsIcon,
+    LightMode,
+    DarkMode,
 } from '@mui/icons-material';
 import MenuIcon from '@mui/icons-material/Menu';
 import apiv2 from '../utils/apiv2';
@@ -30,7 +32,7 @@ import NavBarItem from './NavBarItem';
 import NavMenuItem from './NavMenuItem';
 import { StudentSelectionContext } from './StudentSelectionWrapper';
 
-export default function ButtonAppBar() {
+export default function ButtonAppBar({ displayMode = 'dark', onToggleDisplayMode }) {
     const mobileView = useMediaQuery('(max-width:600px)');
     const [loggedIn, setLoginStatus] = useState(
         !!localStorage.getItem('token'),
@@ -281,19 +283,19 @@ export default function ButtonAppBar() {
                                         minWidth: 220,
                                         mr: 1.5,
                                         '& .MuiOutlinedInput-root': {
-                                            color: 'white',
+                                            color: displayMode === 'dark' ? 'white' : '#1f3d73',
                                             '& fieldset': {
-                                                borderColor: 'rgba(255,255,255,0.5)',
+                                                borderColor: displayMode === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(36, 70, 144, 0.4)',
                                             },
                                             '&:hover fieldset': {
-                                                borderColor: 'white',
+                                                borderColor: displayMode === 'dark' ? 'white' : 'rgba(36, 70, 144, 0.65)',
                                             },
                                             '&.Mui-focused fieldset': {
-                                                borderColor: 'white',
+                                                borderColor: displayMode === 'dark' ? 'white' : '#3258c7',
                                             },
                                         },
                                         '& .MuiSvgIcon-root': {
-                                            color: 'white',
+                                            color: displayMode === 'dark' ? 'white' : '#1f3d73',
                                         },
                                     }}
                                 >
@@ -317,6 +319,22 @@ export default function ButtonAppBar() {
                                     </Select>
                                 </FormControl>
                             )}
+                            <IconButton
+                                aria-label={displayMode === 'dark' ? 'switch to light mode' : 'switch to dark mode'}
+                                onClick={onToggleDisplayMode}
+                                sx={{
+                                    mr: 1,
+                                    color: 'inherit',
+                                    border: '1px solid',
+                                    borderColor: displayMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(41, 73, 148, 0.35)',
+                                    bgcolor: displayMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.7)',
+                                    '&:hover': {
+                                        bgcolor: displayMode === 'dark' ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.9)',
+                                    },
+                                }}
+                            >
+                                {displayMode === 'dark' ? <LightMode fontSize='small' /> : <DarkMode fontSize='small' />}
+                            </IconButton>
                             <IconButton 
                                 aria-label="user profile"
                                 onClick={handleMenu}

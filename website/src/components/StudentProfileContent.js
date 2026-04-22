@@ -33,36 +33,117 @@ import {
 import { Line as ChartLine, Radar as ChartRadar, Doughnut as ChartDoughnut } from 'react-chartjs-2';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 
-const categoryDonutGroupOutlinePlugin = {
-  id: 'categoryDonutGroupOutline',
+const liquidGlassDonutPlugin = {
+  id: 'liquidGlassDonut',
   afterDatasetsDraw(chart) {
     const dataset = chart?.data?.datasets?.[0];
-    const categoryBounds = Array.isArray(dataset?.categoryBounds) ? dataset.categoryBounds : [];
-    if (categoryBounds.length === 0) return;
+    const segmentMeta = Array.isArray(dataset?.segmentMeta) ? dataset.segmentMeta : [];
+    if (segmentMeta.length === 0) return;
 
     const meta = chart.getDatasetMeta(0);
     const arcs = meta?.data || [];
     if (arcs.length === 0) return;
 
     const ctx = chart.ctx;
+    const hoveredCategory = dataset?.hoveredCategory ?? null;
     ctx.save();
 
-    categoryBounds.forEach((bound) => {
-      const startArc = arcs[bound.startIndex];
-      const endArc = arcs[bound.endIndex];
-      if (!startArc || !endArc) return;
+    arcs.forEach((arc, i) => {
+      const seg = segmentMeta[i];
+      if (!seg || seg.type === 'gap') return;
 
-      const { x, y, outerRadius, innerRadius } = startArc;
-      const startAngle = startArc.startAngle;
-      const endAngle = endArc.endAngle;
+      const { x, y } = arc;
+      const outerRadius = arc.outerRadius;
+      const innerRadius = arc.innerRadius;
+      const startAngle = arc.startAngle;
+      const endAngle = arc.endAngle;
+      const arcSpan = endAngle - startAngle;
 
+      const isHovered = hoveredCategory !== null && seg.category === hoveredCategory;
+      const isDimmed = hoveredCategory !== null && seg.category !== hoveredCategory;
+      const alphaScale = isDimmed ? 0.35 : isHovered ? 1.15 : 1.0;
+
+      const earnedFraction = seg.cap > 0 ? Math.max(0, Math.min(1, seg.earned / seg.cap)) : 0;
+      const earnedEndAngle = startAngle + arcSpan * earnedFraction;
+
+      // ── 1. Remaining (light shell) ──────────────────────────────────────────
+      ctx.save();
       ctx.beginPath();
       ctx.arc(x, y, outerRadius, startAngle, endAngle);
       ctx.arc(x, y, innerRadius, endAngle, startAngle, true);
       ctx.closePath();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = bound.outlineColor || 'rgba(30, 58, 138, 0.65)';
+      ctx.fillStyle = seg.remainingColor.replace(/,[^,]+\)$/, `, ${0.18 * alphaScale})`);
+      ctx.fill();
+      ctx.restore();
+
+      // ── 2. Earned (saturated fill with radial gradient) ───────────────────
+      if (earnedFraction > 0) {
+        ctx.save();
+        ctx.shadowColor = seg.glowColor;
+        ctx.shadowBlur = isHovered ? 18 : 10;
+        ctx.beginPath();
+        ctx.arc(x, y, outerRadius, startAngle, earnedEndAngle);
+        ctx.arc(x, y, innerRadius, earnedEndAngle, startAngle, true);
+        ctx.closePath();
+
+        const gradient = ctx.createRadialGradient(x, y, innerRadius, x, y, outerRadius);
+        gradient.addColorStop(0, seg.earnedColorInner.replace(/,[^,]+\)$/, `, ${0.95 * Math.min(alphaScale, 1)})`) );
+        gradient.addColorStop(1, seg.earnedColorOuter.replace(/,[^,]+\)$/, `, ${0.72 * Math.min(alphaScale, 1)})`) );
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // ── 3. Specular highlight (glass sheen on top edge of earned arc) ─────
+      if (earnedFraction > 0) {
+        ctx.save();
+        ctx.shadowBlur = 0;
+        const sheenEnd = Math.min(earnedEndAngle, startAngle + arcSpan * Math.min(earnedFraction, 0.38));
+        ctx.beginPath();
+        ctx.arc(x, y, outerRadius - 1.5, startAngle, sheenEnd);
+        ctx.lineWidth = isHovered ? 2.5 : 1.8;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${isDimmed ? 0.18 : 0.52})`;
+        ctx.stroke();
+
+        // Inner rim highlight
+        ctx.beginPath();
+        ctx.arc(x, y, innerRadius + 1.5, startAngle, sheenEnd);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${isDimmed ? 0.1 : 0.28})`;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ── 4. Earned / remaining boundary notch ─────────────────────────────
+      if (earnedFraction > 0 && earnedFraction < 1) {
+        ctx.save();
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.moveTo(
+          x + Math.cos(earnedEndAngle) * (innerRadius - 1),
+          y + Math.sin(earnedEndAngle) * (innerRadius - 1)
+        );
+        ctx.lineTo(
+          x + Math.cos(earnedEndAngle) * (outerRadius + 1),
+          y + Math.sin(earnedEndAngle) * (outerRadius + 1)
+        );
+        ctx.lineWidth = isDimmed ? 1.5 : 2.5;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${isDimmed ? 0.35 : 0.72})`;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ── 5. Outer border ring of entire segment ────────────────────────────
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(x, y, outerRadius, startAngle, endAngle);
+      ctx.arc(x, y, innerRadius, endAngle, startAngle, true);
+      ctx.closePath();
+      ctx.lineWidth = isDimmed ? 1 : 1.8;
+      ctx.strokeStyle = seg.outlineColor.replace(/,[^,]+\)$/, `, ${isDimmed ? 0.2 : isHovered ? 0.85 : 0.55})`);
       ctx.stroke();
+      ctx.restore();
     });
 
     ctx.restore();
@@ -83,7 +164,7 @@ ChartJS.register(
   ChartDataLabels,
   ChartTooltip,
   ChartLegend,
-  categoryDonutGroupOutlinePlugin
+  liquidGlassDonutPlugin
 );
 
 /**
@@ -126,13 +207,13 @@ export default function StudentProfileContent({ studentData }) {
                 width: 10,
                 height: 16,
                 borderRadius: '2px',
-                backgroundColor: index < filledSegments ? '#1e3a8a' : '#e5e7eb',
-                border: '1px solid #d1d5db'
+                backgroundColor: index < filledSegments ? '#f59e0b' : 'rgba(226, 232, 240, 0.28)',
+                border: '1px solid rgba(196, 210, 238, 0.26)'
               }}
             />
           ))}
         </Box>
-        <Typography variant="body2" sx={{ color: '#374151', fontWeight: 600, minWidth: 58, textAlign: 'left' }}>
+        <Typography variant="body2" sx={{ color: 'rgba(231, 241, 255, 0.94)', fontWeight: 600, minWidth: 58, textAlign: 'left' }}>
           {safeValue.toFixed(2)}%
         </Typography>
       </Box>
@@ -187,6 +268,36 @@ export default function StudentProfileContent({ studentData }) {
 
   const examPolicyRows = Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [];
 
+  const radarScaleOptions = {
+    min: 0,
+    max: 100,
+    beginAtZero: true,
+    ticks: {
+      stepSize: 20,
+      color: 'rgba(214, 228, 255, 0.9)',
+      showLabelBackdrop: false,
+      backdropColor: 'transparent',
+      font: {
+        size: 13,
+        weight: 600,
+      },
+      callback: function(value) {
+        return value + '%';
+      }
+    },
+    grid: {
+      color: 'rgba(176, 197, 240, 0.3)',
+      lineWidth: 1.4,
+    },
+    angleLines: {
+      color: 'rgba(176, 197, 240, 0.28)',
+      lineWidth: 1.2,
+    },
+    pointLabels: {
+      display: false,
+    }
+  };
+
   const questComponentTrend = useMemo(() => {
     const trend = studentData?.questComponentTrend;
     const components = Array.isArray(trend?.components) ? trend.components : [];
@@ -201,22 +312,22 @@ export default function StudentProfileContent({ studentData }) {
 
     const palette = [
       {
-        line: '#3b82f6',
-        point: '#2563eb',
-        baseArea: 'rgba(59, 130, 246, 0.10)',
-        diffArea: 'rgba(59, 130, 246, 0.14)',
-      },
-      {
         line: '#f59e0b',
         point: '#d97706',
-        baseArea: 'rgba(245, 158, 11, 0.08)',
-        diffArea: 'rgba(245, 158, 11, 0.16)',
+        baseArea: 'rgba(245, 158, 11, 0.10)',
+        diffArea: 'rgba(245, 158, 11, 0.14)',
       },
       {
         line: '#10b981',
         point: '#059669',
         baseArea: 'rgba(16, 185, 129, 0.08)',
         diffArea: 'rgba(16, 185, 129, 0.16)',
+      },
+      {
+        line: '#ef4444',
+        point: '#dc2626',
+        baseArea: 'rgba(239, 68, 68, 0.08)',
+        diffArea: 'rgba(239, 68, 68, 0.16)',
       },
     ];
 
@@ -276,136 +387,83 @@ export default function StudentProfileContent({ studentData }) {
   const overallCategoryDonut = useMemo(() => {
     const entries = Object.entries(categoriesData || {});
     if (entries.length === 0) {
-      return {
-        labels: [],
-        values: [],
-        segmentMeta: [],
-        categoryBounds: [],
-        totalCap: 0,
-      };
+      return { labels: [], values: [], segmentMeta: [], totalCap: 0 };
     }
 
-    const toRgba = (rgb, alpha) => `rgba(${rgb}, ${alpha})`;
+    // rgb values used by the plugin for gradient / glow colours
     const palette = [
-      { rgb: '37, 99, 235' },
-      { rgb: '217, 119, 6' },
-      { rgb: '5, 150, 105' },
-      { rgb: '124, 58, 237' },
-      { rgb: '220, 38, 38' },
-      { rgb: '8, 145, 178' },
-      { rgb: '79, 70, 229' },
-      { rgb: '180, 83, 9' },
+      { rgb: '37, 99, 235'   },  // blue
+      { rgb: '217, 119, 6'  },  // amber
+      { rgb: '5, 150, 105'  },  // emerald
+      { rgb: '124, 58, 237' },  // violet
+      { rgb: '220, 38, 38'  },  // red
+      { rgb: '8, 145, 178'  },  // cyan
+      { rgb: '79, 70, 229'  },  // indigo
+      { rgb: '180, 83, 9'   },  // orange
     ];
 
     const values = [];
     const labels = [];
     const segmentMeta = [];
-    const categoryBounds = [];
     let totalCap = 0;
 
-    const validEntries = entries.filter(([, data]) => Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0)) > 0);
-    const gapValue = Math.max(
-      0.15,
-      validEntries.reduce((sum, [, data]) => sum + Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0)), 0) * 0.005
+    const validEntries = entries.filter(
+      ([, data]) => Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0)) > 0
     );
+    const sumCap = validEntries.reduce(
+      (s, [, data]) => s + Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0)), 0
+    );
+    // Small gap proportional to total cap so it looks consistent regardless of scale
+    const gapValue = Math.max(0.12, sumCap * 0.008);
 
     validEntries.forEach(([category, data], index) => {
-      const cap = Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0));
-      const earned = Math.max(0, Math.min(cap, Number(data?.total ?? 0)));
-      const remaining = Math.max(0, cap - earned);
+      const cap     = Math.max(0, Number(data?.capPoints ?? data?.maxPoints ?? 0));
+      const earned  = Math.max(0, Math.min(cap, Number(data?.total ?? 0)));
       const selected = palette[index % palette.length];
 
       if (cap <= 0) return;
 
-      const startIndex = values.length;
-
-      values.push(earned);
+      // ONE segment per category – size = cap (full arc represents max points)
+      values.push(cap);
       labels.push(category);
       segmentMeta.push({
         category,
         cap,
         earned,
-        remaining,
-        type: 'earned',
-        baseColor: toRgba(selected.rgb, 0.92),
-        highlightColor: toRgba(selected.rgb, 0.98),
-        dimColor: toRgba(selected.rgb, 0.45),
-      });
-
-      if (remaining > 0) {
-        values.push(remaining);
-        labels.push(category);
-        segmentMeta.push({
-          category,
-          cap,
-          earned,
-          remaining,
-          type: 'remaining',
-          baseColor: toRgba(selected.rgb, 0.20),
-          highlightColor: toRgba(selected.rgb, 0.34),
-          dimColor: toRgba(selected.rgb, 0.12),
-        });
-      }
-
-      const endIndex = values.length - 1;
-      categoryBounds.push({
-        category,
-        startIndex,
-        endIndex,
-        outlineColor: toRgba(selected.rgb, 0.68),
+        remaining: Math.max(0, cap - earned),
+        type: 'category',
+        earnedFraction: cap > 0 ? earned / cap : 0,
+        // colours used by liquidGlassDonutPlugin
+        earnedColorInner: `rgba(${selected.rgb}, 0.95)`,
+        earnedColorOuter:  `rgba(${selected.rgb}, 0.70)`,
+        remainingColor:    `rgba(${selected.rgb}, 0.18)`,
+        glowColor:         `rgba(${selected.rgb}, 0.75)`,
+        outlineColor:      `rgba(${selected.rgb}, 0.60)`,
       });
 
       totalCap += cap;
 
-      const isLastCategory = index === validEntries.length - 1;
-      if (!isLastCategory) {
+      const isLast = index === validEntries.length - 1;
+      if (!isLast) {
         values.push(gapValue);
         labels.push(`${category}-gap`);
-        segmentMeta.push({
-          category: null,
-          cap: 0,
-          earned: 0,
-          remaining: 0,
-          type: 'gap',
-          baseColor: 'rgba(255, 255, 255, 1)',
-          highlightColor: 'rgba(255, 255, 255, 1)',
-          dimColor: 'rgba(255, 255, 255, 1)',
-        });
+        segmentMeta.push({ category: null, type: 'gap' });
       }
     });
 
-    return {
-      labels,
-      values,
-      segmentMeta,
-      categoryBounds,
-      totalCap,
-    };
+    return { labels, values, segmentMeta, totalCap };
   }, [categoriesData]);
 
   const donutAppearance = useMemo(() => {
-    const hasHover = Boolean(hoveredDonutCategory);
-
-    const backgroundColor = overallCategoryDonut.segmentMeta.map((segment) => {
-      if (segment.type === 'gap') return segment.baseColor;
-      if (!hasHover) return segment.baseColor;
-      return segment.category === hoveredDonutCategory ? segment.highlightColor : segment.dimColor;
-    });
-
-    const borderColor = overallCategoryDonut.segmentMeta.map((segment) => {
-      if (segment.type === 'gap') return 'rgba(255, 255, 255, 0)';
-      if (!hasHover) return 'rgba(255, 255, 255, 0)';
-      return segment.category === hoveredDonutCategory ? 'rgba(15, 23, 42, 0.28)' : 'rgba(255, 255, 255, 0)';
-    });
-
-    const borderWidth = overallCategoryDonut.segmentMeta.map((segment) => {
-      if (segment.type === 'gap') return 0;
-      if (!hasHover) return 0;
-      return segment.category === hoveredDonutCategory ? 1 : 0;
-    });
-
+    // The liquidGlassDonutPlugin handles all visual rendering.
+    // Chart.js base layer uses transparent fills so only hit-testing geometry is active.
+    const backgroundColor = overallCategoryDonut.segmentMeta.map((segment) =>
+      segment.type === 'gap' ? 'rgba(0, 0, 0, 0)' : 'rgba(0, 0, 0, 0)'
+    );
+    const borderColor   = overallCategoryDonut.segmentMeta.map(() => 'rgba(0, 0, 0, 0)');
+    const borderWidth   = overallCategoryDonut.segmentMeta.map(() => 0);
     return { backgroundColor, borderColor, borderWidth };
-  }, [overallCategoryDonut.segmentMeta, hoveredDonutCategory]);
+  }, [overallCategoryDonut.segmentMeta]);
 
   // Format date for display
   const formatDate = (dateString) => {
@@ -424,12 +482,13 @@ export default function StudentProfileContent({ studentData }) {
     <Box>
       <Grid container spacing={3} sx={{ mb: 3, alignItems: 'stretch' }}>
         {/* Overall Summary */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 4,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -455,9 +514,11 @@ export default function StudentProfileContent({ studentData }) {
                               backgroundColor: donutAppearance.backgroundColor,
                               borderColor: donutAppearance.borderColor,
                               borderWidth: donutAppearance.borderWidth,
-                              hoverOffset: 5,
-                              spacing: 0,
-                              categoryBounds: overallCategoryDonut.categoryBounds,
+                              hoverOffset: 0,
+                              spacing: 4,
+                              // Custom props read by liquidGlassDonutPlugin
+                              segmentMeta: overallCategoryDonut.segmentMeta,
+                              hoveredCategory: hoveredDonutCategory,
                             }
                           ]
                         }}
@@ -465,51 +526,48 @@ export default function StudentProfileContent({ studentData }) {
                           responsive: true,
                           maintainAspectRatio: false,
                           cutout: '68%',
+                          animation: { duration: 600 },
                           onHover: (_event, elements) => {
                             if (!elements || elements.length === 0) {
                               setHoveredDonutCategory(null);
                               return;
                             }
                             const hoverIndex = elements[0].index;
-                            const hoveredSegment = overallCategoryDonut.segmentMeta[hoverIndex];
-                            if (!hoveredSegment || hoveredSegment.type === 'gap') {
+                            const hoveredSeg = overallCategoryDonut.segmentMeta[hoverIndex];
+                            if (!hoveredSeg || hoveredSeg.type === 'gap') {
                               setHoveredDonutCategory(null);
                               return;
                             }
-                            setHoveredDonutCategory(hoveredSegment.category);
+                            setHoveredDonutCategory(hoveredSeg.category);
                           },
                           plugins: {
-                            legend: {
-                              display: false,
-                            },
-                            datalabels: {
-                              display: false,
-                            },
+                            legend:     { display: false },
+                            datalabels: { display: false },
                             tooltip: {
                               filter: function(context) {
-                                const idx = context?.dataIndex ?? -1;
+                                const idx  = context?.dataIndex ?? -1;
                                 const meta = overallCategoryDonut.segmentMeta[idx];
-                                return meta?.type !== 'gap';
+                                return meta?.type === 'category';
                               },
                               callbacks: {
                                 title: function(context) {
-                                  const idx = context?.[0]?.dataIndex ?? -1;
+                                  const idx  = context?.[0]?.dataIndex ?? -1;
                                   const meta = overallCategoryDonut.segmentMeta[idx];
                                   return meta?.category || '';
                                 },
                                 label: function(context) {
-                                  const idx = context?.dataIndex ?? -1;
+                                  const idx  = context?.dataIndex ?? -1;
                                   const meta = overallCategoryDonut.segmentMeta[idx];
                                   if (!meta) return '';
                                   const pct = meta.cap > 0 ? (meta.earned / meta.cap) * 100 : 0;
-                                  if (meta.type === 'earned') {
-                                    return `Score: ${Math.round(meta.earned)} / ${Math.round(meta.cap)} (${pct.toFixed(2)}%)`;
-                                  }
-                                  return `Remaining: ${Math.round(meta.remaining)} / ${Math.round(meta.cap)}`;
-                                }
-                              }
-                            }
-                          }
+                                  return [
+                                    `Earned : ${Math.round(meta.earned)} / ${Math.round(meta.cap)}`,
+                                    `Score  : ${pct.toFixed(2)}%`,
+                                  ];
+                                },
+                              },
+                            },
+                          },
                         }}
                       />
                     </Box>
@@ -547,13 +605,13 @@ export default function StudentProfileContent({ studentData }) {
                         {
                           label: 'Score %',
                           data: radarData.map(d => d.percentage),
-                          borderColor: '#1565c0',
-                          backgroundColor: 'rgba(25, 118, 210, 0.35)',
-                          borderWidth: 3,
+                          borderColor: '#f59e0b',
+                          backgroundColor: 'rgba(245, 158, 11, 0.30)',
+                          borderWidth: 4,
                           pointRadius: 5,
                           pointHoverRadius: 8,
-                          pointBackgroundColor: '#1565c0',
-                          pointBorderColor: '#fff',
+                          pointBackgroundColor: '#f59e0b',
+                          pointBorderColor: '#0b1022',
                           pointBorderWidth: 2,
                         }
                       ]
@@ -562,33 +620,14 @@ export default function StudentProfileContent({ studentData }) {
                       responsive: true,
                       maintainAspectRatio: false,
                       scales: {
-                        r: {
-                          min: 0,
-                          max: 100,
-                          beginAtZero: true,
-                          ticks: {
-                            stepSize: 20,
-                            backdropColor: 'transparent',
-                            callback: function(value) {
-                              return value + '%';
-                            }
-                          },
-                          grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                          },
-                          angleLines: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                          },
-                          pointLabels: {
-                            display: false
-                          }
-                        }
+                        r: radarScaleOptions
                       },
                       plugins: {
                         legend: {
                           position: 'bottom',
                           labels: {
                             usePointStyle: true,
+                            color: 'rgba(231, 241, 255, 0.92)',
                           }
                         },
                         datalabels: {
@@ -617,12 +656,13 @@ export default function StudentProfileContent({ studentData }) {
         </Grid>
 
         {/* Performance by Category */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 4,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -632,7 +672,7 @@ export default function StudentProfileContent({ studentData }) {
             <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
               Performance by Category
             </Typography>
-            <TableContainer sx={{ mt: 2, borderRadius: 2, overflow: 'hidden' }}>
+            <TableContainer sx={{ mt: 2, borderRadius: 2, overflowX: 'auto', overflowY: 'hidden' }}>
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ backgroundColor: '#f9fafb' }}>
@@ -663,12 +703,13 @@ export default function StudentProfileContent({ studentData }) {
       {/* Charts */}
       <Grid container spacing={3} sx={{ mb: 3, alignItems: 'stretch' }}>
         {/* Radar Chart */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 3,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -687,13 +728,13 @@ export default function StudentProfileContent({ studentData }) {
                       {
                         label: 'Score %',
                         data: radarData.map(d => d.percentage),
-                        borderColor: '#1565c0',
-                        backgroundColor: 'rgba(25, 118, 210, 0.4)',
-                        borderWidth: 3,
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.34)',
+                        borderWidth: 4,
                         pointRadius: 6,
                         pointHoverRadius: 10,
-                        pointBackgroundColor: '#1565c0',
-                        pointBorderColor: '#fff',
+                        pointBackgroundColor: '#f59e0b',
+                        pointBorderColor: '#0b1022',
                         pointBorderWidth: 2,
                       }
                     ]
@@ -702,30 +743,7 @@ export default function StudentProfileContent({ studentData }) {
                     responsive: true,
                     maintainAspectRatio: false,
                   scales: {
-                    r: {
-                      min: 0,
-                      max: 100,
-                      beginAtZero: true,
-                      ticks: {
-                        stepSize: 20,
-                        backdropColor: 'transparent',
-                        font: {
-                          size: 13
-                        },
-                        callback: function(value) {
-                          return value + '%';
-                        }
-                      },
-                      grid: {
-                        color: 'rgba(0, 0, 0, 0.1)'
-                      },
-                      angleLines: {
-                        color: 'rgba(0, 0, 0, 0.1)'
-                      },
-                      pointLabels: {
-                        display: false
-                      }
-                    }
+                    r: radarScaleOptions
                   },
                   interaction: {
                     mode: 'point',
@@ -737,6 +755,7 @@ export default function StudentProfileContent({ studentData }) {
                       labels: {
                         padding: 15,
                         usePointStyle: true,
+                        color: 'rgba(231, 241, 255, 0.92)',
                         font: {
                           size: 13
                         }
@@ -777,12 +796,13 @@ export default function StudentProfileContent({ studentData }) {
         </Grid>
 
         {/* Quest Progress Trend */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
           <Paper 
             elevation={0} 
             sx={{ 
               p: 3,
               flex: 1,
+              minWidth: 0,
               backgroundColor: 'white',
               borderRadius: 3,
               border: '1px solid #e5e7eb',
@@ -901,13 +921,13 @@ export default function StudentProfileContent({ studentData }) {
                     py: 0.5,
                     fontSize: '0.875rem',
                     textTransform: 'none',
-                    color: '#1976d2',
-                    border: '1px solid rgba(25, 118, 210, 0.5)',
+                    color: '#fbbf24',
+                    border: '1px solid rgba(251, 191, 36, 0.45)',
                     '&.Mui-selected': {
-                      backgroundColor: '#1976d2',
-                      color: 'white',
+                      backgroundColor: '#d97706',
+                      color: '#fff',
                       '&:hover': {
-                        backgroundColor: '#1565c0',
+                        backgroundColor: '#b45309',
                       }
                     }
                   }
@@ -931,12 +951,12 @@ export default function StudentProfileContent({ studentData }) {
                   datasets: [{
                     label: 'Percentage',
                     data: sortedTrendData.map(d => d.percentage),
-                    borderColor: '#1976d2',
-                    backgroundColor: 'rgba(25, 118, 210, 0.1)',
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.14)',
                     borderWidth: 2,
                     pointRadius: 4,
-                    pointBackgroundColor: '#1976d2',
-                    pointBorderColor: '#fff',
+                    pointBackgroundColor: '#f59e0b',
+                    pointBorderColor: '#0b1022',
                     pointBorderWidth: 2,
                     tension: 0.1,
                     fill: true,
@@ -1086,7 +1106,7 @@ export default function StudentProfileContent({ studentData }) {
         <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
           Detailed Assignment Scores
         </Typography>
-        <TableContainer sx={{ mt: 2, maxHeight: 600, borderRadius: 2, overflow: 'auto' }}>
+        <TableContainer sx={{ mt: 2, borderRadius: 2, overflowX: 'auto', overflowY: 'visible' }}>
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
