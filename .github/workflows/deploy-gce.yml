@@ -201,20 +201,6 @@ jobs:
 
               echo "[INFO] Deploying tag $IMAGE_TAG"
               set_compose_versions "$IMAGE_TAG"
-
-              for image in \
-                "$IMAGE_REGISTRY/reverse-proxy:$IMAGE_TAG" \
-                "$IMAGE_REGISTRY/web:$IMAGE_TAG" \
-                "$IMAGE_REGISTRY/server:$IMAGE_TAG" \
-                "$IMAGE_REGISTRY/gradesync:$IMAGE_TAG"
-              do
-                if ! sudo docker manifest inspect "$image" >/dev/null; then
-                  echo "[ERROR] Unable to access image manifest: $image"
-                  echo "[ERROR] Check that the workflow GITHUB_TOKEN has read access to the GHCR package."
-                  exit 18
-                fi
-              done
-
               sudo -E docker compose -f docker-compose.yml pull
               sudo -E docker compose -f docker-compose.yml up -d --no-build --remove-orphans
 
