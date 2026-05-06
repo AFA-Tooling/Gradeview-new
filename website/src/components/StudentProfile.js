@@ -38,12 +38,13 @@ function applyCanonicalSummaryTotals(processedData, summarySectionTotals = {}) {
 
     const existing = next.categoriesData[sectionName] || {};
     const cap = Number(existing.capPoints ?? existing.maxPoints) || 0;
+    const cappedScore = cap > 0 ? Math.min(score, cap) : score;
 
     next.categoriesData[sectionName] = {
       ...existing,
-      total: score,
+      total: cappedScore,
       rawTotal: score,
-      percentage: cap > 0 ? (score / cap) * 100 : 0,
+      percentage: cap > 0 ? (cappedScore / cap) * 100 : 0,
     };
   });
 
