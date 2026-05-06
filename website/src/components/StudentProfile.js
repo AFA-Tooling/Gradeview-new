@@ -31,8 +31,11 @@ function applyCanonicalSummaryTotals(processedData, summarySectionTotals = {}) {
     categoriesData: { ...(processedData.categoriesData || {}) },
   };
 
-  Object.entries(summarySectionTotals || {}).forEach(([sectionName, rawScore]) => {
-    if (!sectionName) return;
+  Object.entries(summarySectionTotals || {}).forEach(([rawSectionName, rawScore]) => {
+    if (!rawSectionName) return;
+    // Strip "(pre-clobber)" / "(before dropping ...)" suffix so server section
+    // names align with the canonical table keys (Quest, Labs, Midterm, ...).
+    const sectionName = String(rawSectionName).replace(/\s*\([^)]*\)\s*$/, '').trim() || rawSectionName;
     const score = Number(rawScore);
     if (!Number.isFinite(score)) return;
 

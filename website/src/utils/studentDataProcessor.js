@@ -98,6 +98,14 @@ function isAttendanceCategory(categoryName = '') {
   return normalized.includes('attendance');
 }
 
+// Strip "(pre-clobber)", "(before dropping ...)", etc. from category names so
+// "Quest (pre-clobber)" rolls up to "Quest" in the display table.
+export function normalizeCategoryName(categoryName = '') {
+  const raw = String(categoryName || '').trim();
+  if (!raw) return raw;
+  return raw.replace(/\s*\([^)]*\)\s*$/, '').trim() || raw;
+}
+
 function normalizeAssignmentScore(category, rawScore, rawMaxPoints) {
   if (isAttendanceCategory(category)) {
     return {
@@ -127,7 +135,7 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
 
   submissions.forEach((submission) => {
-    const category = submission.category;
+    const category = normalizeCategoryName(submission.category);
     const assignmentName = submission.name;
     const rawScore = roundUpPoints(parseFloat(submission.score) || 0);
     const rawMaxPoints = parseFloat(submission.maxPoints) || 0;
@@ -139,7 +147,7 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
     const lateness = submission.lateness;
 
     // Skip Uncategorized assignments
-    if (category === 'Uncategorized' || category === 'uncategorized') {
+    if (!category || category === 'Uncategorized' || category === 'uncategorized') {
       return;
     }
 
@@ -258,9 +266,10 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
   let totalMaxPoints = 0;
   const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
 
-  Object.entries(data).forEach(([category, assignments]) => {
+  Object.entries(data).forEach(([rawCategory, assignments]) => {
+    const category = normalizeCategoryName(rawCategory);
     // Skip Uncategorized assignments
-    if (category === 'Uncategorized' || category === 'uncategorized') {
+    if (!category || category === 'Uncategorized' || category === 'uncategorized') {
       return;
     }
 
@@ -445,15 +454,12 @@ export function applyExamPolicyToProcessedData(processedData, examPolicyRows = [
 
   let changed = false;
   Object.entries(categoryNames).forEach(([type, categoryName]) => {
-    const bestPct = Number.isFinite(bestPercentages[type])
-      ? bestPercentages[type]
-      : fallbackPercentages[type];
-    if (!Number.isFinite(bestPct)) {
-      return;
-    }
-
     const cap = Number(componentCaps[type]) || 0;
     if (cap <= 0) return;
+
+    const bestPct = Number.isFinite(bestPercentages[type])
+      ? bestPercentages[type]
+      : (Number.isFinite(fallbackPercentages[type]) ? fallbackPercentages[type] : 0);
 
     const existing = processedData.categoriesData[categoryName] || {};
     const rawScore = (bestPct / 100) * cap;
