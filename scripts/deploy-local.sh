@@ -23,18 +23,13 @@ echo
 
 # ---------- Build (linux/amd64) ----------
 build_one() {
-  local service="$1" context="$2" image="$3"
-  local dockerfile_args=()
-  if [[ -n "${4:-}" ]]; then
-    dockerfile_args+=(-f "$4")
-  fi
+  local service="$1" context="$2" image="$3" dockerfile="${4:-}"
   echo "==> Building $service ($image)"
-  docker buildx build \
-    --platform "$PLATFORM" \
-    -t "$image" \
-    --load \
-    "${dockerfile_args[@]}" \
-    "$context"
+  if [[ -n "$dockerfile" ]]; then
+    docker buildx build --platform "$PLATFORM" -t "$image" --load -f "$dockerfile" "$context"
+  else
+    docker buildx build --platform "$PLATFORM" -t "$image" --load "$context"
+  fi
 }
 
 API_IMG="gradeview/server:${TAG}"
