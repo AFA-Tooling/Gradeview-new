@@ -99,6 +99,7 @@ export default function Admin({ displayMode = 'dark' }) {
 
   // --- SECTION CAPS (from /bins assignment_points) ---
   const [sectionCaps, setSectionCaps] = useState({}); // { "Labs": 80, "Quest": 25, ... }
+  const [overallCap, setOverallCap] = useState(0); // Authoritative total (e.g., 400) from /bins
 
   // score details
   const [scoreDetailOpen, setScoreDetailOpen]     = useState(false);
@@ -271,12 +272,17 @@ export default function Admin({ displayMode = 'dark' }) {
     apiv2.get(`/bins${buildCourseQuery(selectedCourse)}`)
       .then(res => {
         const points = res?.data?.assignment_points || {};
-        // Only keep entries whose key is a top-level section name (not individual assignments).
-        // Heuristic: anything in DEFAULT section list — Labs, Quest, Midterm, Postterm,
-        // Attendance / Participation, etc. We map case-insensitively against actual sections later.
         setSectionCaps(points);
+        const cap = Number(res?.data?.overall_cap_points)
+          || Number(res?.data?.total_points_cap)
+          || Number(res?.data?.total_course_points)
+          || 0;
+        setOverallCap(cap);
       })
-      .catch(() => setSectionCaps({}));
+      .catch(() => {
+        setSectionCaps({});
+        setOverallCap(0);
+      });
   }, [selectedCourse, courses]);
 
   useEffect(() => {
@@ -327,8 +333,11 @@ export default function Admin({ displayMode = 'dark' }) {
   }, [assignmentsBySection, sectionCaps]);
 
   const totalMaxPoints = useMemo(() => {
+    // Prefer authoritative total from /bins (e.g., syllabus says 400);
+    // fall back to summing per-section maxes when no config is loaded yet.
+    if (overallCap > 0) return overallCap;
     return Object.values(sectionMaxPoints).reduce((sum, v) => sum + v, 0);
-  }, [sectionMaxPoints]);
+  }, [sectionMaxPoints, overallCap]);
 
   /** 5) Compute section totals + overall total per student (capped per syllabus) **/
   const studentWithTotals = useMemo(() => {
