@@ -1,0 +1,7 @@
+services:
+  cloud-sql-proxy:
+    command:
+      - "--address=0.0.0.0"
+      - "--port=5432"
+      - "${INSTANCE_CONNECTION_NAME}"
+    volumes: []

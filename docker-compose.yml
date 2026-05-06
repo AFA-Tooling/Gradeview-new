@@ -3,6 +3,8 @@ services:
     container_name: gradeview-reverse-proxy
     image: ${CI_REGISTRY_IMAGE:-gradeview}/reverse-proxy:${REVERSE_PROXY_VERSION:-development}
     build: ./reverseProxy
+    environment:
+      - NGINX_SERVER_NAME=${NGINX_SERVER_NAME:-gradeview.eecs.berkeley.edu}
     volumes:
       - ${SOCKETS_DIR:-/dev/null}:/run/sockets
       - /etc/letsencrypt:/etc/letsencrypt:ro
@@ -105,8 +107,6 @@ services:
     container_name: gradeview-gradesync
     image: ${CI_REGISTRY_IMAGE:-gradeview}/gradesync:${GRADESYNC_VERSION:-development}
     build: ./gradesync
-    volumes:
-      - ./config.json:/app/config.json:ro
     env_file:
       - .env
     environment:

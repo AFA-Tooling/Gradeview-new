@@ -48,7 +48,7 @@ class GradeSyncService:
     
     def __init__(self, course_id: str):
         self.course_id = course_id
-        # Always reload config to pick up runtime edits to config.json
+        # Always reload config manager to pick up latest DB state
         get_config_manager().reload()
         self.config = get_course_config(course_id)
         

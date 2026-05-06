@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getGradeSyncConfig, getCourseGeneral, getCourseGradeView } from '../../../lib/unifiedConfig.mjs';
+import { getPool } from '../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -40,13 +40,24 @@ const DEFAULT_GRADE_BINS = [
 ];
 
 async function loadGradeSyncConfig() {
-    try {
-        const parsed = getGradeSyncConfig();
-        return parsed?.courses || [];
-    } catch (err) {
-        console.warn('Unable to read GradeSync config for bins route, using defaults:', err?.message || err);
-        return [];
-    }
+    const pool = getPool();
+    const result = await pool.query(
+        `
+        SELECT id::text AS id, gradescope_course_id::text AS gradescope_course_id
+        FROM courses
+        WHERE is_active = true
+        ORDER BY year DESC NULLS LAST, semester ASC NULLS LAST, name ASC NULLS LAST
+        `,
+    );
+
+    return result.rows.map((row) => ({
+        id: String(row.id || ''),
+        sources: {
+            gradescope: {
+                course_id: String(row.gradescope_course_id || ''),
+            },
+        },
+    }));
 }
 
 function resolveCourseById(courses, requestedCourseId) {
@@ -150,16 +161,14 @@ router.get('/', async (req, res) => {
     try {
         const courses = await loadGradeSyncConfig();
         const course = resolveCourseById(courses, requestedCourseId);
-        const courseGeneral = getCourseGeneral(course);
-        const courseGradeView = getCourseGradeView(course);
 
-        const bins = normalizeBins(courseGradeView?.buckets?.grade_bins || course?.buckets?.grade_bins);
-        const assignmentPointsFromConfig = normalizeAssignmentPoints(courseGradeView?.buckets?.grading_breakdown || course?.buckets?.grading_breakdown);
+        const bins = normalizeBins(null);
+        const assignmentPointsFromConfig = normalizeAssignmentPoints(null);
         const assignmentPoints = Object.keys(assignmentPointsFromConfig).length > 0
             ? assignmentPointsFromConfig
             : DEFAULT_ASSIGNMENT_POINTS;
         const totalCoursePoints = Object.values(assignmentPoints).reduce((sum, val) => sum + (Number(val) || 0), 0);
-        const configuredCapPoints = Number(courseGradeView?.buckets?.total_points_cap || course?.buckets?.total_points_cap) || totalCoursePoints;
+        const configuredCapPoints = totalCoursePoints;
         const maxBinPoints = getMaxBinPoints(bins);
         const overallCapPoints = maxBinPoints || configuredCapPoints || totalCoursePoints;
         
@@ -169,14 +178,10 @@ router.get('/', async (req, res) => {
             total_course_points: totalCoursePoints,
             total_points_cap: configuredCapPoints,
             overall_cap_points: overallCapPoints,
-            component_percentages: Array.isArray(courseGradeView?.buckets?.component_percentages || course?.buckets?.component_percentages)
-                ? (courseGradeView?.buckets?.component_percentages || course?.buckets?.component_percentages)
-                : DEFAULT_COMPONENT_PERCENTAGES,
-            rounding_policy: courseGradeView?.buckets?.rounding_policy
-                || course?.buckets?.rounding_policy
-                || 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
-            course_id: courseGeneral?.id || course?.id || requestedCourseId || null,
-            source: course ? 'gradesync_config' : 'default_policy'
+            component_percentages: DEFAULT_COMPONENT_PERCENTAGES,
+            rounding_policy: 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
+            course_id: course?.id || requestedCourseId || null,
+            source: course ? 'db_default_policy' : 'default_policy'
         };
 
         return res.status(200).json(response);

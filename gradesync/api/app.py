@@ -150,7 +150,7 @@ def list_courses():
     """
     List all configured courses in the system.
     
-    Returns a comprehensive list of courses loaded from config.json, including:
+    Returns a comprehensive list of courses loaded from the database, including:
     - Course identification (ID, name, department, number)
     - Semester and year information
     - Instructor name
@@ -221,7 +221,7 @@ async def sync_all_grades(course_id: str, background_tasks: BackgroundTasks):
     5. **Summary Generation** - Creates aggregate summary sheets
     
     Args:
-        course_id (str): Course identifier from config.json (e.g., 'cs10_fa25')
+        course_id (str): Course identifier from database config (e.g., 'cs10_fa25')
         background_tasks (BackgroundTasks): FastAPI background task manager (unused currently)
     
     Returns:

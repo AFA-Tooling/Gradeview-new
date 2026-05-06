@@ -90,7 +90,6 @@ services:
       - .env
     volumes:
       - ./gradesync:/app
-      - ./config.json:/app/config.json:ro
     environment:
       - POSTGRES_HOST=cloud-sql-proxy
       - POSTGRES_PORT=5432

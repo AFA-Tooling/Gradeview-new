@@ -1,23 +1,13 @@
 """
 Unified Configuration Manager for GradeSync.
 
-Loads GradeSync settings from the repository root config.json (`gradesync` section).
+Loads GradeSync settings from the database.
 """
-import json
 import os
-from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
 
 logger = logging.getLogger(__name__)
-
-def _resolve_default_config_path() -> Path:
-    """Resolve default config path at repository root."""
-    root_config = Path(__file__).parent.parent / "config.json"
-    return root_config
-
-
-DEFAULT_CONFIG_PATH = _resolve_default_config_path()
 
 
 class CourseConfig:
@@ -109,49 +99,17 @@ class CourseConfig:
 class ConfigManager:
     """Manages application configuration."""
     
-    def __init__(self, config_path: Optional[Path] = None):
-        self.config_path = config_path or DEFAULT_CONFIG_PATH
+    def __init__(self):
         self.config_data: Dict[str, Any] = {}
         self.courses: Dict[str, CourseConfig] = {}
         self.global_settings: Dict[str, Any] = {}
         self._load_config()
     
     def _load_config(self):
-        """Load configuration from JSON file."""
-        if not self.config_path.exists():
-            logger.warning(
-                "Configuration file not found at %s; falling back to database-backed configuration",
-                self.config_path,
-            )
-            self.config_data = {}
-            self.courses = {}
-            self.global_settings = {}
-            return
-        
-        try:
-            with open(self.config_path, 'r') as f:
-                raw_data = json.load(f)
-
-            if isinstance(raw_data, dict) and isinstance(raw_data.get("gradesync"), dict):
-                self.config_data = raw_data.get("gradesync", {})
-            else:
-                self.config_data = raw_data if isinstance(raw_data, dict) else {}
-            
-            # Load courses
-            for course_data in self.config_data.get("courses", []):
-                course_config = CourseConfig(course_data)
-                if not course_config.id:
-                    logger.warning("Skipping course entry without id: %s", course_data)
-                    continue
-                self.courses[course_config.id] = course_config
-            
-            # Load global settings
-            self.global_settings = self.config_data.get("global_settings", {})
-            
-            logger.info("Loaded configuration for %s courses from %s", len(self.courses), self.config_path)
-            
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in configuration file: {e}")
+        """Initialize DB-first configuration state."""
+        self.config_data = {}
+        self.courses = {}
+        self.global_settings = {}
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
@@ -352,11 +310,11 @@ class ConfigManager:
 _config_manager: Optional[ConfigManager] = None
 
 
-def get_config_manager(config_path: Optional[Path] = None) -> ConfigManager:
+def get_config_manager() -> ConfigManager:
     """Get or create the global configuration manager."""
     global _config_manager
-    if _config_manager is None or config_path is not None:
-        _config_manager = ConfigManager(config_path)
+    if _config_manager is None:
+        _config_manager = ConfigManager()
     return _config_manager
 
 

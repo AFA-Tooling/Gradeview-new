@@ -354,6 +354,62 @@ export default function Admin({ displayMode = 'dark' }) {
     setSelected(item);
     setScoreSelected([]);  // Clear previous selection
   };
+
+  /** Export currently visible student-scores table to CSV **/
+  const handleExportCSV = () => {
+    if (!sortedStudents.length) {
+      alert('No student data to export.');
+      return;
+    }
+
+    const escape = (val) => {
+      if (val === null || val === undefined) return '';
+      const s = String(val);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const visibleSections = Object.entries(assignmentsBySection)
+      .map(([section, sectionAssignments]) => [
+        section,
+        sectionAssignments.filter(a => visibleAssignments[a.name]),
+      ])
+      .filter(([, list]) => list.length > 0);
+
+    const header = ['Student Name', 'Email', 'Total', 'Final %'];
+    visibleSections.forEach(([section, list]) => {
+      header.push(`${section} Total`);
+      list.forEach(a => header.push(a.name));
+    });
+
+    const rows = sortedStudents.map(stu => {
+      const finalPct = totalMaxPoints > 0 ? ((stu.total / totalMaxPoints) * 100).toFixed(2) : '0.00';
+      const row = [stu.name, stu.email, stu.total.toFixed(2), finalPct];
+      visibleSections.forEach(([section, list]) => {
+        row.push(stu.sectionTotals[section] != null ? stu.sectionTotals[section].toFixed(2) : '0.00');
+        list.forEach(a => {
+          const raw = stu.scores[a.name];
+          row.push(raw != null && raw !== '' ? Number(raw).toFixed(2) : '');
+        });
+      });
+      return row;
+    });
+
+    const csv = [header, ...rows].map(r => r.map(escape).join(',')).join('\r\n');
+    // BOM so Excel detects UTF-8 correctly
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const courseLabel = selectedCourse && selectedCourse !== 'all'
+      ? `_${String(selectedCourse).replace(/[^\w\-]+/g, '_')}`
+      : '';
+    const ts = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `student_scores${courseLabel}_${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
   const handleCloseDialog  = () => {
     setSelected(null);
     setStats(null);
@@ -910,7 +966,21 @@ export default function Admin({ displayMode = 'dark' }) {
                     >
                         {isPending ? 'Deselecting...' : 'Deselect All'}
                     </Button>
-                    
+                    <Button
+                        size="small"
+                        variant="contained"
+                        sx={{
+                            textTransform: 'none',
+                            fontWeight: 500,
+                            backgroundColor: '#10b981',
+                            '&:hover': { backgroundColor: '#059669' },
+                        }}
+                        disabled={!sortedStudents.length}
+                        onClick={handleExportCSV}
+                    >
+                        Export CSV
+                    </Button>
+
                     {/* Section Buttons */}
                     {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => {
                         const visibleCount = sectionAssignments.filter(a => visibleAssignments[a.name]).length;

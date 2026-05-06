@@ -14,7 +14,10 @@ router.get('/', validateAuthenticatedMiddleware, async (req, res) => {
         }
         const authEmail = req?.auth?.email;
         const role = await resolveRole(authEmail, courseId || null, req?.auth?.snapshot || null);
-        const adminStatus = role === IAM_ROLE.SUPER_ADMIN || role === IAM_ROLE.COURSE_ADMIN;
+        const adminStatus =
+            role === IAM_ROLE.SUPER_ADMIN ||
+            role === IAM_ROLE.COURSE_ADMIN ||
+            role === IAM_ROLE.INSTRUCTOR;
         const staffStatus = role === IAM_ROLE.INSTRUCTOR;
         
         // --- ADDING DEBUG LOG ---

@@ -1,6 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import AuthorizationError from './errors/http/AuthorizationError.js';
-import { isAdmin as isUnifiedAdmin } from './unifiedConfig.mjs';
+import { getGoogleOauthClientId, isAdmin as isUnifiedAdmin } from './unifiedConfig.mjs';
 import { decodeAccessToken, verifyAccessToken } from './jwtAuth.mjs';
 import { getPool } from './dbHelper.mjs';
 
@@ -21,7 +21,7 @@ async function getGoogleOauthClientIdForAuth() {
         console.warn('Failed to load Google OAuth client id from DB config:', error?.message || error);
     }
 
-    return '';
+    return String(getGoogleOauthClientId() || '').trim();
 }
 
 /**
@@ -52,7 +52,7 @@ export async function getEmailFromAuth(authInput) {
 
     const googleOauthAudience = await getGoogleOauthClientIdForAuth();
     if (!googleOauthAudience) {
-        throw new AuthorizationError('Google OAuth client ID is not configured in gradeview_config.');
+        throw new AuthorizationError('Google OAuth client ID is not configured.');
     }
     
     // Retry logic for handling Google key rotation

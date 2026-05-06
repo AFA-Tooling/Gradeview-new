@@ -10,6 +10,8 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Relative to a
 let pool = null;
 
 const QUEST_SUMMARY_CAP = 25;
+const MIDTERM_SUMMARY_CAP = 50;
+const POSTTERM_SUMMARY_CAP = 75;
 const ATTENDANCE_SUMMARY_CAP = 15;
 
 const QUEST_CATEGORY_ALIASES = {
@@ -644,8 +646,69 @@ function isAttendanceSummaryCategory(category = '') {
 function getSummaryCapByCategory(category = '') {
     const normalized = normalizeSummaryCategoryName(category);
     if (normalized === 'quest') return QUEST_SUMMARY_CAP;
+    if (normalized.includes('midterm')) return MIDTERM_SUMMARY_CAP;
+    if (normalized.includes('postterm') || normalized.includes('posterm')) return POSTTERM_SUMMARY_CAP;
     if (isAttendanceSummaryCategory(normalized)) return ATTENDANCE_SUMMARY_CAP;
     return null;
+}
+
+async function getExamSummaryDistribution(examType, capPoints, courseId = null, options = {}) {
+    const pool = getPool();
+    const normalizedExamType = String(examType || '').trim().toLowerCase();
+    const includePosttermClobber = Boolean(options.includePosttermClobber);
+
+    let query = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            MAX(CASE
+                WHEN LOWER(COALESCE(e.exam_type, '')) = $1
+                THEN COALESCE(e.question_best_percentage, e.final_percentage)
+                ELSE NULL
+            END) AS primary_best_percentage,
+            MAX(CASE
+                WHEN LOWER(COALESCE(e.exam_type, '')) = 'postterm'
+                THEN COALESCE(e.question_best_percentage, e.final_percentage)
+                ELSE NULL
+            END) AS postterm_best_percentage
+        FROM students st
+        JOIN courses c ON st.course_id = c.id
+        LEFT JOIN student_exam_effective_scores e
+          ON e.student_id = st.id
+         AND e.course_id = c.id
+        WHERE 1=1
+    `;
+
+    const params = [normalizedExamType];
+    if (courseId) {
+        query += ` AND (c.gradescope_course_id::text = $2 OR c.id::text = $2)`;
+        params.push(String(courseId));
+    }
+
+    query += `
+        GROUP BY st.id, st.legal_name, st.email
+        ORDER BY st.legal_name
+    `;
+
+    const result = await pool.query(query, params);
+
+    return result.rows.map((row) => {
+        const primaryBestPct = Number(row.primary_best_percentage);
+        const posttermBestPct = Number(row.postterm_best_percentage);
+
+        let effectivePct = Number.isFinite(primaryBestPct) ? primaryBestPct : 0;
+        if (includePosttermClobber && Number.isFinite(posttermBestPct)) {
+            effectivePct = Math.max(effectivePct, posttermBestPct);
+        }
+
+        const rawScore = (effectivePct / 100) * capPoints;
+        return {
+            studentName: row.student_name,
+            studentEmail: row.student_email,
+            score: Math.min(capPoints, toCeilNumber(rawScore)),
+        };
+    });
 }
 
 function normalizeQuestCategoryKey(value = '') {
@@ -1074,6 +1137,16 @@ export async function getCategorySummaryDistribution(category, courseId = null) 
     const normalizedCategory = normalizeSummaryCategoryName(category);
     if (normalizedCategory === 'quest') {
         return getQuestSummaryDistribution(courseId);
+    }
+
+    if (normalizedCategory.includes('midterm')) {
+        return getExamSummaryDistribution('midterm', MIDTERM_SUMMARY_CAP, courseId, {
+            includePosttermClobber: true,
+        });
+    }
+
+    if (normalizedCategory.includes('postterm') || normalizedCategory.includes('posterm')) {
+        return getExamSummaryDistribution('postterm', POSTTERM_SUMMARY_CAP, courseId);
     }
 
     if (isAttendanceSummaryCategory(normalizedCategory)) {

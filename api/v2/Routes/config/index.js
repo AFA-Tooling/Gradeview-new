@@ -2,12 +2,6 @@ import { Router } from 'express';
 import { getPool } from '../../../lib/dbHelper.mjs';
 import { validateAuthenticatedMiddleware } from '../../../lib/authlib.mjs';
 import { canManageCourse, canManageSystem, IAM_ROLE, SUPER_ADMIN_EMAIL } from '../../../lib/iam.mjs';
-import {
-    loadUnifiedConfig,
-    saveUnifiedConfig,
-    findCourseConfigById,
-    getCourseGeneral,
-} from '../../../lib/unifiedConfig.mjs';
 
 const router = Router();
 const pool = getPool();
@@ -63,7 +57,7 @@ async function ensureCourseAdmin(req, res, courseId) {
 }
 
 function getCourseIdVariants(course) {
-    const general = getCourseGeneral(course);
+    const general = course?.general && typeof course.general === 'object' ? course.general : {};
     const internalId = String(general?.id || course?.id || '').trim();
     const gradescopeId = String(
         course?.gradesync?.sources?.gradescope?.course_id
@@ -414,6 +408,59 @@ async function saveGradeSyncConfigToDatabase(syncConfig) {
     }
 }
 
+async function loadGradeViewConfigFromDatabase() {
+    const result = await pool.query('SELECT key, value, value_type FROM gradeview_config');
+    const byKey = new Map(result.rows.map((row) => [row.key, parseStoredConfigValue(row.value, row.value_type)]));
+
+    const googleClientId = String(byKey.get('google_oauth_client_id') || '').trim();
+    const admins = byKey.get('admins');
+
+    return {
+        googleconfig: {
+            oauth: {
+                clientid: googleClientId,
+            },
+        },
+        admins: Array.isArray(admins) ? admins : [],
+    };
+}
+
+async function saveGradeViewConfigToDatabase(gradeviewConfig) {
+    const googleClientId = String(gradeviewConfig?.googleconfig?.oauth?.clientid || '').trim();
+    const admins = Array.isArray(gradeviewConfig?.admins)
+        ? gradeviewConfig.admins.map((email) => String(email || '').trim()).filter(Boolean)
+        : [];
+
+    const values = [
+        {
+            key: 'google_oauth_client_id',
+            ...toStoredConfigValue(googleClientId),
+            description: 'Google OAuth client ID',
+        },
+        {
+            key: 'admins',
+            ...toStoredConfigValue(admins),
+            description: 'Legacy GradeView admins list',
+        },
+    ];
+
+    for (const item of values) {
+        await pool.query(
+            `
+            INSERT INTO gradeview_config (key, value, value_type, description)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (key)
+            DO UPDATE SET
+                value = EXCLUDED.value,
+                value_type = EXCLUDED.value_type,
+                description = EXCLUDED.description,
+                updated_at = CURRENT_TIMESTAMP
+            `,
+            [item.key, item.value, item.valueType, item.description],
+        );
+    }
+}
+
 const PERMISSION_LEVELS = new Set(['owner', 'editor', 'viewer']);
 const USER_ROLES = new Set(['superadmin', 'admin', 'instructor', 'ta', 'readonly']);
 
@@ -505,8 +552,8 @@ router.get('/', async (req, res, next) => {
             return;
         }
 
-        const config = loadUnifiedConfig();
-        res.status(200).json(config.gradeview || {});
+        const config = await loadGradeViewConfigFromDatabase();
+        res.status(200).json(config);
     } catch (error) {
         console.error('Error getting GradeView config:', error);
         next(error);
@@ -521,9 +568,8 @@ router.put('/', async (req, res, next) => {
             return;
         }
 
-        const config = loadUnifiedConfig();
-        config.gradeview = req.body || {};
-        saveUnifiedConfig(config);
+        const gradeviewConfig = req.body || {};
+        await saveGradeViewConfigToDatabase(gradeviewConfig);
         const result = { success: true, message: 'GradeView configuration saved' };
         res.status(200).json(result);
     } catch (error) {
@@ -540,17 +586,8 @@ router.get('/sync', async (req, res, next) => {
             return;
         }
 
-        try {
-            const dbConfig = await loadGradeSyncConfigFromDatabase();
-            if (dbConfig) {
-                return res.status(200).json(dbConfig);
-            }
-        } catch (dbError) {
-            console.warn('DB-backed GradeSync config read failed, falling back to config.json:', dbError?.message || dbError);
-        }
-
-        const config = loadUnifiedConfig();
-        return res.status(200).json(config.gradesync || {});
+        const dbConfig = await loadGradeSyncConfigFromDatabase();
+        return res.status(200).json(dbConfig || { global_settings: {}, courses: [] });
     } catch (error) {
         console.error('Error getting GradeSync config:', error);
         next(error);
@@ -568,10 +605,6 @@ router.put('/sync', async (req, res, next) => {
         const syncConfig = req.body || {};
 
         await saveGradeSyncConfigToDatabase(syncConfig);
-
-        const config = loadUnifiedConfig();
-        config.gradesync = syncConfig;
-        saveUnifiedConfig(config);
         res.status(200).json({ success: true, message: 'GradeSync configuration saved' });
     } catch (error) {
         console.error('Error updating GradeSync config:', error);
@@ -582,8 +615,8 @@ router.put('/sync', async (req, res, next) => {
 // GET /v2/config/courses - Get all courses user has access to
 router.get('/courses', async (req, res, next) => {
     try {
-        const config = loadUnifiedConfig();
-        const courses = Array.isArray(config?.gradesync?.courses) ? config.gradesync.courses : [];
+        const dbConfig = await loadGradeSyncConfigFromDatabase();
+        const courses = Array.isArray(dbConfig?.courses) ? dbConfig.courses : [];
 
         const isSuper = await canManageSystem({
             requesterEmail: req?.auth?.email,
@@ -629,7 +662,9 @@ router.get('/courses/:courseId', async (req, res, next) => {
             return;
         }
 
-        const config = findCourseConfigById(courseId);
+        const dbConfig = await loadGradeSyncConfigFromDatabase();
+        const courses = Array.isArray(dbConfig?.courses) ? dbConfig.courses : [];
+        const config = courses.find((course) => getCourseIdVariants(course).includes(String(courseId || '').trim()));
         if (!config) {
             return res.status(404).json({ error: 'Course not found' });
         }
@@ -649,8 +684,9 @@ router.put('/courses/:courseId', async (req, res, next) => {
             return;
         }
 
-        const rootConfig = loadUnifiedConfig();
-        const courses = Array.isArray(rootConfig?.gradesync?.courses) ? rootConfig.gradesync.courses : [];
+        const dbConfig = await loadGradeSyncConfigFromDatabase();
+        const syncConfig = dbConfig || { global_settings: {}, courses: [] };
+        const courses = Array.isArray(syncConfig?.courses) ? syncConfig.courses : [];
         const courseIndex = findCourseIndex(courses, courseId);
 
         if (courseIndex < 0) {
@@ -675,9 +711,8 @@ router.put('/courses/:courseId', async (req, res, next) => {
         };
 
         courses[courseIndex] = merged;
-        rootConfig.gradesync = rootConfig.gradesync || {};
-        rootConfig.gradesync.courses = courses;
-        saveUnifiedConfig(rootConfig);
+        syncConfig.courses = courses;
+        await saveGradeSyncConfigToDatabase(syncConfig);
 
         res.status(200).json({ success: true, message: 'Course configuration updated' });
     } catch (error) {
@@ -694,8 +729,8 @@ router.get('/system', async (req, res, next) => {
             return;
         }
 
-        const config = loadUnifiedConfig();
-        res.status(200).json(config?.gradesync?.global_settings || {});
+        const config = await loadGradeSyncConfigFromDatabase();
+        res.status(200).json(config?.global_settings || {});
     } catch (error) {
         console.error('Error getting system config:', error);
         next(error);

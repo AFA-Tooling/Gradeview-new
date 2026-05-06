@@ -6,7 +6,6 @@ import {
     getAllStudentScores,
     getStudentCourses,
 } from '../../../../lib/dbHelper.mjs';
-import { getGradeSyncConfig, getCourseGradeView } from '../../../../lib/unifiedConfig.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -63,32 +62,6 @@ function averageLevel(children) {
 
     const total = children.reduce((sum, child) => sum + (child?.data?.student_mastery || 0), 0);
     return Math.floor(total / children.length);
-}
-
-function parseConfigJson() {
-    try {
-        return getGradeSyncConfig();
-    } catch (err) {
-        console.warn('Unable to parse gradesync config for concept map:', err?.message || err);
-        return null;
-    }
-}
-
-function findCourseConfig(config, internalCourseId, gradescopeCourseId) {
-    if (!config || !Array.isArray(config.courses)) {
-        return null;
-    }
-
-    return config.courses.find((course) => {
-        const sourceGsId = course?.gradesync?.sources?.gradescope?.course_id || course?.sources?.gradescope?.course_id;
-        const internalId = course?.general?.id || course?.id;
-        return (
-            String(internalId || '') === String(internalCourseId || '')
-            || String(sourceGsId || '') === String(gradescopeCourseId || '')
-            || String(sourceGsId || '') === String(internalCourseId || '')
-            || String(internalId || '') === String(gradescopeCourseId || '')
-        );
-    }) || null;
 }
 
 async function resolveCourseContext(email, requestedCourseId) {
@@ -192,29 +165,14 @@ router.get('/', async (req, res, next) => {
             getDbCategoryRules(courseRef),
         ]);
 
-        const config = parseConfigJson();
-        const matchedCourseConfig = findCourseConfig(
-            config,
-            courseContext.internalCourseId,
-            courseContext.gradescopeCourseId,
-        );
-        const courseGradeView = getCourseGradeView(matchedCourseConfig);
-
-        const fileCategoryRules = (courseGradeView?.assignment_categories || matchedCourseConfig?.assignment_categories || []).map((item, index) => ({
-            name: item?.name,
-            patterns: Array.isArray(item?.patterns) ? item.patterns : [],
-            display_order: Number(item?.display_order) || index,
-            week: Number(item?.week) || null,
-        }));
-
-        const activeCategoryRules = dbCategoryRules.length > 0 ? dbCategoryRules : fileCategoryRules;
+        const activeCategoryRules = dbCategoryRules;
 
         const studentLevels = normalizeLevelConfig(
-            courseGradeView?.concept_map?.student_levels || matchedCourseConfig?.concept_map?.student_levels,
+            null,
             DEFAULT_STUDENT_LEVELS,
         );
         const classLevels = normalizeLevelConfig(
-            courseGradeView?.concept_map?.class_levels || matchedCourseConfig?.concept_map?.class_levels,
+            null,
             DEFAULT_CLASS_LEVELS,
         );
         const levelCount = studentLevels.length;
