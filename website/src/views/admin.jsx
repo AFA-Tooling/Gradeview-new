@@ -97,6 +97,9 @@ export default function Admin({ displayMode = 'dark' }) {
   const [loadingSS, setLoadingSS]         = useState(false);
   const [errorSS, setErrorSS]             = useState();
 
+  // --- SECTION CAPS (from /bins assignment_points) ---
+  const [sectionCaps, setSectionCaps] = useState({}); // { "Labs": 80, "Quest": 25, ... }
+
   // score details
   const [scoreDetailOpen, setScoreDetailOpen]     = useState(false);
   const [scoreSelected, setScoreSelected]         = useState([]); // Array of selected score ranges
@@ -262,6 +265,20 @@ export default function Admin({ displayMode = 'dark' }) {
       .finally(() => setLoadingSS(false));
   }, [tab, selectedCourse, courses]);
 
+  /** 4b) Load section caps from grading config (used to enforce per-section caps like Labs=80) **/
+  useEffect(() => {
+    if (!selectedCourse) return;
+    apiv2.get(`/bins${buildCourseQuery(selectedCourse)}`)
+      .then(res => {
+        const points = res?.data?.assignment_points || {};
+        // Only keep entries whose key is a top-level section name (not individual assignments).
+        // Heuristic: anything in DEFAULT section list — Labs, Quest, Midterm, Postterm,
+        // Attendance / Participation, etc. We map case-insensitively against actual sections later.
+        setSectionCaps(points);
+      })
+      .catch(() => setSectionCaps({}));
+  }, [selectedCourse, courses]);
+
   useEffect(() => {
     setSelected(null);
     setStats(null);
@@ -285,20 +302,35 @@ export default function Admin({ displayMode = 'dark' }) {
     return grouped;
   }, [assignments]);
 
-  // Calculate max points per section
+  // Lookup configured cap for a given section name (case-insensitive).
+  // Returns 0 if no cap configured (then caller falls back to raw max).
+  const lookupSectionCap = (sectionName) => {
+    const target = String(sectionName || '').trim().toLowerCase();
+    if (!target) return 0;
+    for (const [key, value] of Object.entries(sectionCaps || {})) {
+      if (String(key).trim().toLowerCase() === target) {
+        return Number(value) || 0;
+      }
+    }
+    return 0;
+  };
+
+  // Calculate display max points per section (configured cap > raw assignment sum)
   const sectionMaxPoints = useMemo(() => {
     const maxPoints = {};
     Object.entries(assignmentsBySection).forEach(([section, sectionAssignments]) => {
-      maxPoints[section] = sectionAssignments.reduce((sum, a) => sum + (a.maxPoints || 0), 0);
+      const rawSum = sectionAssignments.reduce((sum, a) => sum + (a.maxPoints || 0), 0);
+      const cap = lookupSectionCap(section);
+      maxPoints[section] = cap > 0 ? cap : rawSum;
     });
     return maxPoints;
-  }, [assignmentsBySection]);
+  }, [assignmentsBySection, sectionCaps]);
 
   const totalMaxPoints = useMemo(() => {
     return Object.values(sectionMaxPoints).reduce((sum, v) => sum + v, 0);
   }, [sectionMaxPoints]);
 
-  /** 5) Compute section totals + overall total per student **/
+  /** 5) Compute section totals + overall total per student (capped per syllabus) **/
   const studentWithTotals = useMemo(() => {
     return studentScores.map(stu => {
       // First, flatten the scores from { section: { assignment: score } } to { assignment: score }
@@ -309,15 +341,17 @@ export default function Admin({ displayMode = 'dark' }) {
 
       const sectionTotals = {};
       Object.keys(assignmentsBySection).forEach(sec => {
-        sectionTotals[sec] = allAssignments
+        const rawSum = allAssignments
           .filter(a => a.section === sec)
           .reduce((sum, a) => sum + Number(flatScores[a.name] || 0), 0);
+        const cap = lookupSectionCap(sec);
+        sectionTotals[sec] = cap > 0 ? Math.min(rawSum, cap) : rawSum;
       });
-      
+
       const total = Object.values(sectionTotals).reduce((s, v) => s + v, 0);
       return { ...stu, scores: flatScores, sectionTotals, total };
     });
-  }, [studentScores, allAssignments, assignmentsBySection]);
+  }, [studentScores, allAssignments, assignmentsBySection, sectionCaps]);
 
   /** 6) Sort students **/
   const sortedStudents = useMemo(() => {
