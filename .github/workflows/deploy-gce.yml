@@ -29,7 +29,7 @@ jobs:
 
       - name: Package source
         run: |
-          tar --owner=0 --group=0 -czf /tmp/gradeview-src.tar.gz \
+          tar --owner=0 --group=0 -czf ~/gradeview-src.tar.gz \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='website/build' \
@@ -47,8 +47,8 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -e
-          gcloud compute scp /tmp/gradeview-src.tar.gz \
-            "$GCE_INSTANCE:/tmp/gradeview-src.tar.gz" \
+          gcloud compute scp ~/gradeview-src.tar.gz \
+            "$GCE_INSTANCE:~/gradeview-src.tar.gz" \
             --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE"
 
           gcloud compute ssh "$GCE_INSTANCE" \
@@ -69,8 +69,8 @@ jobs:
                         "$DEPLOY_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.prod.yml"
 
             echo "[2/5] Extracting new source"
-            sudo tar -xzf /tmp/gradeview-src.tar.gz -C "$DEPLOY_DIR"
-            rm -f /tmp/gradeview-src.tar.gz
+            sudo tar -xzf ~/gradeview-src.tar.gz -C "$DEPLOY_DIR"
+            rm -f ~/gradeview-src.tar.gz
             sudo chown -R gradeview:gradeview \
               "$DEPLOY_DIR/api" "$DEPLOY_DIR/website" \
               "$DEPLOY_DIR/gradesync" "$DEPLOY_DIR/reverseProxy" \
