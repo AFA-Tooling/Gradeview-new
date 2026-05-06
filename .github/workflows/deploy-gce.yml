@@ -2,8 +2,7 @@ name: Deploy to GCE
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -28,104 +27,88 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Package source for VM
+      - name: Package source
         run: |
-          tar -czf /tmp/gradeview-src.tar.gz \
+          tar --owner=0 --group=0 -czf /tmp/gradeview-src.tar.gz \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='website/build' \
             --exclude='website/server/build' \
-            --exclude='**/__pycache__' \
+            --exclude='__pycache__' \
+            --exclude='.pytest_cache' \
             api website gradesync reverseProxy \
             docker-compose.yml docker-compose.prod.yml
 
-      - name: Deploy to VM (build from source)
+      - name: Deploy to VM
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           GCP_ZONE: ${{ secrets.GCP_ZONE }}
           GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
-          GCE_SSH_USER: ${{ secrets.GCE_SSH_USER }}
-          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          set -e
           gcloud compute scp /tmp/gradeview-src.tar.gz \
-            "$GCE_SSH_USER@$GCE_INSTANCE:/tmp/gradeview-src.tar.gz" \
+            "$GCE_INSTANCE:/tmp/gradeview-src.tar.gz" \
             --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE"
 
-          gcloud compute ssh "$GCE_SSH_USER@$GCE_INSTANCE" \
-            --project "$GCP_PROJECT_ID" \
-            --zone "$GCP_ZONE" \
-            --command "IMAGE_TAG='$IMAGE_TAG' DEPLOY_DIR='$DEPLOY_DIR' GCE_SSH_USER='$GCE_SSH_USER' bash -se" <<'REMOTE'
-              set -euo pipefail
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
+            --command "IMAGE_TAG='$IMAGE_TAG' bash -se" <<'REMOTE'
+            set -euo pipefail
 
-              DEPLOY_DIR="${DEPLOY_DIR:-/home/gradeview/Grades}"
-              echo "[INFO] Using deploy directory: $DEPLOY_DIR"
+            DEPLOY_DIR=/home/gradeview/Grades
+            STATE_FILE="$DEPLOY_DIR/.gradeview_last_successful_tag"
+            CONTAINERS="gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy"
+            COMPOSE="sudo docker compose -p gradeview -f docker-compose.yml -f docker-compose.prod.yml"
 
-              sudo mkdir -p "$DEPLOY_DIR"
-              sudo chown -R "$GCE_SSH_USER":"$GCE_SSH_USER" "$DEPLOY_DIR"
-              cd "$DEPLOY_DIR"
+            sudo mkdir -p "$DEPLOY_DIR"
 
-              echo "[INFO] Extracting source to $DEPLOY_DIR"
-              tar -xzf /tmp/gradeview-src.tar.gz -C "$DEPLOY_DIR"
-              rm -f /tmp/gradeview-src.tar.gz
+            echo "[1/5] Wiping old source dirs (preserving .env, secrets/, state)"
+            sudo rm -rf "$DEPLOY_DIR/api" "$DEPLOY_DIR/website" \
+                        "$DEPLOY_DIR/gradesync" "$DEPLOY_DIR/reverseProxy" \
+                        "$DEPLOY_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.prod.yml"
 
-              STATE_FILE="$DEPLOY_DIR/.gradeview_last_successful_tag"
-              PREVIOUS_TAG=''
-              if [ -f "$STATE_FILE" ]; then
-                PREVIOUS_TAG=$(cat "$STATE_FILE")
-              fi
+            echo "[2/5] Extracting new source"
+            sudo tar -xzf /tmp/gradeview-src.tar.gz -C "$DEPLOY_DIR"
+            rm -f /tmp/gradeview-src.tar.gz
+            sudo chown -R gradeview:gradeview \
+              "$DEPLOY_DIR/api" "$DEPLOY_DIR/website" \
+              "$DEPLOY_DIR/gradesync" "$DEPLOY_DIR/reverseProxy" \
+              "$DEPLOY_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.prod.yml"
 
-              set_compose_versions() {
-                local tag="$1"
-                export CI_REGISTRY_IMAGE="local"
-                export REVERSE_PROXY_VERSION="$tag"
-                export WEB_VERSION="$tag"
-                export API_VERSION="$tag"
-                export GRADESYNC_VERSION="$tag"
-              }
+            cd "$DEPLOY_DIR"
 
-              wait_for_health() {
-                local max_wait="${1:-300}"
-                local elapsed=0
-                local interval=6
-                local containers="gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy"
+            echo "[3/5] Removing old containers (avoid name conflict)"
+            sudo docker rm -f gradeview-api gradeview-web gradeview-gradesync \
+              gradeview-reverse-proxy gradeview-cloud-sql-proxy 2>/dev/null || true
 
-                while [ "$elapsed" -lt "$max_wait" ]; do
-                  local all_healthy=true
-                  for c in $containers; do
-                    local status
-                    status=$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo missing)
-                    if [ "$status" != "healthy" ]; then
-                      all_healthy=false
-                      break
-                    fi
-                  done
+            echo "[4/5] Building & starting tag $IMAGE_TAG"
+            $COMPOSE up -d --build --remove-orphans
 
-                  if [ "$all_healthy" = true ]; then
-                    return 0
-                  fi
-
-                  sleep "$interval"
-                  elapsed=$((elapsed + interval))
-                done
-
-                return 1
-              }
-
-              echo "[INFO] Building images for tag $IMAGE_TAG"
-              set_compose_versions "$IMAGE_TAG"
-              sudo -E docker compose -f docker-compose.yml -f docker-compose.prod.yml build
-              sudo -E docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
-
-              if wait_for_health 360; then
+            echo "[5/5] Waiting for healthchecks (max 6 min)"
+            for i in $(seq 1 60); do
+              all_healthy=true
+              for c in $CONTAINERS; do
+                status=$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo missing)
+                if [ "$status" != "healthy" ]; then
+                  all_healthy=false
+                  break
+                fi
+              done
+              if [ "$all_healthy" = true ]; then
                 printf '%s' "$IMAGE_TAG" | sudo tee "$STATE_FILE" >/dev/null
-                sudo chown "$GCE_SSH_USER":"$GCE_SSH_USER" "$STATE_FILE"
-                echo "[INFO] Deploy successful. Recorded tag: $IMAGE_TAG"
-                sudo docker image prune -f || true
+                echo "[OK] All services healthy at tag $IMAGE_TAG"
+                sudo docker image prune -f >/dev/null 2>&1 || true
                 exit 0
               fi
+              sleep 6
+            done
 
-              echo '[ERROR] New deployment did not become healthy in time.'
-              sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml ps || true
-              exit 1
+            echo "[ERROR] Services did not become healthy within 6 minutes"
+            $COMPOSE ps || true
+            for c in $CONTAINERS; do
+              echo "--- logs for $c (last 40 lines) ---"
+              sudo docker logs --tail 40 "$c" 2>&1 || true
+            done
+            exit 1
           REMOTE
