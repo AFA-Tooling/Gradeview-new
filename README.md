@@ -21,8 +21,7 @@ Grades/
   docker-compose.yml  # Production-like compose
   docker-compose.dev.yml # Dev compose with Cloud SQL Proxy
   .env.example        # Environment template
-  config.example.json # Unified config template (gradeview + gradesync)
-  config.json         # Unified runtime config (repository root)
+  config.example.json # Legacy config migration template (optional)
 ```
 
 ## Key services
@@ -37,7 +36,7 @@ Grades/
 
 - Only `@berkeley.edu` accounts can authenticate (enforced by Google token domain check).
 - Runtime authorization is DB-only (`users` + `course_permissions`).
-- Repository-root `config.json` role lists must be migrated into DB before login checks rely solely on DB.
+- Runtime config is DB-only (`gradeview_config`, `system_config`, `course_configs`, `assignment_categories`).
 
 ## IAM roles
 
@@ -52,26 +51,11 @@ Grades/
    ```bash
    cp .env.example .env
    ```
-2. Copy the unified config template:
-  ```bash
-  cp config.example.json config.json
-  ```
-3. Fill in required values in `.env`:
+2. Fill in required values in `.env`:
   - Database connection (`GRADESYNC_DATABASE_URL` or `POSTGRES_*`)
   - Third-party credentials (`GRADESCOPE_*`, `PL_API_TOKEN`, `ICLICKER_*`)
-4. Fill in required values in repository-root `config.json`:
-  - `gradeview.googleconfig.oauth.clientid`: OAuth client ID used to verify tokens
-  - `gradeview.admins`: global admin emails
-  - `gradesync.courses[]`: each course is split into:
-    - `general`: base metadata + role lists (`instructors`, `tas`, `admins`)
-    - `gradesync`: sync sources, database behavior, sync-side category mapping
-    - `gradeview`: UI-side buckets and display category mapping
-  - `gradesync.courses[].gradesync.sources`: per-course source settings (`gradescope`, `prairielearn`, `iclicker`)
-  - `gradesync.courses[].gradesync.database`: whether to sync to DB and use it as primary
-  - `gradesync.courses[].gradesync.assignment_categories`: mapping patterns for sync rollups
-  - `gradesync.courses[].gradeview.buckets`: grading display bins/caps
-  - `gradesync.global_settings`: retry/log and export settings
-5. If using the dev compose with Cloud SQL Proxy:
+3. Configure runtime settings via `/v2/config` and `/v2/config/sync` (DB-backed endpoints).
+4. If using the dev compose with Cloud SQL Proxy:
    - Place your Google service account key at `secrets/key.json`.
    - Set `INSTANCE_CONNECTION_NAME` in `.env`.
 
@@ -105,6 +89,8 @@ Required GitHub secrets for deployment:
 Notes:
 - Registry base path used by workflow: `ghcr.io/<org>/gradeview`
 - Services in `docker-compose.yml` are configured for stable runtime (health checks + log rotation, no dev bind mounts)
+- Production deploys use `docker-compose.prod.yml` in addition to `docker-compose.yml`; the override makes Cloud SQL Proxy use the GCE VM's attached service account instead of a checked-in key file.
+- GitHub Actions deploys require repo secrets `GHCR_USERNAME` and `GHCR_TOKEN`. Use a dedicated classic PAT with at least `read:packages` and `write:packages`.
 
 ## Common ports
 

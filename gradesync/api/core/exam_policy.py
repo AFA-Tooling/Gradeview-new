@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple, List
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import Assignment, Student, Submission, ExamAttemptMap, StudentExamEffectiveScore
@@ -72,7 +73,7 @@ def _submission_percentage(submission: Optional[Submission], assignment: Assignm
     score = _to_float(submission.total_score)
     if score is None:
         return None
-    max_points = _to_float(assignment.max_points)
+    max_points = _to_float(assignment.max_points) or _to_float(submission.max_points)
     if max_points is None or max_points <= 0:
         return None
     return (score / max_points) * 100.0
