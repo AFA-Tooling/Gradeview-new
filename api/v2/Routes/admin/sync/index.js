@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import http from 'http';
 import crypto from 'crypto';
-import { canManageCourse, IAM_ROLE } from '../../../../lib/iam.mjs';
+import { canManageCourse, canViewClassData, IAM_ROLE } from '../../../../lib/iam.mjs';
 
 const router = Router({ mergeParams: true });
 // Use service name "gradesync" which is resolvable in the shared docker network
@@ -416,7 +416,7 @@ router.get('/', async (req, res) => {
             if (!courseId) {
                 continue;
             }
-            const allowed = await canManageCourse({
+            const allowed = await canViewClassData({
                 requesterEmail,
                 courseId,
                 snapshot: req?.auth?.snapshot || null,

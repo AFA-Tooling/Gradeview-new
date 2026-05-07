@@ -54,15 +54,21 @@ export default function ButtonAppBar() {
             updateTabs(tabList);
             updateProfilePicture(localStorage.getItem('profilepicture'));
 
-            // Check for admin status when user is logged in
-            apiv2.get(`/isadmin?_=${new Date().getTime()}`)
+            refreshPermissions()
                 .then((res) => {
                     if (mounted) {
-                        setAdminStatus(res.data.isAdmin === true);
+                        const role = res?.role || res?.data?.role;
+                        const permissions = res?.permissions || res?.data?.permissions || {};
+                        setAdminStatus(
+                            ['super_admin', 'course_admin', 'instructor'].includes(role)
+                                || permissions.is_super === true
+                                || permissions.has_course_admin === true
+                                || permissions.has_instructor === true,
+                        );
                     }
                 })
                 .catch((err) => {
-                    console.error("Failed to verify admin status.", err);
+                    console.error("Failed to refresh permissions.", err);
                     if (mounted) {
                         setAdminStatus(false);
                     }
@@ -142,6 +148,37 @@ export default function ButtonAppBar() {
         return Array.from(merged.values());
     };
 
+    const resolveCourseQueryId = (courseId, courseList = courses) => {
+        const matchedCourse = courseList.find((course) => String(course.id) === String(courseId));
+        return matchedCourse?.gradescope_course_id || courseId;
+    };
+
+    const refreshPermissions = async (courseId = '', courseList = courses) => {
+        const queryCourseId = courseId ? resolveCourseQueryId(courseId, courseList) : '';
+        const suffix = queryCourseId ? `?course_id=${encodeURIComponent(queryCourseId)}` : '';
+        const res = await apiv2.get(`/me/permissions${suffix}`);
+        const token = res?.data?.token;
+        if (token) {
+            localStorage.setItem('token', token);
+        }
+        return res?.data || {};
+    };
+
+    const selectFirstStudentForCourse = async (courseId, courseList = courses) => {
+        if (!isAdmin || !courseId) return;
+        const queryCourseId = resolveCourseQueryId(courseId, courseList);
+        if (!queryCourseId) return;
+
+        const studentsRes = await apiv2.get(`/students?course_id=${encodeURIComponent(queryCourseId)}`);
+        const sortedStudents = (studentsRes?.data?.students || [])
+            .filter((student) => Array.isArray(student) && student[1])
+            .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || '')));
+
+        if (sortedStudents.length > 0) {
+            setSelectedStudent(sortedStudents[0][1]);
+        }
+    };
+
     const fetchCourses = async () => {
         if (!isAdmin) {
             const studentRes = await apiv2.get('/students/courses');
@@ -194,6 +231,13 @@ export default function ButtonAppBar() {
                 window.dispatchEvent(new CustomEvent('selectedCourseChanged', {
                     detail: { courseId: nextCourse },
                 }));
+
+                refreshPermissions(nextCourse, fetchedCourses).catch((err) => {
+                    console.error('Failed to refresh permissions for selected course:', err);
+                });
+                selectFirstStudentForCourse(nextCourse, fetchedCourses).catch((err) => {
+                    console.error('Failed to load students for selected course:', err);
+                });
             })
             .catch((err) => {
                 console.error('Failed to load courses in navbar:', err);
@@ -204,25 +248,6 @@ export default function ButtonAppBar() {
 
         return () => (mounted = false);
     }, [isAdmin, loggedIn, setSelectedStudent]);
-
-    useEffect(() => {
-        let mounted = true;
-        if (loggedIn) {
-            apiv2.get('/isadmin')
-                .then((res) => {
-                    if (mounted) {
-                        setAdminStatus(res.data.isAdmin);
-                    }
-                })
-                .catch((err) => {
-                    if (mounted) {
-                        console.error('Failed to check admin status:', err);
-                        setAdminStatus(false);
-                    }
-                });
-        }
-        return () => (mounted = false);
-    }, [loggedIn]);
 
     return (
         <Box sx={{ flexGrow: 1 }}>
@@ -276,6 +301,12 @@ export default function ButtonAppBar() {
                                             window.dispatchEvent(new CustomEvent('selectedCourseChanged', {
                                                 detail: { courseId: nextCourse },
                                             }));
+                                            refreshPermissions(nextCourse).catch((err) => {
+                                                console.error('Failed to refresh permissions for selected course:', err);
+                                            });
+                                            selectFirstStudentForCourse(nextCourse).catch((err) => {
+                                                console.error('Failed to load students for selected course:', err);
+                                            });
                                         }}
                                     >
                                         {courses.map((course) => (

@@ -46,6 +46,8 @@ async function getAuthContext(req) {
                 has_course_admin: payload?.has_course_admin === true,
                 has_instructor: payload?.has_instructor === true,
                 has_student: payload?.has_student === true,
+                generated_at: payload?.generated_at || null,
+                impersonated_by: payload?.impersonated_by || null,
             };
         } catch {
             snapshot = null;
@@ -59,6 +61,8 @@ async function getAuthContext(req) {
         role,
         courseId,
         snapshot,
+        snapshotFromToken: Boolean(snapshot),
+        impersonatedBy: snapshot?.impersonated_by || null,
     };
 
     return req.auth;

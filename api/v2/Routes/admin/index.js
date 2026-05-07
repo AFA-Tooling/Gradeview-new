@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validateAdminPortalMiddleware } from '../../../lib/authlib.mjs';
+import { IAM_ROLE } from '../../../lib/iam.mjs';
 import CategoriesRouter from './categories/index.js';
 import AssignmentsRouter from './assignments/index.js';
 import StatsRouter from './stats/index.js';
@@ -21,6 +22,26 @@ const limiter = RateLimit({
 router.use(limiter);
 
 router.use(validateAdminPortalMiddleware);
+
+function requireInstructorCourseScope(req, res, next) {
+    const classDataPrefixes = [
+        '/categories',
+        '/assignments',
+        '/stats',
+        '/distribution',
+        '/studentScores',
+        '/ai-query',
+    ];
+    const isClassDataRequest = classDataPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`));
+
+    if (req?.auth?.role === IAM_ROLE.INSTRUCTOR && isClassDataRequest && !req?.query?.course_id) {
+        return res.status(403).json({ error: 'course_id is required for instructor class-data access' });
+    }
+
+    return next();
+}
+
+router.use(requireInstructorCourseScope);
 
 // Mount sub-routers
 router.use('/categories', CategoriesRouter);

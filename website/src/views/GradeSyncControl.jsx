@@ -46,19 +46,68 @@ export default function GradeSyncControl() {
         return value;
     };
 
+    const normalizeCourseId = (course) => String(course?.gradescope_course_id || course?.id || '').trim();
+
+    const normalizeCourseList = (list) => {
+        const merged = new Map();
+        (Array.isArray(list) ? list : []).forEach((course) => {
+            const key = normalizeCourseId(course);
+            if (!key) return;
+            const existing = merged.get(key) || {};
+            merged.set(key, {
+                ...existing,
+                ...course,
+                id: key,
+                gradescope_course_id: course?.gradescope_course_id || existing.gradescope_course_id || key,
+                year: course?.year || existing.year || '',
+                semester: course?.semester || existing.semester || '',
+                name: course?.name || existing.name || '',
+            });
+        });
+        return Array.from(merged.values());
+    };
+
+    const formatCourseLabel = (course) => {
+        const year = String(course?.year || '').trim();
+        const semester = String(course?.semester || '').trim();
+        const name = String(course?.name || '').trim();
+        const id = normalizeCourseId(course);
+        const title = [year, semester, name].filter(Boolean).join(' ');
+        return title || id || 'Course';
+    };
+
+    const formatCourseSubLabel = (course) => {
+        const id = normalizeCourseId(course);
+        return id ? `Gradescope ${id}` : '';
+    };
+
     const fetchCourses = () => {
         setLoadingCourses(true);
         setError(null);
-        apiv2.get('/admin/sync')
-            .then(res => {
-                if (res.data && res.data.courses) {
-                    setCourses(res.data.courses);
-                    if (res.data.courses.length > 0) {
-                        const hasSelected = res.data.courses.some((course) => course.id === selectedCourse);
-                        const nextCourse = hasSelected ? selectedCourse : res.data.courses[0].id;
-                        setSelectedCourse(nextCourse);
-                        localStorage.setItem('selectedCourseId', nextCourse);
-                    }
+        Promise.allSettled([
+            apiv2.get('/admin/sync'),
+            apiv2.get('/students/courses'),
+        ])
+            .then(([syncResult, courseResult]) => {
+                const syncCourses = syncResult.status === 'fulfilled'
+                    ? (syncResult.value?.data?.courses || [])
+                    : [];
+                const enrolledCourses = courseResult.status === 'fulfilled'
+                    ? (courseResult.value?.data?.courses || [])
+                    : [];
+                const fetchedCourses = normalizeCourseList([...syncCourses, ...enrolledCourses]);
+                setCourses(fetchedCourses);
+
+                if (fetchedCourses.length > 0) {
+                    const rememberedCourse = localStorage.getItem('selectedCourseId') || selectedCourse;
+                    const hasSelected = fetchedCourses.some((course) => normalizeCourseId(course) === String(rememberedCourse));
+                    const nextCourse = hasSelected ? String(rememberedCourse) : normalizeCourseId(fetchedCourses[0]);
+                    setSelectedCourse(nextCourse);
+                    localStorage.setItem('selectedCourseId', nextCourse);
+                }
+
+                if (syncResult.status === 'rejected' && courseResult.status === 'rejected') {
+                    throw syncResult.reason || courseResult.reason;
                 }
             })
             .catch(err => {
@@ -221,17 +270,30 @@ export default function GradeSyncControl() {
                     </Typography>
                     
                     <Box display="flex" gap={2} alignItems="center">
-                        <FormControl size="small" sx={{ minWidth: 200 }}>
+                        <FormControl size="small" sx={{ minWidth: 520, maxWidth: 760 }}>
                             <InputLabel>Course</InputLabel>
                             <Select
                                 value={selectedCourse}
                                 label="Course"
                                 onChange={handleCourseChange}
                                 disabled={loadingCourses || syncing || courses.length === 0}
+                                renderValue={(value) => {
+                                    const course = courses.find((item) => normalizeCourseId(item) === String(value));
+                                    return formatCourseLabel(course || { id: value });
+                                }}
                             >
                                 {courses.map(c => (
-                                    <MenuItem key={c.id} value={c.id}>
-                                        {c.name} ({c.id})
+                                    <MenuItem key={normalizeCourseId(c)} value={normalizeCourseId(c)}>
+                                        <Box>
+                                            <Typography variant="body1">
+                                                {formatCourseLabel(c)}
+                                            </Typography>
+                                            {formatCourseSubLabel(c) && (
+                                                <Typography variant="caption" color="textSecondary">
+                                                    {formatCourseSubLabel(c)}
+                                                </Typography>
+                                            )}
+                                        </Box>
                                     </MenuItem>
                                 ))}
                             </Select>

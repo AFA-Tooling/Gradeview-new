@@ -472,10 +472,10 @@ function deriveIamRole(email, userRole, permissionLevel) {
     if (normalizeEmail(email) === HEAD_ADMIN_EMAIL) {
         return 'head_admin';
     }
-    if (permissionLevel === 'owner' || userRole === 'admin' || userRole === 'superadmin') {
+    if (permissionLevel === 'owner') {
         return 'course_admin';
     }
-    if (['editor', 'viewer'].includes(permissionLevel) || ['instructor', 'ta'].includes(userRole)) {
+    if (['editor', 'viewer'].includes(permissionLevel)) {
         return 'instructor';
     }
     return 'none';
@@ -487,13 +487,16 @@ function mapRoleInput({ iamRole, permissionLevel, userRole }) {
         if (normalizedIamRole === 'instructor') {
             return { permissionLevel: 'editor', userRole: 'instructor' };
         }
+        if (normalizedIamRole === 'course_admin') {
+            return { permissionLevel: 'owner', userRole: 'admin' };
+        }
         if (normalizedIamRole === 'ta') {
             return { permissionLevel: 'viewer', userRole: 'ta' };
         }
         if (normalizedIamRole === 'viewer') {
             return { permissionLevel: 'viewer', userRole: 'readonly' };
         }
-        throw new Error('Invalid iam_role. Use instructor, ta, or viewer.');
+        throw new Error('Invalid iam_role. Use course_admin, instructor, ta, or viewer.');
     }
 
     const normalizedPermission = String(permissionLevel || '').trim().toLowerCase();
@@ -506,8 +509,8 @@ function mapRoleInput({ iamRole, permissionLevel, userRole }) {
         throw new Error('Invalid user_role. Use superadmin, admin, instructor, ta, or readonly.');
     }
 
-    if (normalizedPermission === 'owner' || ['admin', 'superadmin'].includes(normalizedUserRole)) {
-        throw new Error('Course admin assignment is disabled. Only head admin has personnel-management power.');
+    if (normalizedUserRole === 'superadmin') {
+        throw new Error('superadmin is code-controlled. Use owner/admin for course admin access.');
     }
 
     return {

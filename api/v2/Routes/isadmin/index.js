@@ -20,8 +20,13 @@ router.get('/', validateAuthenticatedMiddleware, async (req, res) => {
             role === IAM_ROLE.INSTRUCTOR;
         const staffStatus = role === IAM_ROLE.INSTRUCTOR;
         
-        // --- ADDING DEBUG LOG ---
-        console.log(`[AUTH_DEBUG] IAM role for ${authEmail}: ${role}`);
+        console.log(JSON.stringify({
+            event: 'iam.isadmin',
+            email: authEmail,
+            role,
+            course_id: courseId || null,
+            snapshot_from_token: req?.auth?.snapshotFromToken === true,
+        }));
         
         return res.status(200).json({ isAdmin: adminStatus, isStaff: staffStatus, role });
     } catch (err) {

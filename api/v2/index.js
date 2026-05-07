@@ -7,6 +7,8 @@ import IsAdminRouter from './Routes/isadmin/index.js';
 import LoginRouter from "./Routes/login/index.js";
 import AdminRouter from './Routes/admin/index.js';
 import ConfigRouter from './Routes/config/index.js';
+import MeRouter from './Routes/me/index.js';
+import DevRouter from './Routes/dev/index.js';
 
 const router = Router();
 
@@ -14,6 +16,8 @@ router.use('/login', LoginRouter);
 router.use('/bins', BinsRouter);
 router.use('/verifyaccess', VerifyAccessRouter);
 router.use('/isadmin', IsAdminRouter);
+router.use('/me', MeRouter);
+router.use('/dev', DevRouter);
 router.use('/admin', AdminRouter);
 router.use('/students', StudentsRouter);
 router.use('/config', ConfigRouter);

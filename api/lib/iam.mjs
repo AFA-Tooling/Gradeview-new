@@ -31,14 +31,13 @@ function pickHigherRole(currentRole, nextRole) {
 }
 
 function resolveCourseRoleFromDbRow(row) {
-    const userRole = String(row?.user_role || '').toLowerCase();
     const permissionLevel = String(row?.permission_level || '').toLowerCase();
 
-    if (permissionLevel === 'owner' || userRole === 'admin' || userRole === 'superadmin') {
+    if (permissionLevel === 'owner') {
         return IAM_ROLE.COURSE_ADMIN;
     }
 
-    if (['editor', 'viewer'].includes(permissionLevel) || ['instructor', 'ta'].includes(userRole)) {
+    if (['editor', 'viewer'].includes(permissionLevel)) {
         return IAM_ROLE.INSTRUCTOR;
     }
 
