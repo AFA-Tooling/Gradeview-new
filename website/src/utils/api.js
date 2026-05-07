@@ -22,7 +22,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(undefined, (err) => {
     const errorCode = err?.response?.status;
 
-    if (errorCode === 401 || errorCode === 403) {
+    if (errorCode === 401) {
         localStorage.setItem('token', '');
         window.location.href = `${URL}/login`;
         return Promise.reject(err);

@@ -170,19 +170,6 @@ export default function ButtonAppBar() {
             return () => (mounted = false);
         }
 
-        if (isAdmin) {
-            apiv2.get('/students').then((res) => {
-                if (mounted) {
-                    const sortedStudents = res.data.students.sort((a, b) =>
-                        a[0].localeCompare(b[0])
-                    );
-                    if (sortedStudents.length > 0) {
-                        setSelectedStudent(sortedStudents[0][1]);
-                    }
-                }
-            });
-        }
-
         fetchCourses()
             .then((fetchedCourses) => {
                 if (!mounted) return;
