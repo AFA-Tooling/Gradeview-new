@@ -56,6 +56,33 @@ function calculateUniqueAssignmentCapSum(scores = []) {
   return Array.from(capByAssignment.values()).reduce((sum, cap) => sum + cap, 0);
 }
 
+// Scale a raw assignment score onto its syllabus-configured point cap.
+// Gradescope often scores items on its own (e.g. 100-pt) scale; the syllabus
+// pegs each project to a smaller cap (15, 25, ...). Without scaling we'd
+// add raw 100s to a 15-pt category. Categories without per-assignment caps
+// (Labs, Attendance) keep raw scores and rely on the category cap on top.
+function contributionToCategoryTotal({ rawScore, rawMaxPoints, configuredAssignmentCap }) {
+  const cap = Number(configuredAssignmentCap) || 0;
+  const max = Number(rawMaxPoints) || 0;
+  if (cap > 0 && max > 0) {
+    return Math.min(cap, (Number(rawScore) || 0) / max * cap);
+  }
+  return Number(rawScore) || 0;
+}
+
+// Drop the N lowest-percentage entries from the array. Used for the syllabus
+// rule "your lowest 2 lab assignment scores will be dropped".
+function dropLowestN(items = [], n = 0) {
+  if (!Array.isArray(items) || n <= 0 || items.length <= n) return items;
+  const sorted = [...items].sort((a, b) => (Number(a?.percentage) || 0) - (Number(b?.percentage) || 0));
+  const droppedSet = new Set(sorted.slice(0, n));
+  return items.filter((item) => !droppedSet.has(item));
+}
+
+const CATEGORY_DROP_LOWEST = {
+  labs: 2,
+};
+
 function calculateCategoryCapFromBins(categoryName, scores = [], pointsMap = {}) {
   const normalizedCategory = String(categoryName || '').trim().toLowerCase();
   if (!normalizedCategory) return 0;
@@ -98,8 +125,19 @@ function isAttendanceCategory(categoryName = '') {
   return normalized.includes('attendance');
 }
 
+// Strip "(pre-clobber)", "(before dropping ...)", etc. from category names so
+// "Quest (pre-clobber)" rolls up to "Quest" in the display table.
+export function normalizeCategoryName(categoryName = '') {
+  const raw = String(categoryName || '').trim();
+  if (!raw) return raw;
+  return raw.replace(/\s*\([^)]*\)\s*$/, '').trim() || raw;
+}
+
 function normalizeAssignmentScore(category, rawScore, rawMaxPoints) {
-  if (isAttendanceCategory(category)) {
+  // Legacy collapse-to-binary only applies to 1-point Attendance items.
+  // The policy-computed Attendance / Participation rollup carries
+  // max_points=15 and must be summed normally.
+  if (isAttendanceCategory(category) && Number(rawMaxPoints) <= 1) {
     return {
       score: rawScore > 0 ? 1 : 0,
       maxPoints: 1,
@@ -127,7 +165,7 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
 
   submissions.forEach((submission) => {
-    const category = submission.category;
+    const category = normalizeCategoryName(submission.category);
     const assignmentName = submission.name;
     const rawScore = roundUpPoints(parseFloat(submission.score) || 0);
     const rawMaxPoints = parseFloat(submission.maxPoints) || 0;
@@ -138,14 +176,24 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
     const submissionTime = submission.submissionTime;
     const lateness = submission.lateness;
 
-    // Skip Uncategorized assignments
-    if (category === 'Uncategorized' || category === 'uncategorized') {
+    // Skip Uncategorized assignments and hidden raw-data categories
+    // (anything with a leading underscore — e.g. '_attendance_raw' for
+    // iClicker per-section data and Gradescope makeup quizzes/worksheets).
+    if (!category || category === 'Uncategorized' || category === 'uncategorized') {
+      return;
+    }
+    if (typeof category === 'string' && category.startsWith('_')) {
       return;
     }
 
     if (maxPoints > 0) {
       // Add to assignments list with time info
       const configuredAssignmentCap = getPointsForName(assignmentName, pointsMap);
+      const contribution = contributionToCategoryTotal({
+        rawScore: score,
+        rawMaxPoints: maxPoints,
+        configuredAssignmentCap,
+      });
 
       assignmentsList.push({
         category: category,
@@ -174,8 +222,8 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
         maxPoints: maxPoints,
         capPoints: configuredAssignmentCap > 0 ? configuredAssignmentCap : maxPoints,
         percentage: percentage,
+        contribution: contribution,
       });
-      categoriesData[category].total += score;
       categoriesData[category].maxPoints += maxPoints;
       categoriesData[category].count++;
       totalMaxPoints += maxPoints;
@@ -185,8 +233,15 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   // Calculate category percentages and averages
   Object.keys(categoriesData).forEach(category => {
     const data = categoriesData[category];
-    const configuredCategoryCap = calculateCategoryCapFromBins(category, data.scores, pointsMap);
-    const assignmentCapSum = calculateUniqueAssignmentCapSum(data.scores);
+    const dropN = CATEGORY_DROP_LOWEST[String(category).trim().toLowerCase()] || 0;
+    const keptScores = dropLowestN(data.scores, dropN);
+    data.droppedCount = data.scores.length - keptScores.length;
+
+    // Recompute total from kept-only scaled contributions.
+    data.total = keptScores.reduce((sum, item) => sum + (Number(item.contribution) || 0), 0);
+
+    const configuredCategoryCap = calculateCategoryCapFromBins(category, keptScores, pointsMap);
+    const assignmentCapSum = calculateUniqueAssignmentCapSum(keptScores);
     const categoryCap = configuredCategoryCap > 0
       ? configuredCategoryCap
       : (assignmentCapSum > 0 ? assignmentCapSum : data.maxPoints);
@@ -258,9 +313,15 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
   let totalMaxPoints = 0;
   const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
 
-  Object.entries(data).forEach(([category, assignments]) => {
-    // Skip Uncategorized assignments
-    if (category === 'Uncategorized' || category === 'uncategorized') {
+  Object.entries(data).forEach(([rawCategory, assignments]) => {
+    const category = normalizeCategoryName(rawCategory);
+    // Skip Uncategorized assignments and hidden raw-data categories
+    // (anything with a leading underscore — e.g. '_attendance_raw' for
+    // iClicker per-section data and Gradescope makeup quizzes/worksheets).
+    if (!category || category === 'Uncategorized' || category === 'uncategorized') {
+      return;
+    }
+    if (typeof category === 'string' && category.startsWith('_')) {
       return;
     }
 
@@ -280,6 +341,11 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
       
       if (maxPoints > 0) {
         const configuredAssignmentCap = getPointsForName(assignmentName, pointsMap);
+        const contribution = contributionToCategoryTotal({
+          rawScore: score,
+          rawMaxPoints: maxPoints,
+          configuredAssignmentCap,
+        });
 
         categoryScores.push({
           name: assignmentName,
@@ -287,9 +353,9 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
           maxPoints: maxPoints,
           capPoints: configuredAssignmentCap > 0 ? configuredAssignmentCap : maxPoints,
           percentage: (score / maxPoints) * 100,
+          contribution: contribution,
         });
-        
-        categoryTotal += score;
+
         categoryMax += maxPoints;
         categoryCount++;
 
@@ -307,20 +373,26 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
     });
 
     if (categoryMax > 0) {
-      const configuredCategoryCap = calculateCategoryCapFromBins(category, categoryScores, pointsMap);
-      const assignmentCapSum = calculateUniqueAssignmentCapSum(categoryScores);
+      const dropN = CATEGORY_DROP_LOWEST[String(category).trim().toLowerCase()] || 0;
+      const keptScores = dropLowestN(categoryScores, dropN);
+      const droppedCount = categoryScores.length - keptScores.length;
+      const scaledTotal = keptScores.reduce((sum, item) => sum + (Number(item.contribution) || 0), 0);
+      const configuredCategoryCap = calculateCategoryCapFromBins(category, keptScores, pointsMap);
+      const assignmentCapSum = calculateUniqueAssignmentCapSum(keptScores);
       const categoryCap = configuredCategoryCap > 0
         ? configuredCategoryCap
         : (assignmentCapSum > 0 ? assignmentCapSum : categoryMax);
 
       categoriesData[category] = {
         scores: categoryScores,
-        total: categoryTotal,
+        keptScores,
+        droppedCount,
+        total: scaledTotal,
         maxPoints: categoryMax,
         capPoints: categoryCap,
-        percentage: categoryCap > 0 ? (categoryTotal / categoryCap) * 100 : 0,
+        percentage: categoryCap > 0 ? (scaledTotal / categoryCap) * 100 : 0,
         count: categoryCount,
-        average: categoryCount > 0 ? categoryTotal / categoryCount : 0,
+        average: categoryCount > 0 ? scaledTotal / categoryCount : 0,
       };
 
       totalMaxPoints += categoryMax;
@@ -445,15 +517,12 @@ export function applyExamPolicyToProcessedData(processedData, examPolicyRows = [
 
   let changed = false;
   Object.entries(categoryNames).forEach(([type, categoryName]) => {
-    const bestPct = Number.isFinite(bestPercentages[type])
-      ? bestPercentages[type]
-      : fallbackPercentages[type];
-    if (!Number.isFinite(bestPct)) {
-      return;
-    }
-
     const cap = Number(componentCaps[type]) || 0;
     if (cap <= 0) return;
+
+    const bestPct = Number.isFinite(bestPercentages[type])
+      ? bestPercentages[type]
+      : (Number.isFinite(fallbackPercentages[type]) ? fallbackPercentages[type] : 0);
 
     const existing = processedData.categoriesData[categoryName] || {};
     const rawScore = (bestPct / 100) * cap;

@@ -31,13 +31,18 @@ function applyCanonicalSummaryTotals(processedData, summarySectionTotals = {}) {
     categoriesData: { ...(processedData.categoriesData || {}) },
   };
 
-  Object.entries(summarySectionTotals || {}).forEach(([sectionName, rawScore]) => {
-    if (!sectionName) return;
+  Object.entries(summarySectionTotals || {}).forEach(([rawSectionName, rawScore]) => {
+    if (!rawSectionName) return;
+    // Strip "(pre-clobber)" / "(before dropping ...)" suffix so server section
+    // names align with the canonical table keys (Quest, Labs, Midterm, ...).
+    const sectionName = String(rawSectionName).replace(/\s*\([^)]*\)\s*$/, '').trim() || rawSectionName;
+    if (sectionName.startsWith('_')) return;
     const score = Number(rawScore);
     if (!Number.isFinite(score)) return;
 
     const existing = next.categoriesData[sectionName] || {};
     const cap = Number(existing.capPoints ?? existing.maxPoints) || 0;
+    if (cap <= 0 && !next.categoriesData[sectionName]) return;
     const cappedScore = cap > 0 ? Math.min(score, cap) : score;
 
     next.categoriesData[sectionName] = {
@@ -110,13 +115,17 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
     // Fetch both student grades and class category averages
     Promise.all([
       apiv2.get(gradesQuery),
+      apiv2.get(`${gradesQuery}${gradesQuery.includes('?') ? '&' : '?'}sort=time`),
       apiv2.get(`/students/category-stats${courseQuery}`),
       apiv2.get(`/bins${courseQuery}`),
       apiv2.get(`/students/${encodeURIComponent(studentEmail)}/exam-policy${courseQuery}`),
       apiv2.get(`/admin/studentScores/summary/${encodeURIComponent(studentEmail)}${courseQuery}`),
     ])
-      .then(([gradesRes, statsRes, binsRes, policyRes, summaryRes]) => {
+      .then(([gradesRes, rawGradesRes, statsRes, binsRes, policyRes, summaryRes]) => {
         const data = gradesRes.data;
+        const rawSubmissions = Array.isArray(rawGradesRes?.data?.submissions)
+          ? rawGradesRes.data.submissions
+          : [];
         const classAverages = statsRes.data;
         const policyRows = Array.isArray(policyRes?.data?.rows) ? policyRes.data.rows : [];
         const summarySectionTotals = summaryRes?.data?.summarySectionTotals || {};
@@ -127,10 +136,53 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
             || Number(binsRes?.data?.total_points_cap)
             || Number(binsRes?.data?.total_course_points)
             || 0,
+          gradeBins: Array.isArray(binsRes?.data?.bins) ? binsRes.data.bins : [],
+          roundingPolicy: binsRes?.data?.rounding_policy || '',
         };
         const processedBase = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig);
         const processedWithPolicy = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
         const processed = applyCanonicalSummaryTotals(processedWithPolicy, summarySectionTotals);
+        const isRollupSubmission = (submission) => {
+          const category = String(submission?.category || '').trim().toLowerCase();
+          const name = String(submission?.name || '').trim().toLowerCase();
+          if (!category || !name || category !== name) return false;
+          return (
+            category.includes('attendance')
+            || category.includes('lab')
+            || category.includes('project')
+          );
+        };
+        const rawAssignmentsList = rawSubmissions
+          .filter((submission) => {
+            const category = String(submission?.category || '').trim();
+            const name = String(submission?.name || '').trim();
+            if (!name || !category || category.toLowerCase() === 'uncategorized') return false;
+            if (isRollupSubmission(submission)) return false;
+            return Number(submission?.maxPoints) > 0;
+          })
+          .map((submission) => {
+            const score = Number(submission.score) || 0;
+            const maxPoints = Number(submission.maxPoints) || 0;
+            return {
+              category: submission.category,
+              name: submission.name,
+              score,
+              maxPoints,
+              capPoints: maxPoints,
+              percentage: maxPoints > 0 ? (score / maxPoints) * 100 : 0,
+              submissionTime: submission.submissionTime,
+              lateness: submission.lateness,
+            };
+          });
+        const rawTrendData = rawAssignmentsList.map((assignment, idx) => ({
+          index: idx + 1,
+          name: `${assignment.category}-${assignment.name}`,
+          percentage: assignment.percentage,
+          category: assignment.category,
+          score: assignment.score,
+          maxPoints: assignment.maxPoints,
+          submissionTime: assignment.submissionTime,
+        }));
 
         const trendFromApi = policyRes?.data?.questComponentTrend;
         const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);
@@ -142,6 +194,10 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
 
         setStudentData({
           ...processed,
+          rawAssignmentsList,
+          rawTrendData,
+          gradeBins: gradingConfig.gradeBins,
+          roundingPolicy: gradingConfig.roundingPolicy,
           examPolicyRows: policyRows,
           questComponentTrend,
         });
@@ -163,16 +219,14 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
       PaperProps={{
         sx: {
           minHeight: '80vh',
-          background: 'linear-gradient(160deg, rgba(12, 19, 38, 0.96), rgba(9, 14, 30, 0.98))',
-          border: '1px solid rgba(166, 190, 255, 0.24)',
         }
       }}
     >
-      <DialogTitle sx={{ background: 'linear-gradient(120deg, rgba(36, 52, 98, 0.96), rgba(26, 39, 74, 0.96))', color: 'rgba(236, 244, 255, 0.98)', borderBottom: '1px solid rgba(166, 190, 255, 0.22)' }}>
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Box>
-          <Typography variant="h5" sx={{ color: 'rgba(236, 244, 255, 0.98)' }}>Student Profile</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>Student Profile</Typography>
           {studentName && (
-            <Typography variant="subtitle2" sx={{ mt: 1, color: 'rgba(210, 224, 250, 0.9)' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {studentName} ({studentEmail})
             </Typography>
           )}
@@ -181,27 +235,7 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
 
       <DialogContent
         dividers
-        sx={{
-          p: 3,
-          bgcolor: 'rgba(9, 14, 30, 0.85)',
-          borderColor: 'rgba(166, 190, 255, 0.2)',
-          '& .MuiPaper-root': {
-            background: 'linear-gradient(150deg, rgba(21, 33, 64, 0.92), rgba(14, 23, 48, 0.92)) !important',
-            border: '1px solid rgba(166, 190, 255, 0.24) !important',
-            boxShadow: '0 14px 34px rgba(2, 8, 24, 0.34) !important',
-          },
-          '& .MuiTypography-root': {
-            color: 'rgba(231, 241, 255, 0.94)',
-          },
-          '& .MuiTableCell-root': {
-            color: 'rgba(231, 241, 255, 0.92) !important',
-            borderBottomColor: 'rgba(166, 190, 255, 0.18) !important',
-          },
-          '& .MuiTableCell-head': {
-            background: 'rgba(63, 82, 138, 0.62) !important',
-            color: 'rgba(240, 247, 255, 0.98) !important',
-          },
-        }}
+        sx={{ p: 3 }}
       >
         {loading && (
           <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -223,8 +257,8 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
         )}
       </DialogContent>
 
-      <DialogActions sx={{ borderTop: '1px solid rgba(166, 190, 255, 0.2)', bgcolor: 'rgba(12, 18, 36, 0.8)' }}>
-        <Button onClick={onClose} variant="contained" sx={{ bgcolor: '#d97706', '&:hover': { bgcolor: '#b45309' } }}>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider' }}>
+        <Button onClick={onClose} variant="contained">
           Close
         </Button>
       </DialogActions>

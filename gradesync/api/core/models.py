@@ -256,3 +256,26 @@ class StudentExamEffectiveScore(Base):
     __table_args__ = (
         UniqueConstraint('course_id', 'student_id', 'exam_type', 'attempt_no', name='uq_effective_exam_attempt'),
     )
+
+
+class StudentAttendanceEffectiveScore(Base):
+    __tablename__ = "student_attendance_effective_scores"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    kind = Column(String(32), nullable=False, index=True)  # 'lecture' | 'lab' | 'discussion'
+    iclicker_assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    total_required_sessions = Column(Integer, nullable=False)
+    attended_sessions = Column(Integer, nullable=False)
+    drops_applied = Column(Integer, nullable=False)
+    effective_attended = Column(Integer, nullable=False)
+    effective_total = Column(Integer, nullable=False)
+    raw_percentage = Column(Numeric)
+    final_percentage = Column(Numeric, index=True)
+    details = Column(JSONB)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('course_id', 'student_id', 'kind', name='uq_attendance_effective'),
+    )

@@ -1,114 +1,19 @@
-name: Deploy to GCE
+name: Deploy to GCE (manual only — use scripts/deploy-local.sh)
+
+# Auto-deploy on push has been disabled. Building images on the e2-medium VM
+# took 5–8 min and frequently broke production during the build window.
+#
+# To deploy: run `./scripts/deploy-local.sh` from your dev machine. It builds
+# linux/amd64 images locally, ships them to the VM, and brings the stack up.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
-  deploy:
-    name: Deploy on GCE VM
+  noop:
+    name: No-op (use scripts/deploy-local.sh)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    permissions:
-      contents: read
-      id-token: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Package source
-        run: |
-          tar --owner=0 --group=0 -czf ~/gradeview-src.tar.gz \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='website/build' \
-            --exclude='website/server/build' \
-            --exclude='__pycache__' \
-            --exclude='.pytest_cache' \
-            api website gradesync reverseProxy \
-            docker-compose.yml docker-compose.prod.yml
-
-      - name: Deploy to VM
-        env:
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          GCP_ZONE: ${{ secrets.GCP_ZONE }}
-          GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          set -e
-          gcloud compute scp ~/gradeview-src.tar.gz \
-            "$GCE_INSTANCE:~/gradeview-src.tar.gz" \
-            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE"
-
-          gcloud compute ssh "$GCE_INSTANCE" \
-            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
-            --command "IMAGE_TAG='$IMAGE_TAG' bash -se" <<'REMOTE'
-            set -euo pipefail
-
-            DEPLOY_DIR=/home/gradeview/Grades
-            STATE_FILE="$DEPLOY_DIR/.gradeview_last_successful_tag"
-            CONTAINERS="gradeview-api gradeview-web gradeview-gradesync gradeview-reverse-proxy"
-            COMPOSE="sudo docker compose -p gradeview -f docker-compose.yml -f docker-compose.prod.yml"
-
-            sudo mkdir -p "$DEPLOY_DIR"
-
-            echo "[1/5] Wiping old source dirs (preserving .env, secrets/, state)"
-            sudo rm -rf "$DEPLOY_DIR/api" "$DEPLOY_DIR/website" \
-                        "$DEPLOY_DIR/gradesync" "$DEPLOY_DIR/reverseProxy" \
-                        "$DEPLOY_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.prod.yml"
-
-            echo "[2/5] Extracting new source"
-            sudo tar -xzf ~/gradeview-src.tar.gz -C "$DEPLOY_DIR"
-            rm -f ~/gradeview-src.tar.gz
-            sudo chown -R gradeview:gradeview \
-              "$DEPLOY_DIR/api" "$DEPLOY_DIR/website" \
-              "$DEPLOY_DIR/gradesync" "$DEPLOY_DIR/reverseProxy" \
-              "$DEPLOY_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.prod.yml"
-
-            cd "$DEPLOY_DIR"
-
-            echo "[3/5] Removing old containers (avoid name conflict)"
-            sudo docker rm -f gradeview-api gradeview-web gradeview-gradesync \
-              gradeview-reverse-proxy gradeview-cloud-sql-proxy 2>/dev/null || true
-
-            echo "[4/5] Building & starting tag $IMAGE_TAG"
-            $COMPOSE up -d --build --remove-orphans
-
-            echo "[5/5] Waiting for healthchecks (max 6 min)"
-            for i in $(seq 1 60); do
-              all_healthy=true
-              for c in $CONTAINERS; do
-                status=$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo missing)
-                if [ "$status" != "healthy" ]; then
-                  all_healthy=false
-                  break
-                fi
-              done
-              if [ "$all_healthy" = true ]; then
-                printf '%s' "$IMAGE_TAG" | sudo tee "$STATE_FILE" >/dev/null
-                echo "[OK] All services healthy at tag $IMAGE_TAG"
-                sudo docker image prune -f >/dev/null 2>&1 || true
-                exit 0
-              fi
-              sleep 6
-            done
-
-            echo "[ERROR] Services did not become healthy within 6 minutes"
-            $COMPOSE ps || true
-            for c in $CONTAINERS; do
-              echo "--- logs for $c (last 40 lines) ---"
-              sudo docker logs --tail 40 "$c" 2>&1 || true
-            done
-            exit 1
-          REMOTE
+      - run: |
+          echo "Auto-deploy is disabled."
+          echo "Run ./scripts/deploy-local.sh on your dev machine to deploy."

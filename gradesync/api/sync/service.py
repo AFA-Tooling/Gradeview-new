@@ -264,9 +264,12 @@ class GradeSyncService:
             # Create sync instance
             sync = IClickerSync(
                 username=username,
-                password=password
+                password=password,
+                course_gradescope_id=self.config.gradescope_course_id,
+                course_name=self.config.name,
+                course_categories=self.config.categories,
             )
-            
+
             # Sync grades for all course sections
             result = sync.sync_courses(
                 course_names=self.config.iclicker_course_names,
@@ -327,8 +330,15 @@ class GradeSyncService:
                 
                 from api.core.exam_policy import compute_effective_exam_scores
                 policy_result = compute_effective_exam_scores(session, course.id)
+
+                from api.core.attendance_policy import compute_attendance_scores
+                attendance_result = compute_attendance_scores(session, course.id)
+
+                from api.core.lab_project_policy import compute_all_lab_project_scores
+                lab_project_result = compute_all_lab_project_scores(session, course.id)
+
                 session.commit()
-                
+
                 return GradeSyncResult(
                     source="database",
                     success=True,
@@ -338,6 +348,8 @@ class GradeSyncService:
                         "assignments": len(assignments),
                         "submissions": len(submissions),
                         "policy": policy_result,
+                        "attendance": attendance_result,
+                        "lab_project": lab_project_result,
                     }
                 )
                 

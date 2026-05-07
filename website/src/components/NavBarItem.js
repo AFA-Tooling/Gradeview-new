@@ -7,17 +7,17 @@ export default function NavBarItem({ href, children }){
     return (
         <Link component={NavLink} to={href} color='inherit' sx={{ textDecoration: 'none' }}>
           <Button sx={{
-            color: 'inherit',
-            opacity: match ? 1 : 0.76,
+            color: match ? 'primary.main' : 'text.secondary',
             px: 1.5,
-            borderRadius: '10px',
+            borderRadius: '6px',
             position: 'relative',
-            background: match ? 'linear-gradient(120deg, rgba(119,150,255,0.22), rgba(98,232,255,0.15))' : 'transparent',
-            border: match ? '1px solid rgba(191, 213, 255, 0.45)' : '1px solid transparent',
-            transition: 'all 180ms ease',
+            background: 'transparent',
+            border: '1px solid transparent',
+            fontWeight: match ? 600 : 500,
+            transition: 'color 150ms ease, background 150ms ease',
             '&:hover': {
-              opacity: 1,
-              background: 'linear-gradient(120deg, rgba(119,150,255,0.24), rgba(98,232,255,0.16))',
+              color: 'primary.main',
+              background: (theme) => theme.palette.mode === 'dark' ? 'rgba(90,155,212,0.08)' : 'rgba(0,50,98,0.04)',
             },
           }}>
             {children}
@@ -26,14 +26,13 @@ export default function NavBarItem({ href, children }){
                 className="underline"
                 sx={{
                   position: 'absolute',
-                  bottom: 3,
+                  bottom: 2,
                   left: '50%',
                   transform: 'translateX(-50%)',
-                  width: '68%',
+                  width: '60%',
                   height: '2px',
-                  borderRadius: 999,
-                  background: 'linear-gradient(90deg, #9bb7ff, #8bf2ff)',
-                  boxShadow: '0 0 14px rgba(126, 190, 255, 0.9)',
+                  borderRadius: 1,
+                  bgcolor: 'primary.main',
                 }}
               />
           )}

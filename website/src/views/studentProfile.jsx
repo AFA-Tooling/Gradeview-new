@@ -21,6 +21,7 @@ import {
   buildQuestComponentTrendFromAssignments,
 } from '../utils/studentDataProcessor';
 import StudentProfileContent from '../components/StudentProfileContent';
+import GradeDataFlow from '../components/GradeDataFlow';
 import { StudentSelectionContext } from "../components/StudentSelectionWrapper";
 import Buckets from './buckets';
 import ConceptMap from './conceptMap';
@@ -204,15 +205,25 @@ export default function StudentProfile() {
     
     const courseQuery = queryCourseId ? `?course_id=${encodeURIComponent(queryCourseId)}` : '';
 
+    const gradesPath = `/students/${encodeURIComponent(fetchEmail)}/grades?format=db${queryCourseId ? `&course_id=${encodeURIComponent(queryCourseId)}` : ''}`;
+
     // Fetch both student grades and class category averages
     Promise.all([
-      apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/grades?format=db${queryCourseId ? `&course_id=${encodeURIComponent(queryCourseId)}` : ''}`),
+      apiv2.get(gradesPath),
+      apiv2.get(`${gradesPath}&sort=time`),
       apiv2.get(`/students/category-stats${courseQuery}`),
       apiv2.get(`/bins${courseQuery}`),
       apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/exam-policy${courseQuery}`),
+      apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/grade-flow${courseQuery}`).catch((err) => {
+        console.warn('Grade flow graph unavailable:', err);
+        return { data: null };
+      }),
     ])
-      .then(([gradesRes, statsRes, binsRes, policyRes]) => {
+      .then(([gradesRes, rawGradesRes, statsRes, binsRes, policyRes, gradeFlowRes]) => {
         const data = gradesRes.data;
+        const rawSubmissions = Array.isArray(rawGradesRes?.data?.submissions)
+          ? rawGradesRes.data.submissions
+          : [];
         const classAverages = statsRes.data;
         const policyRows = Array.isArray(policyRes?.data?.rows) ? policyRes.data.rows : [];
         const gradingConfig = {
@@ -222,10 +233,53 @@ export default function StudentProfile() {
             || Number(binsRes?.data?.total_points_cap)
             || Number(binsRes?.data?.total_course_points)
             || 0,
+          gradeBins: Array.isArray(binsRes?.data?.bins) ? binsRes.data.bins : [],
+          roundingPolicy: binsRes?.data?.rounding_policy || '',
         };
 
         const processedBase = processStudentData(data, fetchEmail, studentName, undefined, classAverages, gradingConfig);
         const processed = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+        const isRollupSubmission = (submission) => {
+          const category = String(submission?.category || '').trim().toLowerCase();
+          const name = String(submission?.name || '').trim().toLowerCase();
+          if (!category || !name || category !== name) return false;
+          return (
+            category.includes('attendance')
+            || category.includes('lab')
+            || category.includes('project')
+          );
+        };
+        const rawAssignmentsList = rawSubmissions
+          .filter((submission) => {
+            const category = String(submission?.category || '').trim();
+            const name = String(submission?.name || '').trim();
+            if (!name || !category || category.toLowerCase() === 'uncategorized') return false;
+            if (isRollupSubmission(submission)) return false;
+            return Number(submission?.maxPoints) > 0;
+          })
+          .map((submission) => {
+            const score = Number(submission.score) || 0;
+            const maxPoints = Number(submission.maxPoints) || 0;
+            return {
+              category: submission.category,
+              name: submission.name,
+              score,
+              maxPoints,
+              capPoints: maxPoints,
+              percentage: maxPoints > 0 ? (score / maxPoints) * 100 : 0,
+              submissionTime: submission.submissionTime,
+              lateness: submission.lateness,
+            };
+          });
+        const rawTrendData = rawAssignmentsList.map((assignment, idx) => ({
+          index: idx + 1,
+          name: `${assignment.category}-${assignment.name}`,
+          percentage: assignment.percentage,
+          category: assignment.category,
+          score: assignment.score,
+          maxPoints: assignment.maxPoints,
+          submissionTime: assignment.submissionTime,
+        }));
 
         const trendFromApi = policyRes?.data?.questComponentTrend;
         const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);
@@ -237,8 +291,13 @@ export default function StudentProfile() {
 
         setStudentData({
           ...processed,
+          rawAssignmentsList,
+          rawTrendData,
+          gradeBins: gradingConfig.gradeBins,
+          roundingPolicy: gradingConfig.roundingPolicy,
           examPolicyRows: policyRows,
           questComponentTrend,
+          gradeFlow: gradeFlowRes?.data || null,
         });
         setLoading(false);
       })
@@ -267,20 +326,31 @@ export default function StudentProfile() {
     );
   }
 
+  const gradeFlowMode = tab === 2;
+
   return (
-    <Box className='student-profile-shell' sx={{ minHeight: '100vh', pb: 4, overflowX: 'hidden' }}>
+    <Box
+      className='student-profile-shell'
+      sx={{
+        height: gradeFlowMode ? '100%' : 'auto',
+        minHeight: gradeFlowMode ? 0 : '100vh',
+        pb: gradeFlowMode ? 0 : 4,
+        overflow: gradeFlowMode ? 'hidden' : 'visible',
+      }}
+    >
       {/* Page Header with Student Name and Admin Student Selector */}
       <Paper 
         elevation={0} 
         className='glass-section'
         sx={{ 
-          p: 3, 
-          mb: 3,
+          p: gradeFlowMode ? 1.5 : 3,
+          mb: gradeFlowMode ? 1 : 3,
           borderRadius: 2,
+          flexShrink: 0,
         }}
       >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+          <Typography variant={gradeFlowMode ? 'h6' : 'h4'} component="h1" sx={{ fontWeight: 600 }}>
             {studentData?.studentName || studentName || 'Loading...'}
           </Typography>
           
@@ -307,13 +377,24 @@ export default function StudentProfile() {
         </Box>
       </Paper>
 
-      <Box sx={{ px: { xs: 1.5, sm: 2, md: 4 }, width: '100%', overflowX: 'hidden' }}>
+      <Box
+        sx={{
+          px: gradeFlowMode ? 0 : { xs: 1.5, sm: 2, md: 4 },
+          width: '100%',
+          height: gradeFlowMode ? 'calc(100% - 74px)' : 'auto',
+          minHeight: 0,
+          overflow: gradeFlowMode ? 'hidden' : 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         {/* Tabs */}
         <Tabs 
           value={tab} 
           onChange={(e, newValue) => setTab(newValue)}
           sx={{ 
-            mb: 3,
+            mb: gradeFlowMode ? 1 : 3,
+            flexShrink: 0,
             '& .MuiTab-root': {
               textTransform: 'none',
               fontSize: '0.95rem',
@@ -323,6 +404,7 @@ export default function StudentProfile() {
         >
           <Tab label="Performance Analytics" />
           <Tab label="Buckets" />
+          <Tab label="Grade Flow" />
           <Tab label="Concept Map" />
       </Tabs>
 
@@ -352,8 +434,27 @@ export default function StudentProfile() {
         </Box>
       )}
 
-      {/* Concept Map Tab */}
+      {/* Grade Flow Tab */}
       {tab === 2 && (
+        loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : error ? (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+        ) : studentData ? (
+          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <GradeDataFlow studentData={studentData} />
+          </Box>
+        ) : (
+          <Typography sx={{ color: 'text.secondary' }}>No grade data available yet.</Typography>
+        )
+      )}
+
+      {/* Concept Map Tab */}
+      {tab === 3 && (
         <Box sx={{ p: 0 }}>
           <ConceptMap embedded />
         </Box>

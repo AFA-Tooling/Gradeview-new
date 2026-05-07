@@ -7,12 +7,21 @@ import {
 
 const router = Router({ mergeParams: true });
 
+function isPolicySummarySection(sectionName = '') {
+    const normalized = String(sectionName || '').trim().toLowerCase();
+    return Boolean(normalized)
+        && normalized !== 'uncategorized'
+        && !normalized.startsWith('_')
+        && !normalized.endsWith('_raw')
+        && !normalized.includes('_raw');
+}
+
 async function buildStudentsWithSummary(students = [], courseId = null) {
     const sectionNames = new Set();
     students.forEach((student) => {
         Object.keys(student?.scores || {}).forEach((sectionName) => {
             if (!sectionName) return;
-            if (String(sectionName).toLowerCase() === 'uncategorized') return;
+            if (!isPolicySummarySection(sectionName)) return;
             sectionNames.add(sectionName);
         });
     });

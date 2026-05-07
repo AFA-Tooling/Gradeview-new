@@ -1,6 +1,6 @@
 html {
   height: 100%;
-  background: #060913;
+  background: #E8EAEE;
   overflow: hidden;
 }
 #root {
@@ -15,8 +15,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   height: 100%;
-  background: #060913;
-  color: #eaf2ff;
+  background: #E8EAEE;
+  color: #111111;
   overflow: hidden;
 }
 
@@ -35,10 +35,14 @@ code {
 }
 
 *::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.04);
+  background: transparent;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(118, 160, 255, 0.74), rgba(90, 238, 255, 0.74));
+  background: rgba(128, 128, 128, 0.35);
   border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
 }
