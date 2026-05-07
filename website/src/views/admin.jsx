@@ -53,22 +53,82 @@ ChartJS.register(
   Legend
 );
 
+const sectionOrderCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function getTrailingSectionRank(section = '') {
+  const normalized = String(section || '').trim().toLowerCase();
+  if (normalized.includes('project')) return 0;
+  if (normalized.includes('lab')) return 1;
+  if (normalized.includes('attendance') || normalized.includes('attendence')) return 2;
+  return null;
+}
+
+function compareSectionEntries([sectionA], [sectionB]) {
+  const rankA = getTrailingSectionRank(sectionA);
+  const rankB = getTrailingSectionRank(sectionB);
+
+  if (rankA === null && rankB === null) {
+    return sectionOrderCollator.compare(sectionA, sectionB);
+  }
+  if (rankA === null) return -1;
+  if (rankB === null) return 1;
+  if (rankA !== rankB) return rankA - rankB;
+  return sectionOrderCollator.compare(sectionA, sectionB);
+}
+
+function normalizeSectionName(sectionName = '') {
+  return String(sectionName || '').trim().toLowerCase();
+}
+
+function isRawOnlySection(sectionName = '') {
+  const normalized = normalizeSectionName(sectionName);
+  return normalized.startsWith('_') || normalized.endsWith('_raw') || normalized.includes('_raw');
+}
+
+function findPolicySummaryTotal(summarySectionTotals = {}, sectionName = '') {
+  const target = normalizeSectionName(sectionName);
+  if (!target) return null;
+  for (const [key, value] of Object.entries(summarySectionTotals || {})) {
+    if (normalizeSectionName(key) === target) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : 0;
+    }
+  }
+  return null;
+}
+
+function getPolicySummaryTotal(summarySectionTotals = {}) {
+  return Object.entries(summarySectionTotals || {}).reduce((sum, [section, value]) => {
+    if (isRawOnlySection(section) || normalizeSectionName(section) === 'uncategorized') {
+      return sum;
+    }
+    const numeric = Number(value);
+    return sum + (Number.isFinite(numeric) ? numeric : 0);
+  }, 0);
+}
+
+function hasPolicySummaryTotals(summarySectionTotals = {}) {
+  return Object.keys(summarySectionTotals || {}).some((section) => (
+    !isRawOnlySection(section) && normalizeSectionName(section) !== 'uncategorized'
+  ));
+}
 
 
-export default function Admin({ displayMode = 'dark' }) {
-  const isLight = displayMode === 'light';
+
+export default function Admin() {
+  const isLight = true;
 
   // Adaptive palette — use once, ref everywhere
-  const hdrBg1        = isLight ? 'rgba(200, 218, 255, 0.92)' : 'rgba(53, 77, 154, 0.9)';
-  const hdrBg1s       = isLight ? 'rgba(200, 218, 255, 0.95)' : 'rgba(53, 77, 154, 0.94)';
-  const hdrBg2        = isLight ? 'rgba(215, 228, 255, 0.88)' : 'rgba(60, 88, 175, 0.88)';
-  const hdrBg2s       = isLight ? 'rgba(215, 228, 255, 0.92)' : 'rgba(60, 88, 175, 0.92)';
-  const hdrColor      = isLight ? '#1a3470'                   : 'rgba(242, 247, 255, 0.98)';
-  const hdrBorderH    = isLight ? '#a0b8d8'                   : '#999';
-  const hdrBorderV    = isLight ? '#b8cde8'                   : '#ccc';
-  const chartTick     = isLight ? 'rgba(26, 52, 112, 0.82)'   : 'rgba(210, 226, 255, 0.92)';
-  const chartTitle    = isLight ? 'rgba(26, 52, 112, 0.95)'   : 'rgba(224, 236, 255, 0.95)';
-  const chartGrid     = isLight ? 'rgba(30, 58, 138, 0.1)'    : 'rgba(255, 255, 255, 0.12)';
+  const hdrBg1        = '#EDEEF1';
+  const hdrBg1s       = '#E5E7EA';
+  const hdrBg2        = '#F4F5F7';
+  const hdrBg2s       = '#EDEEF1';
+  const hdrColor      = '#111111';
+  const hdrBorderH    = 'rgba(0, 0, 0, 0.18)';
+  const hdrBorderV    = 'rgba(0, 0, 0, 0.18)';
+  const chartTick     = 'rgba(0, 0, 0, 0.75)';
+  const chartTitle    = 'rgba(0, 0, 0, 0.85)';
+  const chartGrid     = 'rgba(0, 0, 0, 0.08)';
   // TAB STATE
   const [tab, setTab] = useState(0);
   const [courses, setCourses] = useState([]);
@@ -308,6 +368,11 @@ export default function Admin({ displayMode = 'dark' }) {
     return grouped;
   }, [assignments]);
 
+  const orderedAssignmentSections = useMemo(
+    () => Object.entries(assignmentsBySection).sort(compareSectionEntries),
+    [assignmentsBySection]
+  );
+
   // Lookup configured cap for a given section name (case-insensitive).
   // Returns 0 if no cap configured (then caller falls back to raw max).
   const lookupSectionCap = (sectionName) => {
@@ -354,10 +419,19 @@ export default function Admin({ displayMode = 'dark' }) {
           .filter(a => a.section === sec)
           .reduce((sum, a) => sum + Number(flatScores[a.name] || 0), 0);
         const cap = lookupSectionCap(sec);
-        sectionTotals[sec] = cap > 0 ? Math.min(rawSum, cap) : rawSum;
+        const rawTotal = cap > 0 ? Math.min(rawSum, cap) : rawSum;
+        const policyTotal = isRawOnlySection(sec)
+          ? null
+          : findPolicySummaryTotal(stu.summarySectionTotals, sec);
+        sectionTotals[sec] = policyTotal != null ? policyTotal : rawTotal;
       });
 
-      const total = Object.values(sectionTotals).reduce((s, v) => s + v, 0);
+      const policyTotal = getPolicySummaryTotal(stu.summarySectionTotals);
+      const fallbackTotal = Object.entries(sectionTotals).reduce(
+        (sum, [section, value]) => sum + (isRawOnlySection(section) ? 0 : (Number(value) || 0)),
+        0
+      );
+      const total = hasPolicySummaryTotals(stu.summarySectionTotals) ? policyTotal : fallbackTotal;
       return { ...stu, scores: flatScores, sectionTotals, total };
     });
   }, [studentScores, allAssignments, assignmentsBySection, sectionCaps]);
@@ -411,7 +485,7 @@ export default function Admin({ displayMode = 'dark' }) {
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const visibleSections = Object.entries(assignmentsBySection)
+    const visibleSections = orderedAssignmentSections
       .map(([section, sectionAssignments]) => [
         section,
         sectionAssignments.filter(a => visibleAssignments[a.name]),
@@ -612,7 +686,7 @@ export default function Admin({ displayMode = 'dark' }) {
         {/* Assignment Buttons */}
         {!loadingA && !errorA && (
         <>
-            {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => (
+            {orderedAssignmentSections.map(([section, sectionAssignments]) => (
               <Box key={section} mb={4}>
                 <Paper elevation={0} className='glass-section' sx={{ p: 3, borderRadius: 2 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
@@ -623,8 +697,8 @@ export default function Admin({ displayMode = 'dark' }) {
                       variant="contained"
                       size="small"
                       sx={{ 
-                        bgcolor: '#4f46e5', 
-                        '&:hover': { bgcolor: '#4338ca' },
+                        bgcolor: '#111111',
+                        '&:hover': { bgcolor: '#000000' },
                         textTransform: 'none',
                         fontWeight: 500
                       }}
@@ -646,14 +720,14 @@ export default function Admin({ displayMode = 'dark' }) {
                               minWidth: 140, 
                               height: 56, 
                               fontSize: '0.95rem',
-                              borderColor: isLight ? 'rgba(30, 58, 138, 0.3)' : 'rgba(191, 211, 255, 0.4)',
-                              color: isLight ? '#1e3a8a' : 'rgba(232, 241, 255, 0.9)',
+                              borderColor: isLight ? 'rgba(0, 0, 0, 0.28)' : 'rgba(191, 211, 255, 0.4)',
+                              color: isLight ? '#111111' : 'rgba(232, 241, 255, 0.9)',
                               textTransform: 'none',
                               fontWeight: 500,
                               '&:hover': {
-                                borderColor: isLight ? '#1e3a8a' : '#6a8cff',
-                                color: isLight ? '#0f2460' : '#f7fbff',
-                                bgcolor: isLight ? 'rgba(30, 58, 138, 0.06)' : 'rgba(104, 144, 255, 0.18)'
+                                borderColor: isLight ? '#111111' : '#444444',
+                                color: isLight ? '#000000' : '#f7fbff',
+                                bgcolor: isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(104, 144, 255, 0.18)'
                               }
                             }}
                             onClick={() => handleAssignClick(item)}
@@ -703,19 +777,19 @@ export default function Admin({ displayMode = 'dark' }) {
                     datasets: [{
                       label: 'Count',
                       data: (distribution.distribution || []).map(d => d.count),
-                      backgroundColor: (distribution.distribution || []).map(d => 
-                        scoreSelected.includes(d.range) ? '#4caf50' : '#f59e0b'
+                      backgroundColor: (distribution.distribution || []).map(d =>
+                        scoreSelected.includes(d.range) ? '#2A9D90' : 'rgba(0, 0, 0, 0.12)'
                       ),
-                      borderColor: useLineChart ? '#f59e0b' : undefined,
+                      borderColor: useLineChart ? '#2A9D90' : undefined,
                       borderWidth: useLineChart ? 3 : 0,
                       pointRadius: useLineChart ? (distribution.distribution || []).map(d =>
                         scoreSelected.includes(d.range) ? 6 : 0  // Show small dot only when selected
                       ) : 0,
                       pointHoverRadius: useLineChart ? 8 : 0,  // Show hover dot
                       pointBackgroundColor: useLineChart ? (distribution.distribution || []).map(d =>
-                        scoreSelected.includes(d.range) ? '#4caf50' : '#f59e0b'
+                        scoreSelected.includes(d.range) ? '#2A9D90' : 'rgba(0, 0, 0, 0.12)'
                       ) : undefined,
-                      pointBorderColor: useLineChart ? '#0b1022' : undefined,
+                      pointBorderColor: useLineChart ? '#FFFFFF' : undefined,
                       pointBorderWidth: useLineChart ? 2 : 0,
                       tension: 0.1, // Slight curve for line chart
                     }]
@@ -797,13 +871,13 @@ export default function Admin({ displayMode = 'dark' }) {
                   return (
                 <Box mt={4}>
                     <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-                      <Typography variant="body2" sx={{ color: isLight ? 'rgba(30, 58, 138, 0.72)' : 'rgba(224, 236, 255, 0.92)' }}>
+                      <Typography variant="body2" sx={{ color: isLight ? 'rgba(0, 0, 0, 0.7)' : 'rgba(224, 236, 255, 0.92)' }}>
                         💡 Click on {useLineChart ? 'points' : 'bars'} to select/deselect score ranges. Selected ranges will turn green.
                       </Typography>
                       {scoreSelected.length > 0 && (
                         <Button 
                           variant="contained" 
-                          sx={{ bgcolor: '#d97706', '&:hover': { bgcolor: '#b45309' }, color: '#fff' }}
+                          sx={{ bgcolor: '#111111', '&:hover': { bgcolor: '#000000' }, color: '#fff' }}
                           size="small"
                           onClick={() => setScoreDetailOpen(true)}
                         >
@@ -812,7 +886,7 @@ export default function Admin({ displayMode = 'dark' }) {
                       )}
                     </Box>
                     {useLineChart && (
-                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: isLight ? '#b45309' : '#fbbf24', fontStyle: 'italic' }}>
+                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: isLight ? '#444444' : '#666666', fontStyle: 'italic' }}>
                         📈 Switched to line chart for better readability with {numBins} data points
                       </Typography>
                     )}
@@ -1025,7 +1099,7 @@ export default function Admin({ displayMode = 'dark' }) {
                     </Button>
 
                     {/* Section Buttons */}
-                    {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => {
+                    {orderedAssignmentSections.map(([section, sectionAssignments]) => {
                         const visibleCount = sectionAssignments.filter(a => visibleAssignments[a.name]).length;
                         const total = sectionAssignments.length;
                         const allVisible = visibleCount === total && total > 0;
@@ -1037,14 +1111,14 @@ export default function Admin({ displayMode = 'dark' }) {
                                     size="small"
                                     variant={allVisible ? "contained" : "outlined"}
                                     sx={{
-                                        backgroundColor: allVisible ? '#4f46e5' : 'transparent',
-                                        color: allVisible ? 'white' : (isLight ? '#1e3a8a' : 'rgba(232,241,255,0.9)'),
-                                        borderColor: allVisible ? '#4f46e5' : (isLight ? 'rgba(30,58,138,0.3)' : 'rgba(191,211,255,0.35)'),
+                                        backgroundColor: allVisible ? '#111111' : 'transparent',
+                                        color: allVisible ? 'white' : (isLight ? '#111111' : 'rgba(232,241,255,0.9)'),
+                                        borderColor: allVisible ? '#111111' : (isLight ? 'rgba(0, 0, 0, 0.28)' : 'rgba(191,211,255,0.35)'),
                                         textTransform: 'none',
                                         fontWeight: 500,
                                         '&:hover': {
-                                          backgroundColor: allVisible ? '#4338ca' : (isLight ? 'rgba(30, 58, 138, 0.08)' : 'rgba(104, 144, 255, 0.14)'),
-                                          borderColor: '#4f46e5'
+                                          backgroundColor: allVisible ? '#000000' : (isLight ? 'rgba(0, 0, 0, 0.06)' : 'rgba(104, 144, 255, 0.14)'),
+                                          borderColor: '#111111'
                                         }
                                     }}
                                     onClick={() => setSelectorDialogOpen(section)}
@@ -1119,7 +1193,7 @@ export default function Admin({ displayMode = 'dark' }) {
                                                         onChange={() => {}}
                                                       style={{ marginRight: '8px', cursor: 'pointer', accentColor: '#66b2ff' }}
                                                     />
-                                                    <span style={{ color: isLight ? '#1e3a8a' : 'rgba(231, 241, 255, 0.96)' }}>{a.name}</span>
+                                                    <span style={{ color: isLight ? '#111111' : 'rgba(231, 241, 255, 0.96)' }}>{a.name}</span>
                                                 </Box>
                                             ))}
                                         </Box>
@@ -1137,7 +1211,7 @@ export default function Admin({ displayMode = 'dark' }) {
                 {/* Main Table with Tree Structure Headers */}
                 <TableContainer 
                     sx={{ 
-                    bgcolor: isLight ? 'rgba(243, 248, 255, 0.95)' : 'rgba(8, 14, 30, 0.74)',
+                    bgcolor: isLight ? '#FAFAFB' : 'rgba(8, 14, 30, 0.74)',
                     overflowX: 'auto',
                     overflowY: 'visible',
                         position: 'relative',
@@ -1146,19 +1220,19 @@ export default function Admin({ displayMode = 'dark' }) {
                             width: '14px'
                         },
                         '&::-webkit-scrollbar-track': {
-                          backgroundColor: isLight ? 'rgba(30,58,138,0.08)' : 'rgba(255,255,255,0.12)',
+                          backgroundColor: isLight ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255,255,255,0.12)',
                             borderRadius: '8px'
                         },
                         '&::-webkit-scrollbar-thumb': {
-                          backgroundColor: isLight ? 'rgba(30,100,220,0.5)' : 'rgba(102, 175, 255, 0.9)',
+                          backgroundColor: 'rgba(0, 0, 0, 0.35)',
                             borderRadius: '8px',
-                          border: isLight ? '2px solid rgba(200,220,255,0.6)' : '2px solid rgba(255,255,255,0.12)',
+                          border: '2px solid rgba(0, 0, 0, 0.08)',
                             '&:hover': {
-                            backgroundColor: isLight ? 'rgba(30,100,220,0.75)' : 'rgba(102, 175, 255, 1)'
+                            backgroundColor: 'rgba(0, 0, 0, 0.55)'
                             }
                         },
                         '&::-webkit-scrollbar-corner': {
-                          backgroundColor: isLight ? 'rgba(30,58,138,0.06)' : 'rgba(255,255,255,0.12)'
+                          backgroundColor: isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255,255,255,0.12)'
                         }
                     }}
                 >
@@ -1203,7 +1277,7 @@ export default function Admin({ displayMode = 'dark' }) {
                                 </TableCell>
                                 
                                 {/* Section Headers */}
-                                {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => {
+                                {orderedAssignmentSections.map(([section, sectionAssignments]) => {
                                     const visibleInSection = sectionAssignments.filter(a => visibleAssignments[a.name]);
                                     if (visibleInSection.length === 0) return null;
                                     
@@ -1238,7 +1312,7 @@ export default function Admin({ displayMode = 'dark' }) {
                                 </TableCell>
                                 
                                 {/* Section Total + Assignment Sub-headers */}
-                                {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => {
+                                {orderedAssignmentSections.map(([section, sectionAssignments]) => {
                                     const visibleInSection = sectionAssignments.filter(a => visibleAssignments[a.name]);
                                     if (visibleInSection.length === 0) return null;
                                     
@@ -1276,7 +1350,7 @@ export default function Admin({ displayMode = 'dark' }) {
                                         position: 'sticky',
                                         left: 0,
                                         zIndex: 10,
-                                        backgroundColor: isLight ? 'rgba(245, 249, 255, 0.98)' : 'rgba(18, 28, 55, 0.94)',
+                                        backgroundColor: isLight ? '#FAFAFB' : 'rgba(18, 28, 55, 0.94)',
                                         borderRight: `2px solid ${hdrBorderH}`,
                                         minWidth: '200px',
                                         maxWidth: '250px'
@@ -1308,7 +1382,7 @@ export default function Admin({ displayMode = 'dark' }) {
                                     </TableCell>
                                     
                                     {/* Section + Assignment Scores */}
-                                    {Object.entries(assignmentsBySection).map(([section, sectionAssignments]) => {
+                                    {orderedAssignmentSections.map(([section, sectionAssignments]) => {
                                         const visibleInSection = sectionAssignments.filter(a => visibleAssignments[a.name]);
                                         if (visibleInSection.length === 0) return null;
                                         

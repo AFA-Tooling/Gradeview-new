@@ -8,6 +8,7 @@
     "@fontsource/roboto": "^5.2.5",
     "@mui/icons-material": "^6.4.6",
     "@mui/material": "^6.4.6",
+    "@xyflow/react": "^12.10.2",
     "axios": "^1.8.1",
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",

@@ -9,11 +9,8 @@ export default function PageHeader({ children }) {
             sx={{
                 m: 2,
                 fontWeight: 600,
-                letterSpacing: '0.02em',
-                background: 'linear-gradient(90deg, #dce9ff, #90b0ff, #8df1ff)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                textShadow: '0 0 18px rgba(125, 173, 255, 0.35)',
+                letterSpacing: '0.01em',
+                color: 'text.primary',
             }}
         >
             {children}

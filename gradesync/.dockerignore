@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.idea/
+.DS_Store
+logs/
+iclicker_csv_exports/

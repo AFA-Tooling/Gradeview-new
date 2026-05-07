@@ -21,3 +21,6 @@ secrets/
 docs/*.md
 
 *.dev-local
+
+# Local course data exports
+gradesync/iclicker_csv_exports/

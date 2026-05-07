@@ -134,7 +134,10 @@ export function normalizeCategoryName(categoryName = '') {
 }
 
 function normalizeAssignmentScore(category, rawScore, rawMaxPoints) {
-  if (isAttendanceCategory(category)) {
+  // Legacy collapse-to-binary only applies to 1-point Attendance items.
+  // The policy-computed Attendance / Participation rollup carries
+  // max_points=15 and must be summed normally.
+  if (isAttendanceCategory(category) && Number(rawMaxPoints) <= 1) {
     return {
       score: rawScore > 0 ? 1 : 0,
       maxPoints: 1,
@@ -173,8 +176,13 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
     const submissionTime = submission.submissionTime;
     const lateness = submission.lateness;
 
-    // Skip Uncategorized assignments
+    // Skip Uncategorized assignments and hidden raw-data categories
+    // (anything with a leading underscore — e.g. '_attendance_raw' for
+    // iClicker per-section data and Gradescope makeup quizzes/worksheets).
     if (!category || category === 'Uncategorized' || category === 'uncategorized') {
+      return;
+    }
+    if (typeof category === 'string' && category.startsWith('_')) {
       return;
     }
 
@@ -307,8 +315,13 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
 
   Object.entries(data).forEach(([rawCategory, assignments]) => {
     const category = normalizeCategoryName(rawCategory);
-    // Skip Uncategorized assignments
+    // Skip Uncategorized assignments and hidden raw-data categories
+    // (anything with a leading underscore — e.g. '_attendance_raw' for
+    // iClicker per-section data and Gradescope makeup quizzes/worksheets).
     if (!category || category === 'Uncategorized' || category === 'uncategorized') {
+      return;
+    }
+    if (typeof category === 'string' && category.startsWith('_')) {
       return;
     }
 

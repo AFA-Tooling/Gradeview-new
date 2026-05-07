@@ -116,7 +116,9 @@ export async function validateStaffOrAdminMiddleware(req, _, next) {
 export async function validateAdminPortalMiddleware(req, _, next) {
     const auth = await getAuthContext(req);
     ensurePermission(
-        auth.role === IAM_ROLE.SUPER_ADMIN || auth.role === IAM_ROLE.COURSE_ADMIN,
+        auth.role === IAM_ROLE.SUPER_ADMIN
+            || auth.role === IAM_ROLE.COURSE_ADMIN
+            || auth.role === IAM_ROLE.INSTRUCTOR,
         'admin permission required',
     );
     next();

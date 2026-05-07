@@ -13,6 +13,25 @@ const QUEST_SUMMARY_CAP = 25;
 const MIDTERM_SUMMARY_CAP = 50;
 const POSTTERM_SUMMARY_CAP = 75;
 const ATTENDANCE_SUMMARY_CAP = 15;
+const LABS_SUMMARY_CAP = 80;
+const PROJECTS_SUMMARY_CAP = 155;
+
+const COURSE_POLICY_COMPONENTS = [
+    { key: 'attendance', label: 'Attendance / Participation', cap: ATTENDANCE_SUMMARY_CAP },
+    { key: 'labs', label: 'Labs', cap: LABS_SUMMARY_CAP },
+    { key: 'projects', label: 'Projects', cap: PROJECTS_SUMMARY_CAP },
+    { key: 'quest', label: 'Quest', cap: QUEST_SUMMARY_CAP },
+    { key: 'midterm', label: 'Midterm', cap: MIDTERM_SUMMARY_CAP },
+    { key: 'postterm', label: 'Postterm', cap: POSTTERM_SUMMARY_CAP },
+];
+
+const PROJECT_POLICY_CAPS = [
+    { key: '1', label: 'Project 1: Wordle™-lite', cap: 15, patterns: [/\bproject\s*1\b/i] },
+    { key: '2', label: 'Project 2: Spelling Bee', cap: 25, patterns: [/\bproject\s*2\b/i] },
+    { key: '3', label: 'Project 3: 2048', cap: 35, patterns: [/\bproject\s*3\b/i] },
+    { key: '4', label: 'Project 4: Explore', cap: 20, patterns: [/\bproject\s*4\b/i] },
+    { key: '5', label: 'Final Project', cap: 60, patterns: [/\bproject\s*5\b/i, /\bfinal\s+project\b/i] },
+];
 
 const QUEST_CATEGORY_ALIASES = {
     'abstraction': 'abstraction',
@@ -879,6 +898,7 @@ async function getQuestSummaryDistributionFromComponents(courseId = null) {
                 studentEmail: row.student_email,
                 categoryBest: new Map(),
                 categoryCaps: new Map(),
+                hasQuestData: false,
             });
         }
 
@@ -891,6 +911,8 @@ async function getQuestSummaryDistributionFromComponents(courseId = null) {
         const scoresByQuestion = row.scores_by_question && typeof row.scores_by_question === 'object'
             ? row.scores_by_question
             : {};
+
+        student.hasQuestData = true;
 
         const scoreLookup = new Map();
         Object.entries(scoresByQuestion).forEach(([rawKey, rawValue]) => {
@@ -984,7 +1006,7 @@ async function getQuestSummaryDistributionFromComponents(courseId = null) {
         });
     });
 
-    return Array.from(studentMap.values()).map((student) => {
+    return Array.from(studentMap.values()).filter((student) => student.hasQuestData).map((student) => {
         let categoryTotal = 0;
         student.categoryBest.forEach((bestScore, categoryKey) => {
             const cap = Number(student.categoryCaps.get(categoryKey));
@@ -1034,18 +1056,39 @@ async function getQuestSummaryDistribution(courseId = null) {
         const hasPolicyData = policyResult.rows.some((row) => Number.isFinite(Number(row.best_percentage)));
 
         if (hasPolicyData) {
+            const componentFallbackRows = await getQuestSummaryDistributionFromComponents(courseId);
+            const componentFallbackByEmail = new Map(
+                componentFallbackRows.map((row) => [
+                    String(row.studentEmail || '').trim().toLowerCase(),
+                    row,
+                ]),
+            );
+
             return policyResult.rows.map((row) => {
                 const bestPct = Number(row.best_percentage);
-                const rawScore = Number.isFinite(bestPct)
+                const fallbackRow = componentFallbackByEmail.get(
+                    String(row.student_email || '').trim().toLowerCase(),
+                );
+                const policyRawScore = Number.isFinite(bestPct)
                     ? (bestPct / 100) * QUEST_SUMMARY_CAP
-                    : 0;
+                    : null;
+                const policyScore = Number.isFinite(policyRawScore)
+                    ? Math.min(QUEST_SUMMARY_CAP, toCeilNumber(policyRawScore))
+                    : null;
+                const fallbackScore = Number(fallbackRow?.score);
+                const effectiveScore = Math.max(
+                    Number.isFinite(policyScore) ? policyScore : 0,
+                    Number.isFinite(fallbackScore) ? fallbackScore : 0,
+                );
 
                 return {
                     studentName: row.student_name,
                     studentEmail: row.student_email,
-                    score: Math.min(QUEST_SUMMARY_CAP, toCeilNumber(rawScore)),
+                    score: Math.min(QUEST_SUMMARY_CAP, effectiveScore),
                 };
-            });
+            }).filter((row) => row.score > 0 || componentFallbackByEmail.has(
+                String(row.studentEmail || '').trim().toLowerCase(),
+            ));
         }
     } catch (err) {
         console.warn('Quest policy summary query failed, falling back to component summary:', err?.message || err);
@@ -1057,6 +1100,40 @@ async function getQuestSummaryDistribution(courseId = null) {
 async function getAttendanceSummaryDistribution(category, courseId = null) {
     const pool = getPool();
     const normalizedCategory = normalizeSummaryCategoryName(category);
+
+    let effectiveQuery = `
+        SELECT
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            SUM(
+                LEAST(
+                    5,
+                    GREATEST(0, COALESCE(e.final_percentage, 0)) / 100.0 * 5
+                )
+            ) AS policy_score
+        FROM student_attendance_effective_scores e
+        JOIN students st ON st.id = e.student_id
+        JOIN courses c ON c.id = e.course_id
+        WHERE 1=1
+    `;
+    const effectiveParams = [];
+    if (courseId) {
+        effectiveParams.push(String(courseId));
+        effectiveQuery += ` AND (c.gradescope_course_id::text = $${effectiveParams.length} OR c.id::text = $${effectiveParams.length})`;
+    }
+    effectiveQuery += `
+        GROUP BY st.id, st.legal_name, st.email
+        ORDER BY st.legal_name
+    `;
+
+    const effectiveResult = await pool.query(effectiveQuery, effectiveParams);
+    if (effectiveResult.rows.length > 0) {
+        return effectiveResult.rows.map((row) => ({
+            studentName: row.student_name,
+            studentEmail: row.student_email,
+            score: Math.min(ATTENDANCE_SUMMARY_CAP, toCeilNumber(row.policy_score)),
+        }));
+    }
 
     let query = `
         SELECT
@@ -1073,6 +1150,8 @@ async function getAttendanceSummaryDistribution(category, courseId = null) {
           ON a.id = s.assignment_id
          AND a.course_id = c.id
          AND LOWER(COALESCE(a.category, '')) = $1
+         AND a.title !~* 'practice'
+         AND a.title !~* 'lecture\\s+quiz'
         WHERE 1=1
     `;
 
@@ -1128,6 +1207,110 @@ async function getAttendanceSummaryDistribution(category, courseId = null) {
     }));
 }
 
+async function getLabsSummaryDistribution(courseId = null) {
+    const pool = getPool();
+
+    let rollupQuery = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            s.total_score,
+            s.scores_by_question
+        FROM students st
+        JOIN courses c ON st.course_id = c.id
+        JOIN assignments a
+          ON a.course_id = c.id
+         AND a.assignment_id LIKE 'labs_rollup:%'
+        LEFT JOIN submissions s
+          ON s.student_id = st.id
+         AND s.assignment_id = a.id
+        WHERE 1=1
+    `;
+    const rollupParams = [];
+    if (courseId) {
+        rollupParams.push(String(courseId));
+        rollupQuery += ` AND (c.gradescope_course_id::text = $${rollupParams.length} OR c.id::text = $${rollupParams.length})`;
+    }
+    rollupQuery += ` ORDER BY st.legal_name`;
+
+    const rollupResult = await pool.query(rollupQuery, rollupParams);
+    const rollupRows = rollupResult.rows
+        .map((row) => {
+            const rollupLabs = Array.isArray(row?.scores_by_question?.labs)
+                ? row.scores_by_question.labs
+                : [];
+            const rollupSummary = rollupLabs.length > 0 ? graphSummarizeLabResults(rollupLabs) : null;
+            return {
+                studentName: row.student_name,
+                studentEmail: row.student_email,
+                score: Math.min(LABS_SUMMARY_CAP, graphSafeNumber(rollupSummary?.score ?? row.total_score)),
+            };
+        })
+        .filter((row) => row.score > 0);
+
+    let rawQuery = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            a.id AS assignment_pk,
+            a.assignment_id,
+            a.title,
+            COALESCE(a.category, 'Uncategorized') AS category,
+            a.max_points AS assignment_max_points,
+            s.total_score,
+            s.max_points AS submission_max_points
+        FROM students st
+        JOIN courses c ON st.course_id = c.id
+        JOIN assignments a ON a.course_id = c.id
+        LEFT JOIN submissions s
+          ON s.student_id = st.id
+         AND s.assignment_id = a.id
+        WHERE 1=1
+          AND a.assignment_id NOT LIKE 'labs_rollup:%'
+          AND a.assignment_id NOT LIKE 'project_rollup:%'
+          AND a.assignment_id NOT LIKE 'attendance_rollup:%'
+          AND (
+            COALESCE(a.category, 'Uncategorized') IN ('Labs', '_labs_raw')
+          )
+          AND a.title !~* 'practice'
+    `;
+    const rawParams = [];
+    if (courseId) {
+        rawParams.push(String(courseId));
+        rawQuery += ` AND (c.gradescope_course_id::text = $${rawParams.length} OR c.id::text = $${rawParams.length})`;
+    }
+    rawQuery += ` ORDER BY st.legal_name, a.title`;
+
+    const rawResult = await pool.query(rawQuery, rawParams);
+    const studentMap = new Map();
+    rawResult.rows.forEach((row) => {
+        const studentId = String(row.student_id);
+        if (!studentMap.has(studentId)) {
+            studentMap.set(studentId, {
+                studentName: row.student_name,
+                studentEmail: row.student_email,
+                rows: [],
+            });
+        }
+        studentMap.get(studentId).rows.push(row);
+    });
+
+    const rawRows = Array.from(studentMap.values())
+        .map((student) => {
+            const derived = deriveLabsRollupFromRawSubmissions(student.rows);
+            return {
+                studentName: student.studentName,
+                studentEmail: student.studentEmail,
+                score: Math.min(LABS_SUMMARY_CAP, graphSafeNumber(derived.score)),
+            };
+        })
+        .filter((row) => row.score > 0);
+
+    return rawRows.length > 0 ? rawRows : rollupRows;
+}
+
 /**
  * Gets score distribution for category summary (sum of all assignments in category)
  * @param {string} category - The assignment category (may not match DB, legacy parameter)
@@ -1149,6 +1332,10 @@ export async function getCategorySummaryDistribution(category, courseId = null) 
         return getExamSummaryDistribution('postterm', POSTTERM_SUMMARY_CAP, courseId);
     }
 
+    if (normalizedCategory === 'labs') {
+        return getLabsSummaryDistribution(courseId);
+    }
+
     if (isAttendanceSummaryCategory(normalizedCategory)) {
         return getAttendanceSummaryDistribution(category, courseId);
     }
@@ -1166,6 +1353,7 @@ export async function getCategorySummaryDistribution(category, courseId = null) 
         JOIN courses c ON a.course_id = c.id
                 WHERE COALESCE(a.category, 'Uncategorized') = $1
           AND s.total_score IS NOT NULL
+          AND a.title !~* 'practice'
     `;
 
     const params = [category];
@@ -1469,6 +1657,1073 @@ export async function getAllStudentsFromDb(courseId = null) {
 
     const result = await pool.query(query, params);
     return result.rows.map((row) => [row.student_name, row.student_email]);
+}
+
+function graphNormalize(value = '') {
+    return String(value || '').trim().toLowerCase();
+}
+
+function graphSafeNumber(value, fallback = 0) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function graphFormatPoints(value, digits = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '-';
+    if (Math.abs(numeric - Math.round(numeric)) < 0.005) return String(Math.round(numeric));
+    return numeric.toFixed(digits);
+}
+
+function graphPercentage(score, cap) {
+    const s = graphSafeNumber(score);
+    const c = graphSafeNumber(cap);
+    if (c <= 0) return 0;
+    return Math.max(0, Math.min(100, (s / c) * 100));
+}
+
+function graphComponentKey(value = '') {
+    return graphNormalize(value)
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function isGraphMetadataScoreKey(key = '') {
+    const normalized = graphComponentKey(key);
+    return !normalized
+        || normalized === 'source'
+        || normalized === 'score perc'
+        || normalized === 'score_perc'
+        || normalized === 'component caps'
+        || normalized === 'component_caps';
+}
+
+function graphComponentCapMap(assignmentMetadata = {}, scoresByQuestion = {}) {
+    const capMap = new Map();
+    const components = Array.isArray(assignmentMetadata?.components) ? assignmentMetadata.components : [];
+    components.forEach((component) => {
+        const key = graphComponentKey(component?.key || component?.name || component?.label);
+        const cap = graphSafeNumber(component?.max_points, NaN);
+        if (key && Number.isFinite(cap) && cap > 0) {
+            capMap.set(key, cap);
+        }
+    });
+
+    const embeddedCaps = scoresByQuestion?.component_caps && typeof scoresByQuestion.component_caps === 'object'
+        ? scoresByQuestion.component_caps
+        : {};
+    Object.entries(embeddedCaps).forEach(([rawKey, rawCap]) => {
+        const key = graphComponentKey(rawKey);
+        const cap = graphSafeNumber(rawCap, NaN);
+        if (key && Number.isFinite(cap) && cap > 0) {
+            capMap.set(key, cap);
+        }
+    });
+    return capMap;
+}
+
+function detectGraphProject(title = '') {
+    return PROJECT_POLICY_CAPS.find((project) => project.patterns.some((pattern) => pattern.test(title || ''))) || null;
+}
+
+function graphProjectCanonical(title = '') {
+    return String(title || '')
+        .replace(/\bresubmission\b/gi, '')
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase();
+}
+
+const GRAPH_LAB_DROP_LOWEST = 2;
+const GRAPH_LAB_FULL_CREDIT_THRESHOLD = 0.999;
+const GRAPH_LAB_BASE_TITLE_RE = /\s*\((?:code|conceptual)\)\s*$/i;
+const GRAPH_PRACTICE_LAB_PATTERNS = [
+    /\bpractice\s+midterm\b/i,
+    /\bpractice\s+postterm\b/i,
+    /\blab\s+practice\b/i,
+];
+
+function graphLabBaseTitle(title = '') {
+    return String(title || '').replace(GRAPH_LAB_BASE_TITLE_RE, '').trim();
+}
+
+function graphIsPracticeAssignmentTitle(title = '') {
+    return /\bpractice\b/i.test(title || '');
+}
+
+function graphIsPracticeLab(title = '') {
+    return graphIsPracticeAssignmentTitle(title)
+        || GRAPH_PRACTICE_LAB_PATTERNS.some((pattern) => pattern.test(title || ''));
+}
+
+function graphLabRollupItemIsPractice(lab = {}) {
+    if (graphIsPracticeLab(lab.lab || lab.title || '')) {
+        return true;
+    }
+    const items = Array.isArray(lab.items) ? lab.items : [];
+    return items.some((item) => graphIsPracticeLab(item?.title || item?.name || ''));
+}
+
+function graphLabRollupItemPassed(lab = {}) {
+    if (typeof lab.passed === 'boolean') {
+        return lab.passed;
+    }
+
+    const directScore = graphSafeNumber(lab.score, NaN);
+    const directMax = graphSafeNumber(lab.maxScore ?? lab.max_points ?? lab.max, NaN);
+    if (Number.isFinite(directScore) && Number.isFinite(directMax) && directMax > 0) {
+        return (directScore / directMax) >= GRAPH_LAB_FULL_CREDIT_THRESHOLD;
+    }
+
+    const items = Array.isArray(lab.items) ? lab.items : [];
+    if (items.length === 0) {
+        return false;
+    }
+    return items.every((item) => {
+        const score = graphSafeNumber(item?.score, NaN);
+        const maxScore = graphSafeNumber(item?.maxScore ?? item?.max_points ?? item?.max, NaN);
+        return Number.isFinite(score) && Number.isFinite(maxScore) && maxScore > 0
+            && (score / maxScore) >= GRAPH_LAB_FULL_CREDIT_THRESHOLD;
+    });
+}
+
+function graphSummarizeLabResults(labs, drops = GRAPH_LAB_DROP_LOWEST) {
+    const filteredLabs = (Array.isArray(labs) ? labs : [])
+        .filter((lab) => !graphLabRollupItemIsPractice(lab))
+        .map((lab) => ({
+            ...lab,
+            passed: graphLabRollupItemPassed(lab),
+            is_practice: false,
+        }));
+
+    const normalizedDrops = Math.max(0, graphSafeNumber(drops, GRAPH_LAB_DROP_LOWEST));
+    const totalGroups = filteredLabs.length;
+    if (totalGroups === 0) {
+        return {
+            labs: [],
+            passedCount: 0,
+            totalGroups: 0,
+            drops: normalizedDrops,
+            effectiveTotal: 0,
+            passedAfterDrop: 0,
+            score: 0,
+        };
+    }
+
+    const passedCount = filteredLabs.filter((lab) => lab.passed).length;
+    const effectiveTotal = Math.max(1, totalGroups - normalizedDrops);
+    const passedAfterDrop = Math.min(passedCount, effectiveTotal);
+    const score = passedAfterDrop / effectiveTotal * LABS_SUMMARY_CAP;
+
+    return {
+        labs: filteredLabs,
+        passedCount,
+        totalGroups,
+        drops: normalizedDrops,
+        effectiveTotal,
+        passedAfterDrop,
+        score,
+    };
+}
+
+function graphIsOptionalLab(title = '') {
+    return /\boptional\b/i.test(title || '');
+}
+
+function graphLooksLikeNonLab(title = '') {
+    return /\bprairielearn\b/i.test(title || '');
+}
+
+function deriveLabsRollupFromRawSubmissions(submissions) {
+    const candidates = submissions.filter((row) => {
+        const title = String(row.title || '');
+        const assignmentId = String(row.assignment_id || '');
+        const category = String(row.category || '').trim();
+        if (assignmentId.startsWith('labs_rollup:') || assignmentId.startsWith('project_rollup:') || assignmentId.startsWith('attendance_rollup:')) {
+            return false;
+        }
+        if (graphIsOptionalLab(title) || graphLooksLikeNonLab(title) || graphIsPracticeLab(title)) {
+            return false;
+        }
+        if (category === 'Labs' || category === '_labs_raw') {
+            return true;
+        }
+        return false;
+    });
+
+    const groups = new Map();
+    candidates.forEach((row) => {
+        const baseTitle = graphLabBaseTitle(row.title || '');
+        if (!baseTitle) return;
+        if (!groups.has(baseTitle)) groups.set(baseTitle, []);
+        groups.get(baseTitle).push(row);
+    });
+
+    const labs = Array.from(groups.entries())
+        .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+        .map(([lab, rows]) => {
+            const passed = rows.every((row) => {
+                const score = graphSafeNumber(row.total_score, NaN);
+                const maxScore = graphSafeNumber(row.submission_max_points || row.assignment_max_points, NaN);
+                return Number.isFinite(score) && Number.isFinite(maxScore) && maxScore > 0
+                    && (score / maxScore) >= GRAPH_LAB_FULL_CREDIT_THRESHOLD;
+            });
+            return {
+                lab,
+                passed,
+                is_practice: false,
+                items: rows.map((row) => ({
+                    id: row.assignment_pk,
+                    title: row.title,
+                    score: graphSafeNumber(row.total_score, null),
+                    maxScore: graphSafeNumber(row.submission_max_points || row.assignment_max_points, null),
+                })),
+            };
+        });
+
+    if (labs.length === 0) {
+        return {
+            labs: [],
+            passedCount: 0,
+            totalGroups: 0,
+            drops: GRAPH_LAB_DROP_LOWEST,
+            effectiveTotal: 0,
+            score: 0,
+        };
+    }
+
+    const passedCount = labs.filter((lab) => lab.passed).length;
+    const drops = GRAPH_LAB_DROP_LOWEST;
+    const effectiveTotal = Math.max(1, labs.length - drops);
+    const passedAfterDrop = Math.min(passedCount, effectiveTotal);
+    const score = passedAfterDrop / effectiveTotal * LABS_SUMMARY_CAP;
+
+    return {
+        labs,
+        passedCount,
+        totalGroups: labs.length,
+        drops,
+        effectiveTotal,
+        passedAfterDrop,
+        score,
+    };
+}
+
+function createGradeFlowBuilder() {
+    const nodes = [];
+    const edges = [];
+    const nodeIds = new Set();
+
+    const addNode = (node) => {
+        const id = String(node.id);
+        if (nodeIds.has(id)) {
+            return id;
+        }
+        nodeIds.add(id);
+        nodes.push({
+            id,
+            type: node.type,
+            subtype: node.subtype || null,
+            label: node.label || id,
+            group: node.group || 'course',
+            layer: Number(node.layer) || 0,
+            score: node.score == null ? null : Number(node.score),
+            maxScore: node.maxScore == null ? null : Number(node.maxScore),
+            displayValue: node.displayValue || '',
+            status: node.status || 'kept',
+            details: node.details || {},
+        });
+        return id;
+    };
+
+    const addEdge = (source, target, options = {}) => {
+        if (!source || !target) return;
+        edges.push({
+            id: options.id || `${source}->${target}`,
+            source,
+            target,
+            kind: options.kind || 'score',
+            label: options.label || '',
+            active: options.active !== false,
+        });
+    };
+
+    return { nodes, edges, addNode, addEdge };
+}
+
+async function resolveGraphStudent(email, courseId = null) {
+    const pool = getPool();
+    let query = `
+        SELECT
+            st.id AS student_id,
+            st.legal_name AS student_name,
+            st.email AS student_email,
+            c.id AS course_id,
+            c.gradescope_course_id,
+            c.name AS course_name
+        FROM students st
+        JOIN courses c ON c.id = st.course_id
+        WHERE LOWER(st.email) = LOWER($1)
+    `;
+    const params = [email];
+    if (courseId) {
+        query += ` AND (c.id::text = $2 OR c.gradescope_course_id::text = $2)`;
+        params.push(String(courseId));
+    }
+    query += ` ORDER BY c.year DESC NULLS LAST, c.semester ASC NULLS LAST, c.name ASC NULLS LAST LIMIT 1`;
+
+    const result = await pool.query(query, params);
+    return result.rows[0] || null;
+}
+
+async function getGraphStudentSubmissions(studentId, courseInternalId) {
+    const pool = getPool();
+    const result = await pool.query(
+        `
+        SELECT
+            a.id AS assignment_pk,
+            a.assignment_id,
+            a.title,
+            COALESCE(a.category, 'Uncategorized') AS category,
+            a.max_points AS assignment_max_points,
+            a.assignment_metadata,
+            e.exam_type,
+            e.attempt_no,
+            e.is_practice,
+            s.total_score,
+            s.max_points AS submission_max_points,
+            s.scores_by_question,
+            s.submission_time,
+            s.lateness
+        FROM assignments a
+        JOIN courses c ON c.id = a.course_id
+        LEFT JOIN exam_attempt_map e
+          ON e.assignment_id = a.id
+         AND e.course_id = c.id
+        LEFT JOIN submissions s
+          ON s.assignment_id = a.id
+         AND s.student_id = $1
+        WHERE c.id = $2
+        ORDER BY COALESCE(a.category, 'Uncategorized'), a.title
+        `,
+        [studentId, courseInternalId],
+    );
+    return result.rows;
+}
+
+async function getGraphAttendanceRows(studentId, courseInternalId) {
+    const pool = getPool();
+    const result = await pool.query(
+        `
+        SELECT
+            kind,
+            total_required_sessions,
+            attended_sessions,
+            drops_applied,
+            effective_attended,
+            effective_total,
+            raw_percentage,
+            final_percentage,
+            details
+        FROM student_attendance_effective_scores
+        WHERE student_id = $1
+          AND course_id = $2
+        ORDER BY CASE kind WHEN 'lecture' THEN 1 WHEN 'lab' THEN 2 WHEN 'discussion' THEN 3 ELSE 9 END
+        `,
+        [studentId, courseInternalId],
+    );
+    return result.rows;
+}
+
+async function getGraphExamPolicyRows(studentId, courseInternalId) {
+    const pool = getPool();
+    const result = await pool.query(
+        `
+        SELECT
+            e.exam_type,
+            e.attempt_no,
+            e.raw_percentage,
+            e.question_best_percentage,
+            e.clobbered_percentage,
+            e.final_percentage,
+            e.assignment_id,
+            a.title AS assignment_title,
+            e.clobber_source_assignment_id,
+            src.title AS clobber_source_title,
+            e.details
+        FROM student_exam_effective_scores e
+        LEFT JOIN assignments a ON a.id = e.assignment_id
+        LEFT JOIN assignments src ON src.id = e.clobber_source_assignment_id
+        WHERE e.student_id = $1
+          AND e.course_id = $2
+        ORDER BY
+            CASE LOWER(e.exam_type) WHEN 'quest' THEN 1 WHEN 'midterm' THEN 2 WHEN 'postterm' THEN 3 ELSE 9 END,
+            e.attempt_no
+        `,
+        [studentId, courseInternalId],
+    );
+    return result.rows;
+}
+
+async function getGraphSummaryTotals(email, courseId = null) {
+    const summaryByKey = {};
+    for (const component of COURSE_POLICY_COMPONENTS) {
+        const rows = await getCategorySummaryDistribution(component.label, courseId);
+        const target = String(email || '').trim().toLowerCase();
+        const row = rows.find((item) => String(item?.studentEmail || '').trim().toLowerCase() === target);
+        const score = graphSafeNumber(row?.score);
+        summaryByKey[component.key] = {
+            ...component,
+            score: Math.min(component.cap, score),
+            rawScore: score,
+            percentage: graphPercentage(score, component.cap),
+        };
+    }
+    return summaryByKey;
+}
+
+function addRawQuestionNodes(builder, group, assignmentRows, options = {}) {
+    const groupedByQuestion = new Map();
+
+    assignmentRows.forEach((row) => {
+        const scoresByQuestion = row.scores_by_question && typeof row.scores_by_question === 'object'
+            ? row.scores_by_question
+            : {};
+        const capMap = graphComponentCapMap(row.assignment_metadata || {}, scoresByQuestion);
+        Object.entries(scoresByQuestion).forEach(([rawKey, rawValue]) => {
+            const key = graphComponentKey(rawKey);
+            if (isGraphMetadataScoreKey(key)) return;
+            const score = graphSafeNumber(rawValue, NaN);
+            if (!Number.isFinite(score)) return;
+            const maxScore = graphSafeNumber(capMap.get(key), null);
+            const rawNodeId = `${group}:raw:${row.assignment_pk}:${key}`;
+            const attemptNo = graphSafeNumber(row.attempt_no, null);
+            builder.addNode({
+                id: rawNodeId,
+                type: 'raw',
+                subtype: 'question',
+                label: `${row.title || 'Attempt'} · ${rawKey}`,
+                group,
+                layer: 0,
+                score,
+                maxScore,
+                displayValue: maxScore ? `${graphFormatPoints(score)} / ${graphFormatPoints(maxScore)}` : graphFormatPoints(score),
+                status: 'kept',
+                details: {
+                    quality: maxScore ? 'direct' : 'estimated',
+                    attemptNo,
+                    questionKey: rawKey,
+                    assignmentTitle: row.title,
+                    sourceAssignment: row.assignment_id,
+                },
+            });
+
+            if (!groupedByQuestion.has(key)) {
+                groupedByQuestion.set(key, { rawKey, maxScore, rawNodeIds: [], scores: [] });
+            }
+            const item = groupedByQuestion.get(key);
+            item.rawNodeIds.push(rawNodeId);
+            item.scores.push(score);
+            if (!item.maxScore && maxScore) item.maxScore = maxScore;
+        });
+    });
+
+    const maxNodeIds = [];
+    groupedByQuestion.forEach((item, key) => {
+        const best = item.scores.length > 0 ? Math.max(...item.scores) : 0;
+        const maxNodeId = `${group}:max:${key}`;
+        builder.addNode({
+            id: maxNodeId,
+            type: 'logical',
+            subtype: options.maxSubtype || 'max',
+            label: options.maxLabel ? `${options.maxLabel}: ${item.rawKey}` : `MAX ${item.rawKey}`,
+            group,
+            layer: 1,
+            score: best,
+            maxScore: item.maxScore || null,
+            displayValue: item.maxScore ? `${graphFormatPoints(best)} / ${graphFormatPoints(item.maxScore)}` : `max ${graphFormatPoints(best)}`,
+            status: 'selected',
+            details: {
+                quality: item.maxScore ? 'direct' : 'estimated',
+                questionKey: item.rawKey,
+                operator: 'max',
+            },
+        });
+        item.rawNodeIds.forEach((rawNodeId) => builder.addEdge(rawNodeId, maxNodeId, { kind: 'policy', label: 'candidate' }));
+        maxNodeIds.push(maxNodeId);
+    });
+    return maxNodeIds;
+}
+
+function addAttendanceGraph(builder, attendanceRows, summary) {
+    const kindMeta = {
+        lecture: { label: 'Lecture', drop: 5 },
+        lab: { label: 'Lab attendance', drop: 5 },
+        discussion: { label: 'Discussion', drop: 1 },
+    };
+    const scaleNodeIds = [];
+
+    attendanceRows.forEach((row) => {
+        const kind = String(row.kind || 'attendance');
+        const meta = kindMeta[kind] || { label: kind, drop: graphSafeNumber(row.drops_applied) };
+        const group = 'attendance';
+        const sessions = Array.isArray(row?.details?.sessions) ? row.details.sessions : [];
+        const absentRequired = sessions.filter((session) => session.required !== false && !session.attended);
+        const droppedKeys = new Set(absentRequired.slice(0, graphSafeNumber(row.drops_applied)).map((session, idx) => `${session.ordinal ?? idx}:${session.date ?? ''}`));
+        const rawNodeIds = [];
+        sessions.forEach((session, idx) => {
+            const key = `${session.ordinal ?? idx}:${session.date ?? ''}`;
+            const status = session.required === false
+                ? 'ignored'
+                : (session.attended ? 'kept' : (droppedKeys.has(key) ? 'dropped' : 'missing'));
+            const rawNodeId = `attendance:${kind}:session:${idx}`;
+            builder.addNode({
+                id: rawNodeId,
+                type: 'raw',
+                subtype: 'session',
+                label: `${meta.label} ${session.ordinal ?? idx + 1}`,
+                group,
+                layer: 0,
+                score: session.attended ? 1 : 0,
+                maxScore: session.required === false ? 0 : 1,
+                displayValue: session.attended ? 'attended' : (session.reason || 'absent'),
+                status,
+                details: {
+                    quality: 'direct',
+                    date: session.date,
+                    status: session.status,
+                    reason: session.reason,
+                    dropReason: status === 'dropped' ? `lowest ${meta.drop} absence drop` : null,
+                    makeupTitle: session.makeup_title,
+                },
+            });
+            rawNodeIds.push(rawNodeId);
+        });
+
+        const dropNodeId = `attendance:${kind}:drop`;
+        builder.addNode({
+            id: dropNodeId,
+            type: 'logical',
+            subtype: 'drop',
+            label: `DROP ${meta.label}`,
+            group,
+            layer: 1,
+            score: graphSafeNumber(row.effective_attended),
+            maxScore: graphSafeNumber(row.effective_total),
+            displayValue: `drop ${graphSafeNumber(row.drops_applied)}`,
+            status: 'selected',
+            details: {
+                quality: 'direct',
+                operator: 'drop',
+                dropsApplied: graphSafeNumber(row.drops_applied),
+                totalRequiredSessions: graphSafeNumber(row.total_required_sessions),
+            },
+        });
+        rawNodeIds.forEach((rawNodeId) => builder.addEdge(rawNodeId, dropNodeId, { kind: 'policy' }));
+
+        const scaleNodeId = `attendance:${kind}:scale`;
+        const finalPct = graphSafeNumber(row.final_percentage);
+        const points = finalPct / 100 * 5;
+        builder.addNode({
+            id: scaleNodeId,
+            type: 'logical',
+            subtype: 'scale',
+            label: `${meta.label} → 5 pts`,
+            group,
+            layer: 2,
+            score: points,
+            maxScore: 5,
+            displayValue: `${graphFormatPoints(points)} / 5`,
+            status: 'selected',
+            details: {
+                quality: 'direct',
+                operator: 'scale',
+                finalPercentage: finalPct,
+            },
+        });
+        builder.addEdge(dropNodeId, scaleNodeId, { kind: 'policy', label: 'scale' });
+        scaleNodeIds.push(scaleNodeId);
+    });
+
+    const sumNodeId = 'attendance:sum';
+    builder.addNode({
+        id: sumNodeId,
+        type: 'logical',
+        subtype: 'sum',
+        label: 'SUM Attendance',
+        group: 'attendance',
+        layer: 3,
+        score: summary.score,
+        maxScore: summary.cap,
+        displayValue: `${graphFormatPoints(summary.score)} / ${summary.cap}`,
+        status: 'selected',
+        details: { quality: 'direct', operator: 'sum' },
+    });
+    scaleNodeIds.forEach((nodeId) => builder.addEdge(nodeId, sumNodeId, { kind: 'score' }));
+    return sumNodeId;
+}
+
+function addLabsGraph(builder, submissions, summary) {
+    const rollup = submissions.find((row) => String(row.assignment_id || '').startsWith('labs_rollup:'));
+    const derived = deriveLabsRollupFromRawSubmissions(submissions);
+    const derivedLabs = Array.isArray(derived?.labs) ? derived.labs : [];
+    const rollupLabs = Array.isArray(rollup?.scores_by_question?.labs)
+        ? rollup.scores_by_question.labs.filter((lab) => !graphLabRollupItemIsPractice(lab))
+        : [];
+    const rollupSummary = graphSummarizeLabResults(
+        rollupLabs,
+        graphSafeNumber(rollup?.scores_by_question?.drops, GRAPH_LAB_DROP_LOWEST),
+    );
+    const useDerived = derivedLabs.length > 0;
+    const labs = useDerived ? derivedLabs : rollupSummary.labs;
+    const drops = useDerived
+        ? graphSafeNumber(derived?.drops, GRAPH_LAB_DROP_LOWEST)
+        : graphSafeNumber(rollupSummary.drops, GRAPH_LAB_DROP_LOWEST);
+    const passedCount = useDerived
+        ? graphSafeNumber(derived?.passedCount)
+        : graphSafeNumber(rollupSummary.passedCount);
+    const totalGroups = useDerived
+        ? graphSafeNumber(derived?.totalGroups)
+        : graphSafeNumber(rollupSummary.totalGroups);
+    const effectiveTotal = useDerived
+        ? graphSafeNumber(derived?.effectiveTotal)
+        : graphSafeNumber(rollupSummary.effectiveTotal);
+    const passedAfterDrop = Math.min(passedCount, effectiveTotal || passedCount);
+    const scaledScore = useDerived
+        ? graphSafeNumber(derived?.score)
+        : graphSafeNumber(rollupSummary.score);
+    const labQuality = (!useDerived && rollup) || labs.length > 0 ? 'direct' : 'estimated';
+    const failed = labs.filter((lab) => !lab.passed);
+    const droppedFailures = new Set(failed.slice(0, drops).map((lab) => lab.lab));
+    const rawNodeIds = [];
+
+    labs.forEach((lab, idx) => {
+        const rawNodeId = `labs:raw:${idx}`;
+        const status = lab.passed ? 'kept' : (droppedFailures.has(lab.lab) ? 'dropped' : 'missing');
+        builder.addNode({
+            id: rawNodeId,
+            type: 'raw',
+            subtype: 'lab_group',
+            label: lab.lab || `Lab ${idx + 1}`,
+            group: 'labs',
+            layer: 0,
+            score: lab.passed ? 1 : 0,
+            maxScore: 1,
+            displayValue: lab.passed ? 'pass' : 'not passed',
+            status,
+            details: {
+                quality: labQuality,
+                isPractice: Boolean(lab.is_practice),
+                itemCount: Array.isArray(lab.items) ? lab.items.length : 0,
+                dropReason: status === 'dropped' ? `lowest ${drops} lab drop` : null,
+                items: Array.isArray(lab.items) ? lab.items : [],
+            },
+        });
+        rawNodeIds.push(rawNodeId);
+    });
+
+    const filterNodeId = 'labs:filter';
+    builder.addNode({
+        id: filterNodeId,
+        type: 'logical',
+        subtype: 'filter',
+        label: 'FILTER Lab Completion',
+        group: 'labs',
+        layer: 1,
+        score: passedCount,
+        maxScore: totalGroups,
+        displayValue: 'pass/fail',
+        status: 'selected',
+        details: { quality: labQuality, operator: 'filter' },
+    });
+    rawNodeIds.forEach((nodeId) => builder.addEdge(nodeId, filterNodeId, { kind: 'policy' }));
+
+    const dropNodeId = 'labs:drop';
+    builder.addNode({
+        id: dropNodeId,
+        type: 'logical',
+        subtype: 'drop',
+        label: 'DROP Labs',
+        group: 'labs',
+        layer: 2,
+        score: passedAfterDrop,
+        maxScore: effectiveTotal,
+        displayValue: `drop ${drops}`,
+        status: 'selected',
+        details: { quality: labQuality, operator: 'drop', dropsApplied: drops },
+    });
+    builder.addEdge(filterNodeId, dropNodeId, { kind: 'policy' });
+
+    const scaleNodeId = 'labs:scale_cap';
+    builder.addNode({
+        id: scaleNodeId,
+        type: 'logical',
+        subtype: 'cap',
+        label: 'SCALE + CAP Labs',
+        group: 'labs',
+        layer: 3,
+        score: scaledScore,
+        maxScore: summary.cap,
+        displayValue: `${graphFormatPoints(scaledScore)} / ${summary.cap}`,
+        status: 'selected',
+        details: {
+            quality: labQuality,
+            operator: 'scale_cap',
+            authoritativeOutput: summary.score,
+        },
+    });
+    builder.addEdge(dropNodeId, scaleNodeId, { kind: 'policy' });
+    return scaleNodeId;
+}
+
+function addProjectsGraph(builder, submissions, summary) {
+    const rawProjectRows = submissions.filter((row) => {
+        const category = graphNormalize(row.category);
+        if (String(row.assignment_id || '').startsWith('project_rollup:')) return false;
+        if (graphIsPracticeAssignmentTitle(row.title || '')) return false;
+        return category === 'projects' || category === '_projects_raw';
+    });
+
+    const byProject = new Map();
+    rawProjectRows.forEach((row) => {
+        const project = detectGraphProject(row.title || '');
+        if (!project) return;
+        if (!byProject.has(project.key)) {
+            byProject.set(project.key, { project, bySubitem: new Map() });
+        }
+        const item = byProject.get(project.key);
+        const canonical = graphProjectCanonical(row.title || '');
+        if (!canonical) return;
+        if (!item.bySubitem.has(canonical)) item.bySubitem.set(canonical, []);
+        item.bySubitem.get(canonical).push(row);
+    });
+
+    const projectScaleNodeIds = [];
+    byProject.forEach(({ project, bySubitem }) => {
+        const maxNodeIds = [];
+        const subitemBestPcts = [];
+        bySubitem.forEach((rows, canonical) => {
+            const rawNodeIds = [];
+            let bestPct = null;
+            let bestNodeId = null;
+            rows.forEach((row) => {
+                const score = graphSafeNumber(row.total_score);
+                const maxScore = graphSafeNumber(row.submission_max_points || row.assignment_max_points);
+                const rowPct = maxScore > 0 ? score / maxScore : 0;
+                const rawNodeId = `projects:${project.key}:raw:${row.assignment_pk}`;
+                if (bestPct == null || rowPct > bestPct) {
+                    bestPct = rowPct;
+                    bestNodeId = rawNodeId;
+                }
+                builder.addNode({
+                    id: rawNodeId,
+                    type: 'raw',
+                    subtype: 'project_submission',
+                    label: row.title || canonical,
+                    group: 'projects',
+                    layer: 0,
+                    score,
+                    maxScore,
+                    displayValue: `${graphFormatPoints(score)} / ${graphFormatPoints(maxScore)}`,
+                    status: 'kept',
+                    details: {
+                        quality: 'direct',
+                        project: project.label,
+                        canonicalSubitem: canonical,
+                        sourceAssignment: row.assignment_id,
+                    },
+                });
+                rawNodeIds.push(rawNodeId);
+            });
+
+            const maxNodeId = `projects:${project.key}:max:${canonical}`;
+            builder.addNode({
+                id: maxNodeId,
+                type: 'logical',
+                subtype: 'max',
+                label: `BEST ${canonical}`,
+                group: 'projects',
+                layer: 1,
+                score: bestPct == null ? 0 : bestPct * 100,
+                maxScore: 100,
+                displayValue: bestPct == null ? 'no score' : `${(bestPct * 100).toFixed(1)}%`,
+                status: 'selected',
+                details: { quality: 'direct', operator: 'max', selectedNodeId: bestNodeId },
+            });
+            rawNodeIds.forEach((nodeId) => builder.addEdge(nodeId, maxNodeId, {
+                kind: 'policy',
+                label: nodeId === bestNodeId ? 'selected' : 'candidate',
+                active: nodeId === bestNodeId,
+            }));
+            maxNodeIds.push(maxNodeId);
+            subitemBestPcts.push(bestPct == null ? 0 : bestPct);
+        });
+
+        const scaleNodeId = `projects:${project.key}:scale`;
+        const projectPct = subitemBestPcts.length > 0
+            ? subitemBestPcts.reduce((sum, value) => sum + value, 0) / subitemBestPcts.length
+            : 0;
+        const scaledScore = projectPct * project.cap;
+        builder.addNode({
+            id: scaleNodeId,
+            type: 'logical',
+            subtype: 'scale',
+            label: project.label,
+            group: 'projects',
+            layer: 2,
+            score: scaledScore,
+            maxScore: project.cap,
+            displayValue: `${graphFormatPoints(scaledScore)} / ${graphFormatPoints(project.cap)}`,
+            status: 'selected',
+            details: {
+                quality: 'direct',
+                operator: 'scale',
+                cap: project.cap,
+                sourcePercentage: projectPct * 100,
+                subitemCount: subitemBestPcts.length,
+            },
+        });
+        maxNodeIds.forEach((nodeId) => builder.addEdge(nodeId, scaleNodeId, { kind: 'policy' }));
+        projectScaleNodeIds.push(scaleNodeId);
+    });
+
+    const sumNodeId = 'projects:sum';
+    builder.addNode({
+        id: sumNodeId,
+        type: 'logical',
+        subtype: 'sum',
+        label: 'SUM Projects',
+        group: 'projects',
+        layer: 3,
+        score: summary.score,
+        maxScore: summary.cap,
+        displayValue: `${graphFormatPoints(summary.score)} / ${summary.cap}`,
+        status: 'selected',
+        details: { quality: 'direct', operator: 'sum' },
+    });
+    projectScaleNodeIds.forEach((nodeId) => builder.addEdge(nodeId, sumNodeId, { kind: 'score' }));
+    return sumNodeId;
+}
+
+function addExamGraph(builder, examType, submissions, policyRows, summary, options = {}) {
+    const group = examType;
+    const examSubmissions = submissions.filter((row) => graphNormalize(row.exam_type) === examType && !row.is_practice);
+    const questionMaxNodeIds = addRawQuestionNodes(builder, group, examSubmissions, {
+        maxLabel: options.maxLabel || 'QUESTION BEST',
+        maxSubtype: 'max',
+    });
+
+    let previousNodeId = null;
+    if (questionMaxNodeIds.length > 0) {
+        const sumNodeId = `${group}:question_sum`;
+        builder.addNode({
+            id: sumNodeId,
+            type: 'logical',
+            subtype: 'sum',
+            label: `${summary.label} Question Sum`,
+            group,
+            layer: 2,
+            score: null,
+            maxScore: null,
+            displayValue: 'sum best questions',
+            status: 'selected',
+            details: { quality: 'direct', operator: 'sum' },
+        });
+        questionMaxNodeIds.forEach((nodeId) => builder.addEdge(nodeId, sumNodeId, { kind: 'score' }));
+        previousNodeId = sumNodeId;
+    }
+
+    const bestPolicyPctValue = policyRows
+        .map((row) => graphSafeNumber(row.question_best_percentage ?? row.final_percentage, NaN))
+        .filter(Number.isFinite)
+        .reduce((best, value) => Math.max(best, value), 0);
+
+    if (!previousNodeId) {
+        previousNodeId = `${group}:policy_pct`;
+        builder.addNode({
+            id: previousNodeId,
+            type: 'logical',
+            subtype: 'max',
+            label: `${summary.label} Policy Score`,
+            group,
+            layer: 2,
+            score: bestPolicyPctValue,
+            maxScore: 100,
+            displayValue: bestPolicyPctValue ? `${bestPolicyPctValue.toFixed(1)}%` : 'no policy rows',
+            status: 'selected',
+            details: { quality: 'estimated', operator: 'policy_fallback' },
+        });
+    }
+
+    if (options.clobberSourceNodeId) {
+        const clobberNodeId = `${group}:clobber`;
+        builder.addNode({
+            id: clobberNodeId,
+            type: 'logical',
+            subtype: 'clobber',
+            label: `${summary.label} CLOBBER`,
+            group,
+            layer: 3,
+            score: summary.score,
+            maxScore: summary.cap,
+            displayValue: 'take higher pct',
+            status: 'selected',
+            details: { quality: 'direct', operator: 'clobber' },
+        });
+        builder.addEdge(previousNodeId, clobberNodeId, { kind: 'policy', label: 'primary' });
+        builder.addEdge(options.clobberSourceNodeId, clobberNodeId, { kind: 'clobber', label: 'clobber source' });
+        previousNodeId = clobberNodeId;
+    }
+
+    const capNodeId = `${group}:cap`;
+    builder.addNode({
+        id: capNodeId,
+        type: 'logical',
+        subtype: 'cap',
+        label: `CAP ${summary.label}`,
+        group,
+        layer: options.clobberSourceNodeId ? 4 : 3,
+        score: summary.score,
+        maxScore: summary.cap,
+        displayValue: `${graphFormatPoints(summary.score)} / ${summary.cap}`,
+        status: 'selected',
+        details: { quality: 'direct', operator: 'cap' },
+    });
+    builder.addEdge(previousNodeId, capNodeId, { kind: 'policy' });
+    return capNodeId;
+}
+
+function addCategoryOutput(builder, summary, sourceNodeId, layer = 5) {
+    const outputId = `${summary.key}:output`;
+    builder.addNode({
+        id: outputId,
+        type: 'category_output',
+        subtype: 'category_output',
+        label: summary.label,
+        group: summary.key,
+        layer,
+        score: summary.score,
+        maxScore: summary.cap,
+        displayValue: `${graphFormatPoints(summary.score)} / ${graphFormatPoints(summary.cap)}`,
+        status: 'output',
+        details: {
+            quality: 'direct',
+            percentage: summary.percentage,
+        },
+    });
+    if (sourceNodeId) {
+        builder.addEdge(sourceNodeId, outputId, { kind: 'score', label: 'output' });
+    }
+    return outputId;
+}
+
+/**
+ * Builds a read-only compute graph explaining how raw scores flow through CS10 policy.
+ * The graph's category output nodes intentionally use the existing authoritative
+ * summary functions, so Grade Flow totals match Profile/Admin totals.
+ */
+export async function getStudentGradeFlow(email, courseId = null) {
+    const resolved = await resolveGraphStudent(email, courseId);
+    if (!resolved) {
+        const err = new Error('Student not found');
+        err.status = 404;
+        throw err;
+    }
+
+    const courseQueryId = resolved.gradescope_course_id || resolved.course_id;
+    const [submissions, attendanceRows, examRows, summaries] = await Promise.all([
+        getGraphStudentSubmissions(resolved.student_id, resolved.course_id),
+        getGraphAttendanceRows(resolved.student_id, resolved.course_id),
+        getGraphExamPolicyRows(resolved.student_id, resolved.course_id),
+        getGraphSummaryTotals(resolved.student_email, courseQueryId),
+    ]);
+
+    const builder = createGradeFlowBuilder();
+
+    const attendanceSource = addAttendanceGraph(builder, attendanceRows, summaries.attendance);
+    const labsSource = addLabsGraph(builder, submissions, summaries.labs);
+    const projectsSource = addProjectsGraph(builder, submissions, summaries.projects);
+
+    const posttermRows = examRows.filter((row) => graphNormalize(row.exam_type) === 'postterm');
+    const posttermSource = addExamGraph(builder, 'postterm', submissions, posttermRows, summaries.postterm, {
+        maxLabel: 'QUESTION BEST',
+    });
+    const questRows = examRows.filter((row) => graphNormalize(row.exam_type) === 'quest');
+    const questSource = addExamGraph(builder, 'quest', submissions, questRows, summaries.quest, {
+        maxLabel: 'MAX',
+    });
+    const midtermRows = examRows.filter((row) => graphNormalize(row.exam_type) === 'midterm');
+    const midtermSource = addExamGraph(builder, 'midterm', submissions, midtermRows, summaries.midterm, {
+        maxLabel: 'QUESTION BEST',
+        clobberSourceNodeId: posttermSource,
+    });
+
+    const outputNodeIds = [
+        addCategoryOutput(builder, summaries.attendance, attendanceSource),
+        addCategoryOutput(builder, summaries.labs, labsSource),
+        addCategoryOutput(builder, summaries.projects, projectsSource),
+        addCategoryOutput(builder, summaries.quest, questSource),
+        addCategoryOutput(builder, summaries.midterm, midtermSource),
+        addCategoryOutput(builder, summaries.postterm, posttermSource),
+    ];
+
+    const totalScore = Object.values(summaries).reduce((sum, item) => sum + graphSafeNumber(item.score), 0);
+    const totalCap = COURSE_POLICY_COMPONENTS.reduce((sum, item) => sum + graphSafeNumber(item.cap), 0);
+    const finalNodeId = 'course:final_output';
+    builder.addNode({
+        id: finalNodeId,
+        type: 'final_output',
+        subtype: 'final_output',
+        label: 'Final Output',
+        group: 'course',
+        layer: 6,
+        score: totalScore,
+        maxScore: totalCap,
+        displayValue: `${graphFormatPoints(totalScore)} / ${graphFormatPoints(totalCap)}`,
+        status: 'output',
+        details: {
+            quality: 'direct',
+            percentage: graphPercentage(totalScore, totalCap),
+            rounding: 'letter grade uses rounded total',
+        },
+    });
+    outputNodeIds.forEach((outputId) => builder.addEdge(outputId, finalNodeId, { kind: 'score', label: 'sum' }));
+
+    const components = COURSE_POLICY_COMPONENTS.map((component) => ({
+        id: component.key,
+        label: component.label,
+        score: summaries[component.key].score,
+        cap: component.cap,
+        percentage: summaries[component.key].percentage,
+        collapsedByDefault: true,
+        nodeIds: builder.nodes.filter((nodeItem) => nodeItem.group === component.key).map((nodeItem) => nodeItem.id),
+    }));
+
+    return {
+        student: {
+            email: resolved.student_email,
+            name: resolved.student_name,
+        },
+        course: {
+            id: String(resolved.course_id),
+            gradescopeCourseId: resolved.gradescope_course_id,
+            name: resolved.course_name,
+        },
+        nodes: builder.nodes,
+        edges: builder.edges,
+        groups: COURSE_POLICY_COMPONENTS.map((component) => ({
+            id: component.key,
+            label: component.label,
+            collapsedByDefault: true,
+        })),
+        components,
+        total: {
+            score: totalScore,
+            cap: totalCap,
+            percentage: graphPercentage(totalScore, totalCap),
+            displayValue: `${graphFormatPoints(totalScore)} / ${graphFormatPoints(totalCap)}`,
+        },
+    };
 }
 
 /**
