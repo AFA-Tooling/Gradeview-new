@@ -287,7 +287,7 @@ def compute_effective_exam_scores(session: Session, course_id: int) -> Dict[str,
                 for assignment in assignment_group:
                     caps = _extract_component_caps(assignment, exam_type)
                     for key, cap in caps.items():
-                        if attempt_component_caps[key] <= 0:
+                        if attempt_component_caps[key] <= 0 or cap > attempt_component_caps[key]:
                             attempt_component_caps[key] = cap
 
                     submission = submission_lookup.get((assignment.id, student.id))
@@ -319,7 +319,7 @@ def compute_effective_exam_scores(session: Session, course_id: int) -> Dict[str,
                     old_cap = component_caps.get(key)
                     if old_cap is None or cap > old_cap:
                         component_caps[key] = cap
-                    pct = attempt_component_scores.get(key, 0.0) / cap
+                    pct = min(attempt_component_scores.get(key, 0.0), cap) / cap
                     old_pct = component_best_pct.get(key)
                     if old_pct is None or pct > old_pct:
                         component_best_pct[key] = pct
