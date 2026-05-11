@@ -346,8 +346,6 @@ export default function StudentProfileContent({ studentData }) {
     });
   }, [rawAssignmentsList, sortMode]);
 
-  const examPolicyRows = Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [];
-
   const radarScaleOptions = {
     min: 0,
     max: 100,
@@ -385,54 +383,68 @@ export default function StudentProfileContent({ studentData }) {
     }
   };
 
-  const questComponentTrend = useMemo(() => {
-    const trend = studentData?.questComponentTrend;
-    const components = Array.isArray(trend?.components) ? trend.components : [];
-    const series = Array.isArray(trend?.series) ? trend.series : [];
-    return { components, series };
-  }, [studentData?.questComponentTrend]);
+  const examComponentTrends = useMemo(() => {
+    const trends = studentData?.examComponentTrends || {};
+    const normalizeTrend = (trend) => ({
+      components: Array.isArray(trend?.components) ? trend.components : [],
+      componentCaps: Array.isArray(trend?.componentCaps) ? trend.componentCaps : [],
+      series: Array.isArray(trend?.series) ? trend.series : [],
+    });
+    return {
+      quest: normalizeTrend(trends.quest || studentData?.questComponentTrend),
+      midterm: normalizeTrend(trends.midterm),
+      postterm: normalizeTrend(trends.postterm),
+    };
+  }, [studentData?.examComponentTrends, studentData?.questComponentTrend]);
 
-  const questTrendChartDatasets = useMemo(() => {
-    if (questComponentTrend.components.length === 0 || questComponentTrend.series.length === 0) {
-      return [];
-    }
-
+  const examTrendCards = useMemo(() => {
     const palette = [
-      { line: '#E76E50', point: '#C8553D', fill: 'rgba(231, 110, 80, 0.18)' },
-      { line: '#2A9D90', point: '#1F7A70', fill: 'rgba(42, 157, 144, 0.18)' },
-      { line: '#274754', point: '#1A323C', fill: 'rgba(39, 71, 84, 0.18)' },
+      { line: '#E76E50', point: '#C8553D', fill: 'rgba(231, 110, 80, 0.16)' },
+      { line: '#2A9D90', point: '#1F7A70', fill: 'rgba(42, 157, 144, 0.16)' },
+      { line: '#274754', point: '#1A323C', fill: 'rgba(39, 71, 84, 0.16)' },
+      { line: '#8A63D2', point: '#6741A3', fill: 'rgba(138, 99, 210, 0.14)' },
+      { line: '#C17C00', point: '#935F00', fill: 'rgba(193, 124, 0, 0.14)' },
     ];
 
-    // Cumulative-best per category: each series shows max(self, all previous) per axis.
-    let cumulativeBest = null;
-
-    // Render outer (later, larger) polygons first so inner polygons stay visible.
-    return questComponentTrend.series.map((seriesItem, index) => {
-      const raw = questComponentTrend.components.map((_, pointIndex) => {
-        const v = Array.isArray(seriesItem?.data) ? seriesItem.data[pointIndex] : 0;
-        return toSafePercentage(v);
+    const buildDatasets = (trend, fallbackLabel) => {
+      if (trend.components.length === 0 || trend.series.length === 0) {
+        return [];
+      }
+      return trend.series.map((seriesItem, index) => {
+        const data = trend.components.map((_, pointIndex) => {
+          const v = Array.isArray(seriesItem?.data) ? seriesItem.data[pointIndex] : 0;
+          return toSafePercentage(v);
+        });
+        const c = palette[index] || palette[palette.length - 1];
+        return {
+          label: seriesItem?.name || `${fallbackLabel} ${index + 1}`,
+          data,
+          borderColor: c.line,
+          backgroundColor: c.fill,
+          borderWidth: 2.4,
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          pointBackgroundColor: c.point,
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          order: trend.series.length - index,
+        };
       });
-      const data = cumulativeBest === null
-        ? raw
-        : raw.map((v, i) => Math.max(v, cumulativeBest[i] || 0));
-      cumulativeBest = data;
+    };
 
-      const c = palette[index] || palette[palette.length - 1];
+    return [
+      { key: 'quest', title: 'Quest Topic Trend', cap: 25, empty: 'Quest topic progression is not available yet.' },
+      { key: 'midterm', title: 'Midterm Topic Trend', cap: 50, empty: 'Midterm topic progression is not available yet.' },
+      { key: 'postterm', title: 'Postterm Topic Trend', cap: 75, empty: 'Postterm topic progression is not available yet.' },
+    ].map((config) => {
+      const trend = examComponentTrends[config.key] || { components: [], series: [] };
       return {
-        label: seriesItem?.name || `After Quest-${index + 1}`,
-        data,
-        borderColor: c.line,
-        backgroundColor: c.fill,
-        borderWidth: 2.5,
-        pointRadius: 4,
-        pointHoverRadius: 7,
-        pointBackgroundColor: c.point,
-        pointBorderColor: '#fff',
-        pointBorderWidth: 2,
-        order: questComponentTrend.series.length - index,
+        ...config,
+        trend,
+        datasets: buildDatasets(trend, config.title),
       };
     });
-  }, [questComponentTrend, toSafePercentage]);
+  }, [examComponentTrends, toSafePercentage]);
 
   const overallCategoryDonut = useMemo(() => {
     const entries = Object.entries(displayCategoriesData || {});
@@ -789,85 +801,89 @@ export default function StudentProfileContent({ studentData }) {
           </Paper>
         </Grid>
 
-        {/* Quest Progress Trend */}
-        <Grid item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
-          <Paper 
-            elevation={0} 
-            sx={{ 
-              p: 3,
-              flex: 1,
-              minWidth: 0,
-              backgroundColor: 'white',
-              borderRadius: 3,
-              border: '1px solid #e5e7eb',
-              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-            }}
-          >
-            <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600 }}>
-              Quest Progress Trend
-            </Typography>
-            <Box sx={{ height: 400, position: 'relative' }}>
-              {questComponentTrend.components.length === 0 || questComponentTrend.series.length === 0 ? (
-                <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Typography sx={{ color: '#6b7280' }}>Quest component progression is not available yet.</Typography>
-                </Box>
-              ) : (
-              <ChartRadar
-                data={{
-                  labels: questComponentTrend.components,
-                  datasets: questTrendChartDatasets,
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  scales: {
-                    r: {
-                      min: 0,
-                      max: 100,
-                      beginAtZero: true,
-                      ticks: {
-                        stepSize: 20,
-                        showLabelBackdrop: false,
-                        backdropColor: 'transparent',
-                        color: 'rgba(0, 0, 0, 0.55)',
-                        font: { size: 11 },
-                        callback: (value) => `${value}%`,
-                      },
-                      grid: {
-                        color: 'rgba(0, 0, 0, 0.10)',
-                      },
-                      angleLines: {
-                        color: 'rgba(0, 0, 0, 0.10)',
-                      },
-                      pointLabels: {
-                        color: 'rgba(0, 0, 0, 0.75)',
-                        font: { size: 11, weight: 500 },
-                      },
-                    },
-                  },
-                  plugins: {
-                    legend: {
-                      display: true,
-                      position: 'top',
-                      labels: { usePointStyle: true },
-                    },
-                    datalabels: { display: false },
-                    tooltip: {
-                      callbacks: {
-                        label: function (context) {
-                          const pct = Number(context.parsed.r || 0);
-                          const points = Math.min(25, roundUpPoints((pct / 100) * 25));
-                          return `${context.dataset.label}: ${pct.toFixed(2)}% (${points}/25)`;
+        {examTrendCards.map((card) => (
+          <Grid key={card.key} item xs={12} md={6} sx={{ display: 'flex', minWidth: 0 }}>
+            <Paper
+              elevation={0}
+              sx={{
+                p: 3,
+                flex: 1,
+                minWidth: 0,
+                backgroundColor: 'white',
+                borderRadius: 3,
+                border: '1px solid #e5e7eb',
+                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+              }}
+            >
+              <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600 }}>
+                {card.title}
+              </Typography>
+              <Box sx={{ height: 400, position: 'relative' }}>
+                {card.trend.components.length === 0 || card.trend.series.length === 0 ? (
+                  <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', px: 2, textAlign: 'center' }}>
+                    <Typography sx={{ color: '#6b7280' }}>{card.empty}</Typography>
+                  </Box>
+                ) : (
+                  <ChartRadar
+                    data={{
+                      labels: card.trend.components,
+                      datasets: card.datasets,
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      scales: {
+                        r: {
+                          min: 0,
+                          max: 100,
+                          beginAtZero: true,
+                          ticks: {
+                            stepSize: 20,
+                            showLabelBackdrop: false,
+                            backdropColor: 'transparent',
+                            color: 'rgba(0, 0, 0, 0.55)',
+                            font: { size: 11 },
+                            callback: (value) => `${value}%`,
+                          },
+                          grid: {
+                            color: 'rgba(0, 0, 0, 0.10)',
+                          },
+                          angleLines: {
+                            color: 'rgba(0, 0, 0, 0.10)',
+                          },
+                          pointLabels: {
+                            color: 'rgba(0, 0, 0, 0.75)',
+                            font: { size: 11, weight: 500 },
+                            callback: formatRadarAxisLabel,
+                          },
                         },
                       },
-                    },
-                  },
-                }}
-              />
-              )}
-            </Box>
-          </Paper>
-        </Grid>
+                      plugins: {
+                        legend: {
+                          display: true,
+                          position: 'top',
+                          labels: { usePointStyle: true },
+                        },
+                        datalabels: { display: false },
+                        tooltip: {
+                          callbacks: {
+                            label: function (context) {
+                              const pct = Number(context.parsed.r || 0);
+                              const topicCap = Number(card.trend.componentCaps?.[context.dataIndex]);
+                              const cap = Number.isFinite(topicCap) && topicCap > 0 ? topicCap : card.cap;
+                              const points = Math.min(cap, roundUpPoints((pct / 100) * cap));
+                              return `${context.dataset.label}: ${pct.toFixed(2)}% (${points}/${cap})`;
+                            },
+                          },
+                        },
+                      },
+                    }}
+                  />
+                )}
+              </Box>
+            </Paper>
+          </Grid>
+        ))}
 
         {/* Line Chart */}
         <Grid item xs={12}>
@@ -1008,64 +1024,6 @@ export default function StudentProfileContent({ studentData }) {
           </Paper>
         </Grid>
       </Grid>
-
-      {/* Exam Policy Effective Scores */}
-      <Paper
-        elevation={0}
-        sx={{
-          p: 4,
-          mb: 3,
-          backgroundColor: 'white',
-          borderRadius: 3,
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-        }}
-      >
-        <Typography variant="h6" gutterBottom sx={{ color: '#1e3a8a', fontWeight: 600, mb: 3 }}>
-          Exam Policy Scores
-        </Typography>
-        {examPolicyRows.length === 0 ? (
-          <Typography sx={{ color: '#6b7280' }}>No computed exam-policy rows yet.</Typography>
-        ) : (
-          <TableContainer sx={{ mt: 2, borderRadius: 2, overflow: 'hidden' }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ backgroundColor: '#f9fafb' }}>
-                  <TableCell><strong>Exam</strong></TableCell>
-                  <TableCell align="center"><strong>Attempt</strong></TableCell>
-                  <TableCell align="center"><strong>Raw %</strong></TableCell>
-                  <TableCell align="center"><strong>Question-best %</strong></TableCell>
-                  <TableCell align="center"><strong>Clobbered %</strong></TableCell>
-                  <TableCell align="center"><strong>Final %</strong></TableCell>
-                  <TableCell><strong>Source</strong></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {examPolicyRows.map((row, idx) => {
-                  const examLabel = `${String(row.examType || '').toUpperCase()} ${row.attemptNo || '-'}`;
-                  const raw = row.rawPercentage == null ? '-' : `${Number(row.rawPercentage).toFixed(2)}%`;
-                  const qbest = row.questionBestPercentage == null ? '-' : `${Number(row.questionBestPercentage).toFixed(2)}%`;
-                  const clob = row.clobberedPercentage == null ? '-' : `${Number(row.clobberedPercentage).toFixed(2)}%`;
-                  const finalPct = row.finalPercentage == null ? '-' : `${Number(row.finalPercentage).toFixed(2)}%`;
-                  const sourceText = row.clobberSourceTitle || row.assignmentTitle || '-';
-
-                  return (
-                    <TableRow key={`${row.examType}-${row.attemptNo}-${idx}`} hover>
-                      <TableCell>{examLabel}</TableCell>
-                      <TableCell align="center">{row.attemptNo}</TableCell>
-                      <TableCell align="center">{raw}</TableCell>
-                      <TableCell align="center">{qbest}</TableCell>
-                      <TableCell align="center">{clob}</TableCell>
-                      <TableCell align="center" sx={{ fontWeight: 700 }}>{finalPct}</TableCell>
-                      <TableCell>{sourceText}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </Paper>
 
       {/* Detailed Assignment Scores */}
       <Paper 

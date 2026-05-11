@@ -392,7 +392,7 @@ async def sync_gradescope_only(course_id: str):
         result = service._sync_gradescope()
 
         if result.success and service.config.database_enabled:
-            recompute = service._update_summary_sheets()
+            recompute = service._refresh_derived_scores()
             result.details = {
                 **(result.details or {}),
                 "post_sync_recompute": recompute.to_dict(),
@@ -451,7 +451,7 @@ async def sync_prairielearn_only(course_id: str):
         result = service._sync_prairielearn()
 
         if result.success and service.config.database_enabled:
-            recompute = service._update_summary_sheets()
+            recompute = service._refresh_derived_scores()
             result.details = {
                 **(result.details or {}),
                 "post_sync_recompute": recompute.to_dict(),
@@ -510,7 +510,7 @@ async def sync_iclicker_only(course_id: str):
         result = service._sync_iclicker()
 
         if result.success and service.config.database_enabled:
-            recompute = service._update_summary_sheets()
+            recompute = service._refresh_derived_scores()
             result.details = {
                 **(result.details or {}),
                 "post_sync_recompute": recompute.to_dict(),
@@ -900,4 +900,3 @@ def get_summary_sheet(course_id: str = None):
     summary_data = get_summary_sheet_from_db(course_id)
 
     return JSONResponse(content=summary_data, status_code=200)
-

@@ -10,6 +10,36 @@ from .models import Assignment, Student, Submission, ExamAttemptMap, StudentExam
 
 _EXAM_PATTERN = re.compile(r"\b(Quest|Midterm|Postterm)\s*[-:]?\s*(\d+)\b", re.IGNORECASE)
 
+_POSTTERM_TOPIC_ALIASES = {
+    "programming paradigms": "Programming Paradigms",
+    "hci": "HCI",
+    "sp26 hci almeda": "HCI",
+    "fa25 hci aveni": "HCI",
+    "human computer interaction": "HCI",
+    "human-computer interaction": "HCI",
+    "genai": "Generative AI",
+    "generative ai": "Generative AI",
+    "ethics in ai": "Ethics in AI",
+    "ethics ai": "Ethics in AI",
+    "python advanced": "Python Advanced",
+    "generic base conversion": "Generic Base Conversion",
+    "base conversion": "Generic Base Conversion",
+    "number representation": "Generic Base Conversion",
+    "concurrency": "Concurrency",
+    "concurrency race": "Concurrency",
+    "concurrency race deadlock": "Concurrency",
+    "hofs i": "HOFs I",
+    "hof i": "HOFs I",
+    "hofs": "HOFs I",
+    "higher order functions": "HOFs I",
+    "higher-order functions": "HOFs I",
+    "coding python data structures": "Coding Python",
+    "coding python": "Coding Python",
+    "autograder": "Snap!",
+    "1: autograder (20.0 pts)": "Snap!",
+    "1: autograder (10.0 pts)": "Snap!",
+}
+
 
 def _to_float(value: Any) -> Optional[float]:
     if value is None:
@@ -23,6 +53,73 @@ def _to_float(value: Any) -> Optional[float]:
         return float(text)
     except ValueError:
         return None
+
+
+def _component_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower().replace("_", " ").replace("-", " "))
+
+
+def _canonical_component(exam_type: Optional[str], value: Any, assignment_title: Optional[str] = None) -> Optional[str]:
+    key = _component_key(value)
+    title_key = _component_key(assignment_title)
+    if not key:
+        return None
+    if "survey" in key or key.startswith("pledge") or key.startswith("assessment "):
+        return None
+
+    if exam_type == "postterm":
+        if key == "python":
+            return "Coding Python" if "with python" in title_key or "with snap" in title_key else "Python Advanced"
+        if "autograder" in key:
+            return "Snap!"
+        return _POSTTERM_TOPIC_ALIASES.get(key)
+
+    if exam_type == "midterm":
+        if key == "scoping":
+            return "Scope"
+        if key == "recursion":
+            return "Recursion Tracing"
+        if "autograder" in key:
+            return "Fractal"
+
+    return str(value or "").strip()
+
+
+def _distribute_aggregate_scores(
+    exam_type: Optional[str],
+    scores: Dict[str, Any],
+    caps: Dict[str, float],
+) -> Dict[str, float]:
+    adjustments: Dict[str, float] = defaultdict(float)
+
+    def raw_score(raw_key: str) -> float:
+        wanted = _component_key(raw_key)
+        for key, value in scores.items():
+            if _component_key(key) == wanted:
+                return _to_float(value) or 0.0
+        return 0.0
+
+    def distribute(raw_key: str, targets: List[str]) -> None:
+        remaining = raw_score(raw_key)
+        for target in targets:
+            cap = caps.get(target) or 0.0
+            if cap <= 0:
+                continue
+            room = max(0.0, cap - adjustments[target])
+            used = min(max(remaining, 0.0), room)
+            if used > 0:
+                adjustments[target] += used
+            remaining -= used
+            if remaining <= 0:
+                break
+
+    if exam_type == "postterm":
+        distribute("Lecture", ["Generative AI", "Ethics in AI", "HCI"])
+    elif exam_type == "midterm":
+        distribute("Lecture", ["Algorithms", "Computers In Education", "Testing+2048", "Savingtheworld"])
+        distribute("Logical Procedures", ["Iteration"])
+
+    return dict(adjustments)
 
 
 def parse_exam_identity(title: Optional[str]) -> Dict[str, Any]:
@@ -45,24 +142,27 @@ def parse_exam_identity(title: Optional[str]) -> Dict[str, Any]:
     }
 
 
-def _extract_component_caps(assignment: Assignment) -> Dict[str, float]:
+def _extract_component_caps(assignment: Assignment, exam_type: Optional[str] = None) -> Dict[str, float]:
     metadata = assignment.assignment_metadata if isinstance(assignment.assignment_metadata, dict) else {}
     components = metadata.get("components")
-    if not isinstance(components, list):
-        return {}
-
     caps: Dict[str, float] = {}
-    for component in components:
-        if not isinstance(component, dict):
-            continue
-        key = str(component.get("key", "")).strip()
-        if not key:
-            continue
-        cap = _to_float(component.get("max_points"))
-        if cap is None:
-            continue
-        old = caps.get(key)
-        if old is None or cap > old:
+
+    if isinstance(components, list):
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            key = _canonical_component(exam_type, component.get("key", ""), assignment.title)
+            if not key:
+                continue
+            cap = _to_float(component.get("max_points"))
+            if cap is None or cap <= 0:
+                continue
+            caps[key] = caps.get(key, 0.0) + cap
+
+    if not caps and metadata.get("source") != "prairielearn":
+        cap = _to_float(assignment.max_points)
+        key = _canonical_component(exam_type, "Autograder", assignment.title)
+        if key and cap is not None and cap > 0:
             caps[key] = cap
     return caps
 
@@ -178,32 +278,56 @@ def compute_effective_exam_scores(session: Session, course_id: int) -> Dict[str,
     for student in students:
         for exam_type, attempts in grouped_assignments.items():
             component_caps: Dict[str, float] = {}
-            component_best: Dict[str, float] = {}
+            component_best_pct: Dict[str, float] = {}
 
             for assignment_group in attempts.values():
+                attempt_component_scores: Dict[str, float] = defaultdict(float)
+                attempt_component_caps: Dict[str, float] = defaultdict(float)
+
                 for assignment in assignment_group:
-                    caps = _extract_component_caps(assignment)
+                    caps = _extract_component_caps(assignment, exam_type)
                     for key, cap in caps.items():
-                        old_cap = component_caps.get(key)
-                        if old_cap is None or cap > old_cap:
-                            component_caps[key] = cap
+                        if attempt_component_caps[key] <= 0:
+                            attempt_component_caps[key] = cap
 
                     submission = submission_lookup.get((assignment.id, student.id))
                     if not submission:
                         continue
                     scores = submission.scores_by_question if isinstance(submission.scores_by_question, dict) else {}
-                    for key, raw_score in scores.items():
-                        score = _to_float(raw_score)
+                    score_by_component: Dict[str, float] = {}
+                    for raw_key, raw_value in scores.items():
+                        key = _canonical_component(exam_type, raw_key, assignment.title)
+                        if not key:
+                            continue
+                        score = _to_float(raw_value)
                         if score is None:
                             continue
-                        old_score = component_best.get(key)
-                        if old_score is None or score > old_score:
-                            component_best[key] = score
+                        score_by_component[key] = score_by_component.get(key, 0.0) + score
+
+                    for key, score in _distribute_aggregate_scores(exam_type, scores, caps).items():
+                        score_by_component[key] = score_by_component.get(key, 0.0) + score
+
+                    for key, cap in caps.items():
+                        score = score_by_component.get(key)
+                        if score is None:
+                            continue
+                        attempt_component_scores[key] += min(max(score, 0.0), cap)
+
+                for key, cap in attempt_component_caps.items():
+                    if cap <= 0:
+                        continue
+                    old_cap = component_caps.get(key)
+                    if old_cap is None or cap > old_cap:
+                        component_caps[key] = cap
+                    pct = attempt_component_scores.get(key, 0.0) / cap
+                    old_pct = component_best_pct.get(key)
+                    if old_pct is None or pct > old_pct:
+                        component_best_pct[key] = pct
 
             question_best_pct = None
             if component_caps:
                 denominator = float(sum(component_caps.values()))
-                numerator = float(sum(min(component_best.get(key, 0.0), cap) for key, cap in component_caps.items()))
+                numerator = float(sum(component_best_pct.get(key, 0.0) * cap for key, cap in component_caps.items()))
                 if denominator > 0:
                     question_best_pct = (numerator / denominator) * 100.0
 
@@ -211,16 +335,22 @@ def compute_effective_exam_scores(session: Session, course_id: int) -> Dict[str,
             raw_per_attempt: Dict[int, Tuple[Optional[float], Optional[int], Optional[Assignment]]] = {}
 
             for attempt_no in ordered_attempts:
-                best_raw = None
+                total_score = 0.0
+                total_cap = 0.0
                 best_assignment_id = None
                 for assignment in attempts[attempt_no]:
                     submission = submission_lookup.get((assignment.id, student.id))
-                    raw_pct = _submission_percentage(submission, assignment)
-                    if raw_pct is None:
+                    if not submission:
                         continue
-                    if best_raw is None or raw_pct > best_raw:
-                        best_raw = raw_pct
+                    score = _to_float(submission.total_score)
+                    max_points = _to_float(assignment.max_points) or _to_float(submission.max_points)
+                    if score is None or max_points is None or max_points <= 0:
+                        continue
+                    total_score += score
+                    total_cap += max_points
+                    if best_assignment_id is None:
                         best_assignment_id = assignment.id
+                best_raw = (total_score / total_cap) * 100.0 if total_cap > 0 else None
                 raw_per_attempt[attempt_no] = (best_raw, best_assignment_id, None)
 
             suffix_best: Dict[int, Tuple[Optional[float], Optional[int]]] = {}
@@ -251,6 +381,7 @@ def compute_effective_exam_scores(session: Session, course_id: int) -> Dict[str,
                     "raw_assignment_id": raw_assignment_id,
                     "clobber_source_assignment_id": clobber_source_id,
                     "question_component_count": len(component_caps),
+                    "raw_attempt_policy": "sum_parts",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
 

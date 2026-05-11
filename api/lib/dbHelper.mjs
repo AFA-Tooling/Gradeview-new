@@ -49,6 +49,49 @@ const QUEST_CATEGORY_ALIASES = {
 };
 const QUEST_UNMAPPED_BUCKET = '__quest_unmapped__';
 
+const POSTTERM_TOPIC_ORDER = [
+    'Programming Paradigms',
+    'HCI',
+    'Generative AI',
+    'Ethics in AI',
+    'Python Advanced',
+    'Generic Base Conversion',
+    'Concurrency',
+    'HOFs I',
+    'Coding Python',
+    'Snap!',
+];
+
+const POSTTERM_TOPIC_ALIASES = {
+    'programming paradigms': 'Programming Paradigms',
+    'hci': 'HCI',
+    'sp26 hci almeda': 'HCI',
+    'fa25 hci aveni': 'HCI',
+    'human computer interaction': 'HCI',
+    'human-computer interaction': 'HCI',
+    'genai': 'Generative AI',
+    'generative ai': 'Generative AI',
+    'ethics in ai': 'Ethics in AI',
+    'ethics ai': 'Ethics in AI',
+    'python advanced': 'Python Advanced',
+    'generic base conversion': 'Generic Base Conversion',
+    'base conversion': 'Generic Base Conversion',
+    'number representation': 'Generic Base Conversion',
+    'concurrency': 'Concurrency',
+    'concurrency race': 'Concurrency',
+    'concurrency race deadlock': 'Concurrency',
+    'hofs i': 'HOFs I',
+    'hof i': 'HOFs I',
+    'hofs': 'HOFs I',
+    'higher order functions': 'HOFs I',
+    'higher-order functions': 'HOFs I',
+    'coding python data structures': 'Coding Python',
+    'coding python': 'Coding Python',
+    'autograder': 'Snap!',
+    '1: autograder (20.0 pts)': 'Snap!',
+    '1: autograder (10.0 pts)': 'Snap!',
+};
+
 /**
  * Gets or creates a PostgreSQL connection pool.
  * @returns {Pool} PostgreSQL pool instance
@@ -320,11 +363,50 @@ function normalizeComponentKey(value) {
 }
 
 function parseQuestAttemptNo(title) {
+    return parseExamAttemptNo(title, 'quest');
+}
+
+function parseExamAttemptNo(title, examType) {
     const text = String(title || '');
-    const match = text.match(/quest\s*[-:]?\s*(\d+)/i);
+    const type = String(examType || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = text.match(new RegExp(`\\b${type}\\s*[-:]?\\s*(\\d+)`, 'i'));
     if (!match) return null;
     const attemptNo = Number(match[1]);
     return Number.isFinite(attemptNo) ? attemptNo : null;
+}
+
+function canonicalizeExamComponentName(examType, value, assignmentTitle = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const key = normalizeComponentKey(raw)
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const titleKey = normalizeComponentKey(assignmentTitle)
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (examType === 'postterm') {
+        if (key.includes('survey') || key.startsWith('pledge')) return null;
+        if (key === 'python') {
+            return titleKey.includes('with python') || titleKey.includes('with snap')
+                ? 'Coding Python'
+                : 'Python Advanced';
+        }
+        if (key.includes('autograder')) {
+            return 'Snap!';
+        }
+        return POSTTERM_TOPIC_ALIASES[key] || null;
+    }
+
+    if (examType === 'midterm') {
+        if (key === 'scoping') return 'Scope';
+        if (key === 'recursion') return 'Recursion Tracing';
+        if (key.includes('autograder')) return 'Fractal';
+    }
+
+    return raw;
 }
 
 /**
@@ -335,9 +417,14 @@ function parseQuestAttemptNo(title) {
  * @returns {Promise<{components:string[], series:Array<{name:string,data:number[]}>}>}
  */
 export async function getStudentQuestComponentTrend(email, courseId = null) {
+    const trends = await getStudentExamComponentTrends(email, courseId);
+    return trends.quest;
+}
+
+export async function getStudentExamComponentTrends(email, courseId = null) {
     const pool = getPool();
 
-    const componentOrder = [
+    const questComponentOrder = [
         'Abstraction',
         'Number Representation',
         'Iteration',
@@ -346,6 +433,28 @@ export async function getStudentQuestComponentTrend(email, courseId = null) {
         'Functions',
         'HOFs I',
     ];
+    const examLabels = {
+        quest: 'Quest',
+        midterm: 'Midterm',
+        postterm: 'Postterm',
+    };
+    const metadataKeys = new Set([
+        'source',
+        'score_perc',
+        'component caps',
+        'component_caps',
+        'components',
+        'assessment_number',
+        'assessment label',
+        'assessment_label',
+        'assessment name',
+        'assessment_name',
+        'column',
+        'directions',
+        'instructions',
+        'pledge',
+        'survey',
+    ]);
 
     let query = `
         SELECT
@@ -356,17 +465,18 @@ export async function getStudentQuestComponentTrend(email, courseId = null) {
             s.total_score,
             s.max_points AS submission_max_points,
             s.scores_by_question,
+            LOWER(COALESCE(e.exam_type, '')) AS exam_type,
             e.attempt_no
         FROM students st
         JOIN courses c ON c.id = st.course_id
         JOIN submissions s ON s.student_id = st.id
         JOIN assignments a ON a.id = s.assignment_id AND a.course_id = c.id
-        LEFT JOIN exam_attempt_map e
+        JOIN exam_attempt_map e
             ON e.assignment_id = a.id
            AND e.course_id = c.id
-           AND LOWER(e.exam_type) = 'quest'
         WHERE st.email = $1
-          AND LOWER(COALESCE(a.category, '')) = 'quest'
+          AND LOWER(COALESCE(e.exam_type, '')) IN ('quest', 'midterm', 'postterm')
+          AND COALESCE(e.is_practice, false) = false
     `;
 
     const params = [email];
@@ -379,11 +489,36 @@ export async function getStudentQuestComponentTrend(email, courseId = null) {
 
     const result = await pool.query(query, params);
 
-    const attemptMap = new Map();
+    const byExam = {
+        quest: { componentOrder: [...questComponentOrder], componentSet: new Set(questComponentOrder), componentCaps: new Map(), attemptMap: new Map() },
+        midterm: { componentOrder: [], componentSet: new Set(), componentCaps: new Map(), attemptMap: new Map() },
+        postterm: { componentOrder: [...POSTTERM_TOPIC_ORDER], componentSet: new Set(POSTTERM_TOPIC_ORDER), componentCaps: new Map(), attemptMap: new Map() },
+    };
+
+    const addComponent = (examType, componentName, cap = null) => {
+        const holder = byExam[examType];
+        if (!holder || !componentName) return;
+        if (!holder.componentSet.has(componentName)) {
+            holder.componentSet.add(componentName);
+            holder.componentOrder.push(componentName);
+        }
+        const numericCap = Number(cap);
+        if (Number.isFinite(numericCap) && numericCap > 0) {
+            const existingCap = Number(holder.componentCaps.get(componentName));
+            if (!Number.isFinite(existingCap) || numericCap > existingCap) {
+                holder.componentCaps.set(componentName, numericCap);
+            }
+        }
+    };
 
     for (const row of result.rows) {
-        const attemptNo = Number(row.attempt_no) || parseQuestAttemptNo(row.assignment_title);
-        if (!attemptNo || attemptNo < 1 || attemptNo > 3) {
+        const examType = String(row.exam_type || '').trim().toLowerCase();
+        if (!byExam[examType]) {
+            continue;
+        }
+        const attemptNo = Number(row.attempt_no)
+            || parseExamAttemptNo(row.assignment_title, examType);
+        if (!attemptNo || attemptNo < 1) {
             continue;
         }
 
@@ -391,99 +526,115 @@ export async function getStudentQuestComponentTrend(email, courseId = null) {
             ? row.assignment_metadata
             : {};
         const components = Array.isArray(assignmentMetadata.components) ? assignmentMetadata.components : [];
-        const componentCapsByKey = new Map();
+        const componentCapsByKey = buildExamComponentCapMap(
+            examType,
+            row.assignment_title,
+            assignmentMetadata,
+            row.scores_by_question || {},
+            row.assignment_max_points ?? row.submission_max_points,
+        );
+        const componentLabelByKey = new Map();
         for (const component of components) {
-            const key = normalizeComponentKey(component?.key);
+            const key = normalizeComponentKey(component?.key || component?.name || component?.label);
             if (!key) continue;
-            const maxPoints = Number(component?.max_points);
-            if (Number.isFinite(maxPoints) && maxPoints > 0) {
-                componentCapsByKey.set(key, maxPoints);
+            if (metadataKeys.has(key) || key.includes('survey') || key.startsWith('pledge')) continue;
+            const rawLabel = String(component?.key || component?.name || component?.label || '').trim();
+            const label = canonicalizeExamComponentName(examType, rawLabel, row.assignment_title);
+            if (label) {
+                componentLabelByKey.set(key, label);
+                const cap = Number(componentCapsByKey.get(normalizeComponentKey(label)));
+                addComponent(examType, label, cap);
             }
         }
 
         const scoresByQuestion = row.scores_by_question && typeof row.scores_by_question === 'object'
             ? row.scores_by_question
             : {};
-        const embeddedCapsRaw = scoresByQuestion.component_caps && typeof scoresByQuestion.component_caps === 'object'
-            ? scoresByQuestion.component_caps
-            : {};
-        const embeddedCaps = new Map();
-        for (const [capKey, capValue] of Object.entries(embeddedCapsRaw)) {
-            const normCapKey = normalizeComponentKey(capKey);
-            const numericCap = Number(capValue);
-            if (normCapKey && Number.isFinite(numericCap) && numericCap > 0) {
-                embeddedCaps.set(normCapKey, numericCap);
+
+        const holder = byExam[examType];
+        const attempt = holder.attemptMap.get(attemptNo) || new Map();
+        const aggregateAdjustments = distributeAggregateExamScores(examType, scoresByQuestion, componentCapsByKey);
+
+        for (const [rawKey, rawValue] of Object.entries(scoresByQuestion)) {
+            const key = normalizeComponentKey(rawKey);
+            if (!key || metadataKeys.has(key)) continue;
+            if (key.includes('survey') || key.startsWith('pledge')) continue;
+
+            const label = componentLabelByKey.get(key) || canonicalizeExamComponentName(examType, rawKey, row.assignment_title);
+            if (!label) continue;
+
+            const score = Number(rawValue);
+            const cap = Number(componentCapsByKey.get(normalizeComponentKey(label)));
+            if (!Number.isFinite(score) || !Number.isFinite(cap) || cap <= 0) {
+                continue;
             }
+
+            addComponent(examType, label, cap);
+            const existing = attempt.get(label) || { score: 0, cap: 0 };
+            attempt.set(label, {
+                score: existing.score + Math.min(Math.max(score, 0), cap),
+                cap: existing.cap > 0 ? existing.cap : cap,
+            });
         }
 
-        const assignmentMax = Number(row.assignment_max_points);
-        const submissionMax = Number(row.submission_max_points);
-        const totalScore = Number(row.total_score);
-        const overallPercentage = Number(scoresByQuestion.score_perc);
-        let fallbackPct = null;
-        if (Number.isFinite(overallPercentage)) {
-            fallbackPct = overallPercentage;
-        } else {
-            const denom = Number.isFinite(submissionMax) && submissionMax > 0
-                ? submissionMax
-                : (Number.isFinite(assignmentMax) && assignmentMax > 0 ? assignmentMax : null);
-            if (denom && Number.isFinite(totalScore)) {
-                fallbackPct = (totalScore / denom) * 100;
-            }
-        }
+        aggregateAdjustments.forEach((score, label) => {
+            addComponent(examType, label);
+            const cap = Number(componentCapsByKey.get(normalizeComponentKey(label)));
+            if (!Number.isFinite(score) || !Number.isFinite(cap) || cap <= 0) return;
+            addComponent(examType, label, cap);
+            const existing = attempt.get(label) || { score: 0, cap: 0 };
+            attempt.set(label, {
+                score: Math.min(cap, existing.score + score),
+                cap: existing.cap > 0 ? existing.cap : cap,
+            });
+        });
 
-        const existing = attemptMap.get(attemptNo) || {};
-        const merged = { ...existing };
-
-        for (const componentName of componentOrder) {
-            const targetKey = normalizeComponentKey(componentName);
-
-            let componentPct = null;
-
-            for (const [rawKey, rawValue] of Object.entries(scoresByQuestion)) {
-                const normKey = normalizeComponentKey(rawKey);
-                if (!normKey || normKey === 'source' || normKey === 'score_perc') continue;
-                if (normKey === 'component caps') continue;
-                if (normKey !== targetKey) continue;
-
-                const score = Number(rawValue);
-                const cap = Number(componentCapsByKey.get(normKey) ?? embeddedCaps.get(normKey));
-                if (Number.isFinite(score) && Number.isFinite(cap) && cap > 0) {
-                    const roundedScore = Math.ceil(score * 10) / 10;
-                    componentPct = (roundedScore / cap) * 100;
-                }
-            }
-
-            if (!Number.isFinite(componentPct) && Number.isFinite(fallbackPct)) {
-                componentPct = fallbackPct;
-            }
-
-            if (Number.isFinite(componentPct)) {
-                merged[componentName] = Math.max(0, Math.min(100, Number(componentPct)));
-            }
-        }
-
-        attemptMap.set(attemptNo, merged);
+        holder.attemptMap.set(attemptNo, attempt);
     }
 
-    const getAttemptPct = (attemptNo, componentName) => {
-        const item = attemptMap.get(attemptNo);
-        if (!item) return 0;
-        const value = Number(item[componentName]);
-        return Number.isFinite(value) ? value : 0;
+    const buildTrend = (examType) => {
+        const holder = byExam[examType];
+        const components = holder.componentOrder;
+        const attemptNos = Array.from(holder.attemptMap.keys()).sort((a, b) => a - b);
+        if (components.length === 0 || attemptNos.length === 0) {
+            return { components: [], componentCaps: [], series: [] };
+        }
+
+        const getAttemptPct = (attemptNo, componentName) => {
+            const item = holder.attemptMap.get(attemptNo);
+            if (!item) return 0;
+            const value = item.get(componentName);
+            const score = Number(value?.score);
+            const cap = Number(value?.cap);
+            if (!Number.isFinite(score) || !Number.isFinite(cap) || cap <= 0) return 0;
+            return Math.max(0, Math.min(100, (score / cap) * 100));
+        };
+
+        let cumulative = components.map(() => 0);
+        const label = examLabels[examType] || examType;
+        const series = attemptNos.map((attemptNo) => {
+            const raw = components.map((componentName) => getAttemptPct(attemptNo, componentName));
+            cumulative = raw.map((value, index) => Math.max(value, cumulative[index] || 0));
+            return {
+                name: `After ${label}-${attemptNo}${attemptNo === attemptNos[0] ? '' : ' (Cumulative Best)'}`,
+                data: cumulative.map((value) => Number(value.toFixed(2))),
+            };
+        });
+
+        return {
+            components,
+            componentCaps: components.map((componentName) => {
+                const cap = Number(holder.componentCaps.get(componentName));
+                return Number.isFinite(cap) && cap > 0 ? cap : null;
+            }),
+            series,
+        };
     };
 
-    const after1 = componentOrder.map((componentName) => getAttemptPct(1, componentName));
-    const after2 = componentOrder.map((componentName, index) => Math.max(after1[index], getAttemptPct(2, componentName)));
-    const after3 = componentOrder.map((componentName, index) => Math.max(after2[index], getAttemptPct(3, componentName)));
-
     return {
-        components: componentOrder,
-        series: [
-            { name: 'After Quest-1', data: after1.map((value) => Number(value.toFixed(2))) },
-            { name: 'After Quest-2 (Cumulative Best)', data: after2.map((value) => Number(value.toFixed(2))) },
-            { name: 'After Quest-3 (Cumulative Best)', data: after3.map((value) => Number(value.toFixed(2))) },
-        ],
+        quest: buildTrend('quest'),
+        midterm: buildTrend('midterm'),
+        postterm: buildTrend('postterm'),
     };
 }
 
@@ -683,12 +834,12 @@ async function getExamSummaryDistribution(examType, capPoints, courseId = null, 
             st.email AS student_email,
             MAX(CASE
                 WHEN LOWER(COALESCE(e.exam_type, '')) = $1
-                THEN COALESCE(e.question_best_percentage, e.final_percentage)
+                THEN COALESCE(e.final_percentage, e.question_best_percentage, e.clobbered_percentage, e.raw_percentage)
                 ELSE NULL
             END) AS primary_best_percentage,
             MAX(CASE
                 WHEN LOWER(COALESCE(e.exam_type, '')) = 'postterm'
-                THEN COALESCE(e.question_best_percentage, e.final_percentage)
+                THEN COALESCE(e.final_percentage, e.question_best_percentage, e.clobbered_percentage, e.raw_percentage)
                 ELSE NULL
             END) AS postterm_best_percentage
         FROM students st
@@ -781,6 +932,75 @@ function buildQuestComponentCapMap(assignmentMetadata = {}, scoresByQuestion = {
     });
 
     return capMap;
+}
+
+function buildExamComponentCapMap(examType, assignmentTitle, assignmentMetadata = {}, scoresByQuestion = {}, assignmentMaxPoints = null) {
+    const rawCapMap = buildQuestComponentCapMap(assignmentMetadata, scoresByQuestion);
+    const capMap = new Map();
+    rawCapMap.forEach((cap, rawKey) => {
+        const canonical = canonicalizeExamComponentName(examType, rawKey, assignmentTitle);
+        if (!canonical) return;
+        const key = normalizeComponentKey(canonical);
+        capMap.set(key, Number(capMap.get(key) || 0) + Number(cap));
+    });
+
+    if (capMap.size === 0) {
+        const metadata = assignmentMetadata && typeof assignmentMetadata === 'object' ? assignmentMetadata : {};
+        const source = String(metadata.source || '').trim().toLowerCase();
+        if (source !== 'prairielearn') {
+            const scoreKeys = Object.keys(scoresByQuestion || {}).filter((key) => !isGraphMetadataScoreKey(key));
+            const firstScoreKey = scoreKeys[0] || 'Autograder';
+            const canonical = canonicalizeExamComponentName(examType, firstScoreKey, assignmentTitle);
+            const cap = Number(assignmentMaxPoints);
+            if (canonical && Number.isFinite(cap) && cap > 0) {
+                capMap.set(normalizeComponentKey(canonical), cap);
+            }
+        }
+    }
+
+    return capMap;
+}
+
+function distributeAggregateExamScores(examType, scoresByQuestion = {}, capMap = new Map()) {
+    const adjustments = new Map();
+    const getRawScore = (rawKey) => {
+        const direct = Number(scoresByQuestion?.[rawKey]);
+        if (Number.isFinite(direct)) return direct;
+        const normalized = normalizeComponentKey(rawKey);
+        for (const [key, value] of Object.entries(scoresByQuestion || {})) {
+            if (normalizeComponentKey(key) === normalized) {
+                const numeric = Number(value);
+                return Number.isFinite(numeric) ? numeric : 0;
+            }
+        }
+        return 0;
+    };
+    const add = (component, value) => {
+        const key = normalizeComponentKey(component);
+        const cap = Number(capMap.get(key));
+        if (!Number.isFinite(cap) || cap <= 0) return value;
+        const existing = Number(adjustments.get(component) || 0);
+        const room = Math.max(0, cap - existing);
+        const used = Math.min(Math.max(value, 0), room);
+        if (used > 0) adjustments.set(component, existing + used);
+        return value - used;
+    };
+    const distribute = (rawKey, targets) => {
+        let remaining = getRawScore(rawKey);
+        for (const target of targets) {
+            remaining = add(target, remaining);
+            if (remaining <= 0) break;
+        }
+    };
+
+    if (examType === 'postterm') {
+        distribute('Lecture', ['Generative AI', 'Ethics in AI', 'HCI']);
+    } else if (examType === 'midterm') {
+        distribute('Lecture', ['Algorithms', 'Computers In Education', 'Testing+2048', 'Savingtheworld']);
+        distribute('Logical Procedures', ['Iteration']);
+    }
+
+    return adjustments;
 }
 
 function extractQuestComponentScores(scoresByQuestion = {}, componentCaps = new Map()) {
@@ -1689,14 +1909,27 @@ function graphComponentKey(value = '') {
         .trim();
 }
 
+function graphCanonicalExamComponent(group, value = '', assignmentTitle = '') {
+    const canonical = canonicalizeExamComponentName(group, value, assignmentTitle);
+    return canonical || null;
+}
+
 function isGraphMetadataScoreKey(key = '') {
     const normalized = graphComponentKey(key);
-    return !normalized
-        || normalized === 'source'
+    if (!normalized) return true;
+    if (normalized.includes('survey') || normalized.startsWith('pledge')) return true;
+    return normalized === 'source'
         || normalized === 'score perc'
         || normalized === 'score_perc'
         || normalized === 'component caps'
-        || normalized === 'component_caps';
+        || normalized === 'component_caps'
+        || normalized === 'assessment number'
+        || normalized === 'assessment label'
+        || normalized === 'assessment name'
+        || normalized === 'directions'
+        || normalized === 'instructions'
+        || normalized === 'pledge'
+        || normalized === 'survey';
 }
 
 function graphComponentCapMap(assignmentMetadata = {}, scoresByQuestion = {}) {
@@ -2089,20 +2322,28 @@ function addRawQuestionNodes(builder, group, assignmentRows, options = {}) {
         const scoresByQuestion = row.scores_by_question && typeof row.scores_by_question === 'object'
             ? row.scores_by_question
             : {};
-        const capMap = graphComponentCapMap(row.assignment_metadata || {}, scoresByQuestion);
+        const capMap = buildExamComponentCapMap(
+            group,
+            row.title,
+            row.assignment_metadata || {},
+            scoresByQuestion,
+            row.assignment_max_points ?? row.submission_max_points,
+        );
         Object.entries(scoresByQuestion).forEach(([rawKey, rawValue]) => {
-            const key = graphComponentKey(rawKey);
+            const canonicalLabel = graphCanonicalExamComponent(group, rawKey, row.title);
+            if (!canonicalLabel) return;
+            const key = graphComponentKey(canonicalLabel);
             if (isGraphMetadataScoreKey(key)) return;
             const score = graphSafeNumber(rawValue, NaN);
             if (!Number.isFinite(score)) return;
             const maxScore = graphSafeNumber(capMap.get(key), null);
-            const rawNodeId = `${group}:raw:${row.assignment_pk}:${key}`;
+            const rawNodeId = `${group}:raw:${row.assignment_pk}:${key}:${graphComponentKey(rawKey)}`;
             const attemptNo = graphSafeNumber(row.attempt_no, null);
             builder.addNode({
                 id: rawNodeId,
                 type: 'raw',
                 subtype: 'question',
-                label: `${row.title || 'Attempt'} · ${rawKey}`,
+                label: `${row.title || 'Attempt'} · ${canonicalLabel}`,
                 group,
                 layer: 0,
                 score,
@@ -2112,14 +2353,15 @@ function addRawQuestionNodes(builder, group, assignmentRows, options = {}) {
                 details: {
                     quality: maxScore ? 'direct' : 'estimated',
                     attemptNo,
-                    questionKey: rawKey,
+                    questionKey: canonicalLabel,
+                    sourceQuestionKey: rawKey,
                     assignmentTitle: row.title,
                     sourceAssignment: row.assignment_id,
                 },
             });
 
             if (!groupedByQuestion.has(key)) {
-                groupedByQuestion.set(key, { rawKey, maxScore, rawNodeIds: [], scores: [] });
+                groupedByQuestion.set(key, { rawKey: canonicalLabel, maxScore, rawNodeIds: [], scores: [] });
             }
             const item = groupedByQuestion.get(key);
             item.rawNodeIds.push(rawNodeId);
@@ -2520,12 +2762,12 @@ function addExamGraph(builder, examType, submissions, policyRows, summary, optio
             id: sumNodeId,
             type: 'logical',
             subtype: 'sum',
-            label: `${summary.label} Question Sum`,
+            label: `${summary.label} Topic Sum`,
             group,
             layer: 2,
             score: null,
             maxScore: null,
-            displayValue: 'sum best questions',
+            displayValue: 'sum best topics',
             status: 'selected',
             details: { quality: 'direct', operator: 'sum' },
         });
@@ -2646,7 +2888,7 @@ export async function getStudentGradeFlow(email, courseId = null) {
 
     const posttermRows = examRows.filter((row) => graphNormalize(row.exam_type) === 'postterm');
     const posttermSource = addExamGraph(builder, 'postterm', submissions, posttermRows, summaries.postterm, {
-        maxLabel: 'QUESTION BEST',
+        maxLabel: 'TOPIC BEST',
     });
     const questRows = examRows.filter((row) => graphNormalize(row.exam_type) === 'quest');
     const questSource = addExamGraph(builder, 'quest', submissions, questRows, summaries.quest, {
@@ -2654,7 +2896,7 @@ export async function getStudentGradeFlow(email, courseId = null) {
     });
     const midtermRows = examRows.filter((row) => graphNormalize(row.exam_type) === 'midterm');
     const midtermSource = addExamGraph(builder, 'midterm', submissions, midtermRows, summaries.midterm, {
-        maxLabel: 'QUESTION BEST',
+        maxLabel: 'TOPIC BEST',
         clobberSourceNodeId: posttermSource,
     });
 

@@ -121,12 +121,14 @@ class PrairieLearnSync:
         "HOFs I",
     ]
 
+    _EXAM_NAME_PATTERN = re.compile(r"\b(quest|midterm|postterm)\b", re.IGNORECASE)
+
     @classmethod
     def _normalize_component_name(cls, question_topic: Any, question_name: Any) -> Optional[str]:
         topic_text = str(question_topic or "").strip()
         name_text = str(question_name or "").strip()
 
-        generic_topics = {"other", "template", "misc", "general"}
+        generic_topics = {"other", "template", "misc", "general", "lecture", "python", "binary-hex-dec", "binary hex dec"}
         if topic_text.lower() in generic_topics and name_text:
             candidate = name_text.rsplit("/", 1)[-1]
         else:
@@ -134,6 +136,25 @@ class PrairieLearnSync:
 
         normalized = candidate.lower().replace("-", " ").replace("_", " ").replace("/", " ").strip()
         normalized = re.sub(r"\s+", " ", normalized)
+        if not normalized:
+            return None
+
+        non_score_topics = {
+            "assessment number",
+            "assessment label",
+            "assessment name",
+            "directions",
+            "instructions",
+            "pledge",
+            "survey",
+        }
+        if (
+            normalized in non_score_topics
+            or normalized.startswith("assessment ")
+            or normalized.startswith("pledge")
+            or normalized.startswith("survey")
+        ):
+            return None
 
         aliases = {
             "abstraction": "Abstraction",
@@ -155,6 +176,22 @@ class PrairieLearnSync:
             "binary hex dec": "Number Representation",
             "binary hexadecimal decimal": "Number Representation",
             "number systems": "Number Representation",
+            "programming paradigms": "Programming Paradigms",
+            "hci": "HCI",
+            "sp26 hci almeda": "HCI",
+            "fa25 hci aveni": "HCI",
+            "human computer interaction": "HCI",
+            "human-computer interaction": "HCI",
+            "genai": "Generative AI",
+            "generative ai": "Generative AI",
+            "ethics in ai": "Ethics in AI",
+            "ethics ai": "Ethics in AI",
+            "python advanced": "Python Advanced",
+            "generic base conversion": "Generic Base Conversion",
+            "base conversion": "Generic Base Conversion",
+            "concurrency": "Concurrency",
+            "concurrency race": "Concurrency",
+            "concurrency race deadlock": "Concurrency",
         }
         direct = aliases.get(normalized)
         if direct:
@@ -168,9 +205,12 @@ class PrairieLearnSync:
             if item.lower() in normalized:
                 return item
 
+        if normalized and len(normalized) <= 60:
+            return " ".join(part.capitalize() for part in normalized.split())
+
         return None
 
-    def _collect_quest_component_scores(
+    def _collect_exam_component_scores(
         self,
         pl_course_id: str,
         gradebook_rows: List[Dict[str, Any]],
@@ -180,11 +220,9 @@ class PrairieLearnSync:
         for row in gradebook_rows:
             for item in row.get("assessments") or []:
                 assessment_name = str(item.get("assessment_name") or "").strip().lower()
-                if "quest" not in assessment_name or "practice" in assessment_name:
+                if "practice" in assessment_name:
                     continue
-
-                attempt_no = self._to_float(item.get("assessment_number"))
-                if attempt_no not in (1.0, 2.0, 3.0):
+                if not self._EXAM_NAME_PATTERN.search(assessment_name):
                     continue
 
                 instance_id = str(item.get("assessment_instance_id") or "").strip()
@@ -404,15 +442,15 @@ class PrairieLearnSync:
                 and isinstance(gradebook_rows[0].get("assessments"), list)
             )
 
-            quest_component_data = {
+            exam_component_data = {
                 "instance_component_map": {},
                 "assessment_component_caps": {},
             }
             if nested_format:
-                quest_component_data = self._collect_quest_component_scores(pl_course_id, gradebook_rows)
+                exam_component_data = self._collect_exam_component_scores(pl_course_id, gradebook_rows)
 
-            instance_component_map = quest_component_data.get("instance_component_map", {})
-            assessment_component_caps = quest_component_data.get("assessment_component_caps", {})
+            instance_component_map = exam_component_data.get("instance_component_map", {})
+            assessment_component_caps = exam_component_data.get("assessment_component_caps", {})
 
             score_columns = self._select_score_columns(gradebook_rows)
 
@@ -457,15 +495,14 @@ class PrairieLearnSync:
 
                     component_caps = assessment_component_caps.get(assessment_id) or {}
                     if component_caps:
-                        metadata["scores_schema"] = "quest_components"
+                        metadata["scores_schema"] = "exam_components"
                         metadata["components"] = [
                             {
                                 "key": component_name,
                                 "max_points": float(component_caps.get(component_name, 0.0)),
                                 "display_order": idx,
                             }
-                            for idx, component_name in enumerate(self._QUEST_COMPONENT_ORDER)
-                            if component_name in component_caps
+                            for idx, component_name in enumerate(component_caps.keys())
                         ]
 
                     external_assignment_id = f"pl:{pl_course_id}:{assessment_id}"

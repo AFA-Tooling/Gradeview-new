@@ -184,7 +184,8 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
           submissionTime: assignment.submissionTime,
         }));
 
-        const trendFromApi = policyRes?.data?.questComponentTrend;
+        const examComponentTrendsFromApi = policyRes?.data?.examComponentTrends || {};
+        const trendFromApi = examComponentTrendsFromApi.quest || policyRes?.data?.questComponentTrend;
         const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);
         const trendFromAssignments = buildQuestComponentTrendFromAssignments(processed?.assignmentsList || []);
         const hasTrendSeries = (trend) => Array.isArray(trend?.series) && trend.series.length > 0;
@@ -200,6 +201,10 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
           roundingPolicy: gradingConfig.roundingPolicy,
           examPolicyRows: policyRows,
           questComponentTrend,
+          examComponentTrends: {
+            ...examComponentTrendsFromApi,
+            quest: questComponentTrend,
+          },
         });
         setLoading(false);
       })
