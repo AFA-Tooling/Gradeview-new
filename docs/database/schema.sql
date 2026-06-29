@@ -165,18 +165,30 @@ CREATE TABLE IF NOT EXISTS config_audit_log (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
+CREATE INDEX IF NOT EXISTS idx_courses_id_text ON courses((id::text));
+
 CREATE INDEX IF NOT EXISTS idx_course_permissions_course_id ON course_permissions(course_id);
 CREATE INDEX IF NOT EXISTS idx_course_permissions_user_id ON course_permissions(user_id);
 
 CREATE INDEX IF NOT EXISTS ix_students_course_id ON students(course_id);
 CREATE INDEX IF NOT EXISTS idx_students_email ON students(email);
+CREATE INDEX IF NOT EXISTS idx_students_course_email_include_name
+    ON students(course_id, email) INCLUDE (legal_name, sid);
 
 CREATE INDEX IF NOT EXISTS idx_assignments_course_id ON assignments(course_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_assignment_id ON assignments(assignment_id);
+CREATE INDEX IF NOT EXISTS idx_assignments_course_category_title
+    ON assignments(course_id, category, title) INCLUDE (id, assignment_id, max_points);
+CREATE INDEX IF NOT EXISTS idx_assignments_course_assignment_id
+    ON assignments(course_id, assignment_id) INCLUDE (id, title, category, max_points);
 
 CREATE INDEX IF NOT EXISTS idx_submissions_assignment_id ON submissions(assignment_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_student_id ON submissions(student_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_submission_time ON submissions(submission_time);
+CREATE INDEX IF NOT EXISTS idx_submissions_student_assignment_include_scores
+    ON submissions(student_id, assignment_id) INCLUDE (total_score, max_points, submission_time, lateness);
+CREATE INDEX IF NOT EXISTS idx_submissions_assignment_student_include_scores
+    ON submissions(assignment_id, student_id) INCLUDE (total_score, max_points);
 
 CREATE INDEX IF NOT EXISTS idx_summary_sheets_course_id ON summary_sheets(course_id);
 CREATE INDEX IF NOT EXISTS idx_summary_sheets_student_id ON summary_sheets(student_id);

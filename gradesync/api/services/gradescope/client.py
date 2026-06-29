@@ -3,6 +3,7 @@ from fullGSapi.api.client import GradescopeClient as GradescopeBaseClient
 import threading
 import requests
 from requests.exceptions import Timeout, RequestException
+from bs4 import BeautifulSoup
 
 # 每个HTTP请求的超时时间（秒）
 DEFAULT_REQUEST_TIMEOUT = 30  # 30秒，快速跳过卡住的作业
@@ -33,6 +34,7 @@ class GradescopeClient(GradescopeBaseClient):
         if self.inactivity_timer is not None:
             self.inactivity_timer.cancel()
         self.inactivity_timer = threading.Timer(self.timeout, self.logout)
+        self.inactivity_timer.daemon = True
         self.inactivity_timer.start()
     
     def set_timer(self, newTimeout: int):
@@ -53,7 +55,8 @@ class GradescopeClient(GradescopeBaseClient):
                     return True
                 
                 url = self.base_url + self.login_path
-                token = self.get_token(url)
+                token = self._load_login_token(url)
+
                 payload = {
                     "utf8": "✓",
                     "authenticity_token": token,
@@ -63,15 +66,61 @@ class GradescopeClient(GradescopeBaseClient):
                     "commit": "Log In",
                     "session[remember_me_sso]": 0,
                 }
-                self.last_res = res = self.submit_form(url, url, data=payload)
-                if res.ok:
+                self.last_res = res = self.session.post(
+                    url,
+                    data=payload,
+                    headers={
+                        "Host": "www.gradescope.com",
+                        "Origin": "https://www.gradescope.com",
+                        "Referer": url,
+                    },
+                    timeout=self.request_timeout,
+                )
+                if res.ok and self.verify_logged_in():
                     self.logged_in = True
                     # print("Logged in to Gradescope")
                     self.reset_inactivity_timer()
                     return True
-                return False
+                self.logged_in = False
+                raise RuntimeError(
+                    "Failed to login to Gradescope. Check GRADESCOPE_EMAIL / "
+                    "GRADESCOPE_PASSWORD and whether the account is being asked "
+                    "to use SSO or two-factor authentication."
+                )
         # We are already logged in, so reset the inactivity timer
         self.reset_inactivity_timer()
+
+    def _extract_authenticity_token(self, content: bytes) -> str:
+        soup = BeautifulSoup(content, "html.parser")
+        form = soup.find("form")
+        if not form:
+            title = soup.title.string.strip() if soup.title and soup.title.string else "unknown page"
+            raise RuntimeError(f"Gradescope login form not found; received {title}")
+        token_input = form.find("input", {"name": "authenticity_token"})
+        token = token_input.get("value") if token_input else None
+        if not token:
+            raise RuntimeError("Gradescope login form did not include an authenticity token")
+        return token
+
+    def _load_login_token(self, url: str) -> str:
+        candidates = [url]
+        if "://gradescope.com" in url:
+            candidates.append(url.replace("://gradescope.com", "://www.gradescope.com", 1))
+
+        last_error = None
+        for candidate in candidates:
+            try:
+                self.last_res = login_page = self.session.get(candidate, timeout=self.request_timeout)
+                login_page.raise_for_status()
+                return self._extract_authenticity_token(login_page.content)
+            except Exception as exc:
+                last_error = exc
+
+        raise RuntimeError(
+            "Failed to load Gradescope login token. "
+            "Gradescope may be blocking password login, requiring SSO/2FA, "
+            "or returning an unexpected login page."
+        ) from last_error
 
     def logout(self):
         """
@@ -80,7 +129,6 @@ class GradescopeClient(GradescopeBaseClient):
         with self.lock:  # Ensures only one thread can execute this block at a time
             # print("Logging out")
             if not self.logged_in:  # Double-check within the lock to avoid redundant logout attempts
-                print("You must be logged in!")
                 return False
 
             base_url = "https://www.gradescope.com"

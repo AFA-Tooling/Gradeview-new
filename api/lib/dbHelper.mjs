@@ -25,6 +25,94 @@ const COURSE_POLICY_COMPONENTS = [
     { key: 'postterm', label: 'Postterm', cap: POSTTERM_SUMMARY_CAP },
 ];
 
+const POLICY_SUMMARY_CACHE_TTL_MS = Math.max(
+    0,
+    Number(process.env.POLICY_SUMMARY_CACHE_TTL_MS || 30000),
+);
+const policySummaryCache = new Map();
+
+function getPolicySummaryCacheKey(courseId = null) {
+    return String(courseId || '__all_courses__');
+}
+
+function createEmptyPolicySummary() {
+    return {
+        summaryByKey: {},
+        summarySectionTotals: {},
+        summaryTotal: 0,
+    };
+}
+
+function applyPolicyComponentSummary(summary, component, rawValue) {
+    const rawScore = graphSafeNumber(rawValue);
+    const score = Math.min(component.cap, rawScore);
+    summary.summaryByKey[component.key] = {
+        ...component,
+        score,
+        rawScore,
+        percentage: graphPercentage(score, component.cap),
+    };
+    summary.summarySectionTotals[component.label] = score;
+    summary.summaryTotal += score;
+}
+
+async function buildCoursePolicySummaryMaps(courseId = null) {
+    const byComponent = await Promise.all(
+        COURSE_POLICY_COMPONENTS.map(async (component) => {
+            const rows = await getCategorySummaryDistribution(component.label, courseId);
+            const rowMap = new Map();
+            (rows || []).forEach((row) => {
+                const email = String(row?.studentEmail || '').trim().toLowerCase();
+                if (!email) return;
+                rowMap.set(email, Number(row?.score) || 0);
+            });
+            return { component, rowMap };
+        }),
+    );
+
+    return { byComponent };
+}
+
+async function getCoursePolicySummaryMaps(courseId = null) {
+    const cacheKey = getPolicySummaryCacheKey(courseId);
+    const now = Date.now();
+    const cached = policySummaryCache.get(cacheKey);
+
+    if (POLICY_SUMMARY_CACHE_TTL_MS > 0 && cached && cached.expiresAt > now) {
+        return cached.promise || cached.value;
+    }
+
+    const promise = buildCoursePolicySummaryMaps(courseId);
+    if (POLICY_SUMMARY_CACHE_TTL_MS > 0) {
+        policySummaryCache.set(cacheKey, {
+            expiresAt: now + POLICY_SUMMARY_CACHE_TTL_MS,
+            promise,
+        });
+    }
+
+    try {
+        const value = await promise;
+        if (POLICY_SUMMARY_CACHE_TTL_MS > 0) {
+            policySummaryCache.set(cacheKey, {
+                expiresAt: Date.now() + POLICY_SUMMARY_CACHE_TTL_MS,
+                value,
+            });
+        }
+        return value;
+    } catch (err) {
+        policySummaryCache.delete(cacheKey);
+        throw err;
+    }
+}
+
+export function clearPolicySummaryCache(courseId = null) {
+    if (courseId) {
+        policySummaryCache.delete(getPolicySummaryCacheKey(courseId));
+        return;
+    }
+    policySummaryCache.clear();
+}
+
 const PROJECT_POLICY_CAPS = [
     { key: '1', label: 'Project 1: Wordle™-lite', cap: 15, patterns: [/\bproject\s*1\b/i] },
     { key: '2', label: 'Project 2: Spelling Bee', cap: 25, patterns: [/\bproject\s*2\b/i] },
@@ -1603,6 +1691,38 @@ export async function getCategorySummaryDistribution(category, courseId = null) 
     }
 }
 
+export async function getAllStudentPolicySummaries(courseId = null) {
+    const { byComponent } = await getCoursePolicySummaryMaps(courseId);
+    const summariesByEmail = new Map();
+
+    byComponent.forEach(({ component, rowMap }) => {
+        rowMap.forEach((rawScore, email) => {
+            if (!summariesByEmail.has(email)) {
+                summariesByEmail.set(email, createEmptyPolicySummary());
+            }
+            applyPolicyComponentSummary(summariesByEmail.get(email), component, rawScore);
+        });
+    });
+
+    return summariesByEmail;
+}
+
+export async function getStudentPolicySummaries(email, courseId = null) {
+    const targetEmail = String(email || '').trim().toLowerCase();
+    if (!targetEmail) {
+        return createEmptyPolicySummary();
+    }
+
+    const { byComponent } = await getCoursePolicySummaryMaps(courseId);
+    const summary = createEmptyPolicySummary();
+
+    byComponent.forEach(({ component, rowMap }) => {
+        applyPolicyComponentSummary(summary, component, rowMap.get(targetEmail));
+    });
+
+    return summary;
+}
+
 /**
  * Gets score distribution for assignments by their titles (for section summaries)
  * @param {string[]} assignmentTitles - Array of assignment titles to sum
@@ -1653,59 +1773,73 @@ export async function getAssignmentsSummaryDistribution(assignmentTitles) {
  */
 export async function getAllStudentScores(courseId = null) {
     const pool = getPool();
-    
-    let query = `
-        SELECT 
-            st.legal_name as student_name,
-            st.email as student_email,
-            COALESCE(a.category, 'Uncategorized') as category,
-            a.title as assignment_name,
-            s.total_score
-        FROM students st
-        LEFT JOIN submissions s ON st.id = s.student_id
-        LEFT JOIN assignments a ON s.assignment_id = a.id
-    `;
 
     const params = [];
-    if (courseId) {
-        query += `
-            JOIN courses c ON a.course_id = c.id
-            WHERE (c.gradescope_course_id::text = $1 OR c.id::text = $1)
-        `;
-        params.push(courseId);
+    const courseFilter = courseId ? String(courseId) : null;
+    if (courseFilter) {
+        params.push(courseFilter);
     }
 
-    query += ` ORDER BY st.email, COALESCE(a.category, 'Uncategorized'), a.title`;
-    
+    const courseScopeCte = courseFilter
+        ? `
+        target_courses AS (
+            SELECT id
+            FROM courses
+            WHERE gradescope_course_id::text = $1 OR id::text = $1
+        ),
+        student_scope AS (
+            SELECT st.id, st.legal_name, st.email, st.course_id
+            FROM students st
+            JOIN target_courses tc ON tc.id = st.course_id
+        ),
+        `
+        : `
+        student_scope AS (
+            SELECT st.id, st.legal_name, st.email, st.course_id
+            FROM students st
+        ),
+        `;
+
+    const query = `
+        WITH
+        ${courseScopeCte}
+        score_sections AS (
+            SELECT
+                st.id AS student_id,
+                st.legal_name AS student_name,
+                st.email AS student_email,
+                COALESCE(a.category, 'Uncategorized') AS category,
+                jsonb_object_agg(a.title, s.total_score ORDER BY a.title)
+                    FILTER (WHERE a.title IS NOT NULL) AS assignment_scores
+            FROM student_scope st
+            LEFT JOIN submissions s ON s.student_id = st.id
+            LEFT JOIN assignments a
+              ON a.id = s.assignment_id
+             AND (st.course_id IS NULL OR a.course_id = st.course_id)
+            GROUP BY st.id, st.legal_name, st.email, COALESCE(a.category, 'Uncategorized')
+        )
+        SELECT
+            student_id,
+            student_name,
+            student_email,
+            COALESCE(
+                jsonb_object_agg(category, assignment_scores ORDER BY category)
+                    FILTER (WHERE assignment_scores IS NOT NULL),
+                '{}'::jsonb
+            ) AS scores
+        FROM score_sections
+        GROUP BY student_id, student_name, student_email
+        ORDER BY student_email
+    `;
+
     try {
         const result = await pool.query(query, params);
-        
-        // Group by student, then by category, then by assignment
-        const studentMap = new Map();
-        
-        result.rows.forEach(row => {
-            const email = row.student_email;
-            
-            if (!studentMap.has(email)) {
-                studentMap.set(email, {
-                    name: row.student_name || 'Unknown',
-                    email: email,
-                    scores: {}
-                });
-            }
-            
-            const student = studentMap.get(email);
-            
-            // Only add scores if assignment exists
-            if (row.category && row.assignment_name) {
-                if (!student.scores[row.category]) {
-                    student.scores[row.category] = {};
-                }
-                student.scores[row.category][row.assignment_name] = row.total_score;
-            }
-        });
-        
-        return Array.from(studentMap.values());
+
+        return result.rows.map((row) => ({
+            name: row.student_name || 'Unknown',
+            email: row.student_email,
+            scores: row.scores || {},
+        }));
     } catch (err) {
         console.error('Error fetching all student scores:', err);
         throw err;
@@ -2299,19 +2433,7 @@ async function getGraphExamPolicyRows(studentId, courseInternalId) {
 }
 
 async function getGraphSummaryTotals(email, courseId = null) {
-    const summaryByKey = {};
-    for (const component of COURSE_POLICY_COMPONENTS) {
-        const rows = await getCategorySummaryDistribution(component.label, courseId);
-        const target = String(email || '').trim().toLowerCase();
-        const row = rows.find((item) => String(item?.studentEmail || '').trim().toLowerCase() === target);
-        const score = graphSafeNumber(row?.score);
-        summaryByKey[component.key] = {
-            ...component,
-            score: Math.min(component.cap, score),
-            rawScore: score,
-            percentage: graphPercentage(score, component.cap),
-        };
-    }
+    const { summaryByKey } = await getStudentPolicySummaries(email, courseId);
     return summaryByKey;
 }
 
@@ -2864,7 +2986,7 @@ function addCategoryOutput(builder, summary, sourceNodeId, layer = 5) {
  * The graph's category output nodes intentionally use the existing authoritative
  * summary functions, so Grade Flow totals match Profile/Admin totals.
  */
-export async function getStudentGradeFlow(email, courseId = null) {
+export async function getStudentGradeFlow(email, courseId = null, options = {}) {
     const resolved = await resolveGraphStudent(email, courseId);
     if (!resolved) {
         const err = new Error('Student not found');
@@ -2877,7 +2999,9 @@ export async function getStudentGradeFlow(email, courseId = null) {
         getGraphStudentSubmissions(resolved.student_id, resolved.course_id),
         getGraphAttendanceRows(resolved.student_id, resolved.course_id),
         getGraphExamPolicyRows(resolved.student_id, resolved.course_id),
-        getGraphSummaryTotals(resolved.student_email, courseQueryId),
+        options.summaryByKey
+            ? Promise.resolve(options.summaryByKey)
+            : getGraphSummaryTotals(resolved.student_email, courseQueryId),
     ]);
 
     const builder = createGradeFlowBuilder();

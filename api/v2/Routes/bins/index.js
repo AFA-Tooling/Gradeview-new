@@ -155,9 +155,7 @@ function getMaxBinPoints(bins = []) {
     return maxes.length > 0 ? Math.max(...maxes) : 0;
 }
 
-router.get('/', async (req, res) => {
-    const { course_id: requestedCourseId } = req.query;
-
+export async function getBinsResponse(requestedCourseId = null) {
     try {
         const courses = await loadGradeSyncConfig();
         const course = resolveCourseById(courses, requestedCourseId);
@@ -171,8 +169,8 @@ router.get('/', async (req, res) => {
         const configuredCapPoints = totalCoursePoints;
         const maxBinPoints = getMaxBinPoints(bins);
         const overallCapPoints = maxBinPoints || configuredCapPoints || totalCoursePoints;
-        
-        const response = {
+
+        return {
             bins,
             assignment_points: assignmentPoints,
             total_course_points: totalCoursePoints,
@@ -181,16 +179,14 @@ router.get('/', async (req, res) => {
             component_percentages: DEFAULT_COMPONENT_PERCENTAGES,
             rounding_policy: 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
             course_id: course?.id || requestedCourseId || null,
-            source: course ? 'db_default_policy' : 'default_policy'
+            source: course ? 'db_default_policy' : 'default_policy',
         };
-
-        return res.status(200).json(response);
     } catch (err) {
         console.error('Error retrieving bins from GradeSync config:', {
             message: err?.message,
-            courseId: requestedCourseId || null
+            courseId: requestedCourseId || null,
         });
-        return res.status(200).json({
+        return {
             bins: DEFAULT_GRADE_BINS,
             assignment_points: DEFAULT_ASSIGNMENT_POINTS,
             total_course_points: 400,
@@ -199,9 +195,15 @@ router.get('/', async (req, res) => {
             component_percentages: DEFAULT_COMPONENT_PERCENTAGES,
             rounding_policy: 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
             course_id: requestedCourseId || null,
-            source: 'default_policy_fallback'
-        });
+            source: 'default_policy_fallback',
+        };
     }
+}
+
+router.get('/', async (req, res) => {
+    const { course_id: requestedCourseId } = req.query;
+    const response = await getBinsResponse(requestedCourseId || null);
+    return res.status(200).json(response);
 });
 
 export default router;

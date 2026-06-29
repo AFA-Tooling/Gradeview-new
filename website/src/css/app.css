@@ -1,9 +1,13 @@
 :root {
-    --berkeley-blue: #003262;
-    --berkeley-blue-hover: #1B4D7C;
-    --founders-rock: #3B7EA1;
+    --berkeley-blue: #111827;
+    --berkeley-blue-hover: #030712;
+    --founders-rock: #4788B8;
     --accent: var(--berkeley-blue);
     --tertiary: var(--founders-rock);
+    --app-sidebar-width: 244px;
+    --app-topbar-height: 42px;
+    --app-border: #E5E7EB;
+    --app-bg: #FAFAFB;
 }
 
 .app {
@@ -15,7 +19,7 @@
     position: relative;
     overflow-x: hidden;
     overflow-y: hidden;
-    background-color: #E8EAEE;
+    background-color: var(--app-bg);
 }
 
 .nav {
@@ -32,13 +36,32 @@
     scrollbar-gutter: stable;
     position: relative;
     z-index: 2;
-    padding: 16px;
+    padding: calc(var(--app-topbar-height) + 20px) 28px 24px;
+    margin-left: var(--app-sidebar-width);
+    background-color: #FFFFFF;
 }
 
 .glass-panel,
 .glass-section {
     background-color: #FFFFFF;
-    border: 1px solid rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--app-border);
     border-radius: 8px;
     box-shadow: none;
+}
+
+.app footer {
+    margin-left: var(--app-sidebar-width);
+    width: calc(100% - var(--app-sidebar-width));
+}
+
+@media (max-width: 900px) {
+    .content {
+        margin-left: 0;
+        padding: 16px;
+    }
+
+    .app footer {
+        margin-left: 0;
+        width: 100%;
+    }
 }

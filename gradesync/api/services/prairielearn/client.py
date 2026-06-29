@@ -125,6 +125,11 @@ class PrairieLearnClient:
             # Other error status codes
             logger.error(f"API error: {response.status_code} at {url}")
             logger.error(f"Response: {response.text}")
+            if response.status_code in (401, 403):
+                raise PermissionError(
+                    f"PrairieLearn authentication failed for {url}. "
+                    "Check that PL_API_TOKEN is current and has access to this course instance."
+                )
             raise ValueError(
                 f"API returned status {response.status_code} for {url}"
             )

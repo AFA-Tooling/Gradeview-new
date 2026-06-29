@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import {
+    getAllStudentPolicySummaries,
     getAllStudentScores,
     getAssignmentDistribution,
     getCategorySummaryDistribution,
+    getStudentPolicySummaries,
 } from '../../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
@@ -16,41 +18,56 @@ function isPolicySummarySection(sectionName = '') {
         && !normalized.includes('_raw');
 }
 
+function normalizeSectionName(sectionName = '') {
+    return String(sectionName || '').trim().toLowerCase();
+}
+
+function summarySectionMatches(rawSectionName = '', summarySectionName = '') {
+    const raw = normalizeSectionName(rawSectionName);
+    const summary = normalizeSectionName(summarySectionName);
+    if (!raw || !summary) return false;
+    if (raw === summary) return true;
+
+    const categoryChecks = [
+        ['attendance', ['attendance', 'attendence', 'participation']],
+        ['labs', ['lab', 'labs']],
+        ['projects', ['project', 'projects']],
+        ['quest', ['quest']],
+        ['midterm', ['midterm']],
+        ['postterm', ['postterm', 'posterm']],
+    ];
+
+    return categoryChecks.some(([, terms]) => (
+        terms.some((term) => raw.includes(term))
+        && terms.some((term) => summary.includes(term))
+    ));
+}
+
+function keepDisplayedPolicySections(summarySectionTotals = {}, studentScores = {}) {
+    const visibleSummaryTotals = {};
+    const summaryEntries = Object.entries(summarySectionTotals || {});
+
+    Object.keys(studentScores || {}).forEach((rawSectionName) => {
+        if (!isPolicySummarySection(rawSectionName)) return;
+        const matchedSummary = summaryEntries.find(([summarySectionName]) => (
+            summarySectionMatches(rawSectionName, summarySectionName)
+        ));
+        visibleSummaryTotals[rawSectionName] = Number(matchedSummary?.[1]) || 0;
+    });
+
+    return visibleSummaryTotals;
+}
+
 async function buildStudentsWithSummary(students = [], courseId = null) {
-    const sectionNames = new Set();
-    students.forEach((student) => {
-        Object.keys(student?.scores || {}).forEach((sectionName) => {
-            if (!sectionName) return;
-            if (!isPolicySummarySection(sectionName)) return;
-            sectionNames.add(sectionName);
-        });
-    });
-
-    const summaryRowsBySection = [];
-    for (const sectionName of sectionNames) {
-        const rows = await getCategorySummaryDistribution(sectionName, courseId || null);
-        summaryRowsBySection.push([sectionName, rows]);
-    }
-
-    const summaryMapBySection = new Map();
-    summaryRowsBySection.forEach(([sectionName, rows]) => {
-        const rowMap = new Map();
-        (rows || []).forEach((row) => {
-            const email = String(row?.studentEmail || '').trim().toLowerCase();
-            if (!email) return;
-            rowMap.set(email, Number(row?.score) || 0);
-        });
-        summaryMapBySection.set(sectionName, rowMap);
-    });
+    const summariesByEmail = await getAllStudentPolicySummaries(courseId || null);
 
     return students.map((student) => {
         const studentEmail = String(student?.email || '').trim().toLowerCase();
-        const summarySectionTotals = {};
-
-        sectionNames.forEach((sectionName) => {
-            const sectionMap = summaryMapBySection.get(sectionName);
-            summarySectionTotals[sectionName] = Number(sectionMap?.get(studentEmail) || 0);
-        });
+        const summary = summariesByEmail.get(studentEmail) || {};
+        const summarySectionTotals = keepDisplayedPolicySections(
+            summary.summarySectionTotals || {},
+            student?.scores || {},
+        );
 
         return {
             ...student,
@@ -103,25 +120,10 @@ router.get('/summary/:email', async (req, res) => {
             return res.status(400).json({ error: 'Missing student email' });
         }
 
-        const students = await getAllStudentScores(courseId || null);
-        const studentsWithSummary = await buildStudentsWithSummary(students, courseId || null);
-        const student = studentsWithSummary.find(
-            (item) => String(item?.email || '').trim().toLowerCase() === decodedEmail
-        );
-
-        if (!student) {
-            return res.status(404).json({ error: 'Student not found' });
-        }
-
-        const summarySectionTotals = student.summarySectionTotals || {};
-        const summaryTotal = Object.values(summarySectionTotals).reduce(
-            (sum, value) => sum + (Number(value) || 0),
-            0,
-        );
+        const { summarySectionTotals, summaryTotal } = await getStudentPolicySummaries(decodedEmail, courseId || null);
 
         return res.json({
-            email: student.email,
-            name: student.name,
+            email: decodedEmail,
             summarySectionTotals,
             summaryTotal,
         });

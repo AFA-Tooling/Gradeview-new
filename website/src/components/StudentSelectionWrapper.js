@@ -1,4 +1,4 @@
-import { createContext, useState } from 'react';
+import { createContext, useCallback, useState } from 'react';
 
 export const StudentSelectionContext = createContext({
     selectedStudent: '',
@@ -6,11 +6,23 @@ export const StudentSelectionContext = createContext({
 });
 
 export default function StudentSelectionWrapper({ children }) {
-    const [selectedStudent, setSelectedStudent] = useState('');
+    const [selectedStudentValue, setSelectedStudentValue] = useState(
+        localStorage.getItem('selectedStudentEmail') || '',
+    );
+
+    const setSelectedStudent = useCallback((studentEmail) => {
+        const nextStudentEmail = studentEmail || '';
+        setSelectedStudentValue(nextStudentEmail);
+        if (nextStudentEmail) {
+            localStorage.setItem('selectedStudentEmail', nextStudentEmail);
+        } else {
+            localStorage.removeItem('selectedStudentEmail');
+        }
+    }, []);
 
     return (
         <StudentSelectionContext.Provider value={{
-            selectedStudent,
+            selectedStudent: selectedStudentValue,
             setSelectedStudent,
         }}>
             {children}

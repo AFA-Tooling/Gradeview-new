@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getPool } from '../../../lib/dbHelper.mjs';
 import { validateAuthenticatedMiddleware } from '../../../lib/authlib.mjs';
-import { canManageCourse, canManageSystem, IAM_ROLE, SUPER_ADMIN_EMAIL } from '../../../lib/iam.mjs';
+import { canManageCourse, canManageSystem, SUPER_ADMIN_EMAIL } from '../../../lib/iam.mjs';
 
 const router = Router();
 const pool = getPool();
@@ -16,16 +16,6 @@ async function ensureSystemAdmin(req, res) {
     });
     if (!allowed) {
         res.status(403).json({ error: 'Super admin access required' });
-        return false;
-    }
-    return true;
-}
-
-function ensureConfigAdmin(req, res) {
-    const role = req?.auth?.role;
-    const allowed = role === IAM_ROLE.SUPER_ADMIN || role === IAM_ROLE.COURSE_ADMIN;
-    if (!allowed) {
-        res.status(403).json({ error: 'Admin permission required' });
         return false;
     }
     return true;
@@ -550,7 +540,7 @@ async function findUserIdByEmail(email) {
 // GET /v2/config - Get GradeView configuration
 router.get('/', async (req, res, next) => {
     try {
-        const allowed = ensureConfigAdmin(req, res);
+        const allowed = await ensureSystemAdmin(req, res);
         if (!allowed) {
             return;
         }
@@ -566,7 +556,7 @@ router.get('/', async (req, res, next) => {
 // PUT /v2/config - Update GradeView configuration
 router.put('/', async (req, res, next) => {
     try {
-        const allowed = ensureConfigAdmin(req, res);
+        const allowed = await ensureSystemAdmin(req, res);
         if (!allowed) {
             return;
         }
@@ -584,7 +574,7 @@ router.put('/', async (req, res, next) => {
 // GET /v2/config/sync - Get GradeSync configuration
 router.get('/sync', async (req, res, next) => {
     try {
-        const allowed = ensureConfigAdmin(req, res);
+        const allowed = await ensureSystemAdmin(req, res);
         if (!allowed) {
             return;
         }
@@ -600,7 +590,7 @@ router.get('/sync', async (req, res, next) => {
 // PUT /v2/config/sync - Update GradeSync configuration
 router.put('/sync', async (req, res, next) => {
     try {
-        const allowed = ensureConfigAdmin(req, res);
+        const allowed = await ensureSystemAdmin(req, res);
         if (!allowed) {
             return;
         }
@@ -727,7 +717,7 @@ router.put('/courses/:courseId', async (req, res, next) => {
 // GET /v2/config/system - Get system global settings
 router.get('/system', async (req, res, next) => {
     try {
-        const allowed = ensureConfigAdmin(req, res);
+        const allowed = await ensureSystemAdmin(req, res);
         if (!allowed) {
             return;
         }

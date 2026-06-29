@@ -2,6 +2,7 @@ import { Router } from 'express';
 import http from 'http';
 import crypto from 'crypto';
 import { canManageCourse, canViewClassData, IAM_ROLE } from '../../../../lib/iam.mjs';
+import { clearPolicySummaryCache } from '../../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
 // Use service name "gradesync" which is resolvable in the shared docker network
@@ -345,6 +346,7 @@ async function runSyncJob(jobId) {
             });
         }
 
+        clearPolicySummaryCache(current.courseId);
         updateSyncJob(jobId, {
             status: 'completed',
             message: 'Sync completed',
@@ -455,6 +457,7 @@ router.post('/:courseId', async (req, res) => {
             headers: { 'Content-Type': 'application/json' },
             timeoutMs: SYNC_PROXY_TIMEOUT_MS,
         });
+        clearPolicySummaryCache(courseId);
         res.json(data);
     } catch (err) {
         console.error('GradeSync proxy error:', err);

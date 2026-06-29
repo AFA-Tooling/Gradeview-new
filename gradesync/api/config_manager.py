@@ -347,7 +347,7 @@ class EnvConfig:
         token = os.getenv("PL_API_TOKEN")
         if not token:
             raise ValueError("PL_API_TOKEN must be set")
-        return token
+        return token.strip()
     
     @staticmethod
     def get_iclicker_credentials() -> tuple[str, str]:

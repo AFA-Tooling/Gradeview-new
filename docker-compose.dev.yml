@@ -7,6 +7,7 @@ services:
       - .env
     volumes:
       - ${SOCKETS_DIR:-/dev/null}:/run/sockets
+      - ./reverseProxy/default.dev.conf.template:/etc/nginx/templates/default.conf.template:ro
     environment:
       - REVERSE_PROXY_LISTEN=${REVERSE_PROXY_LISTEN:-0.0.0.0:80}
     networks:
@@ -72,6 +73,7 @@ services:
       - PORT=${API_PORT}
       - NODE_ENV=production
       - POSTGRES_HOST=cloud-sql-proxy
+      - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}

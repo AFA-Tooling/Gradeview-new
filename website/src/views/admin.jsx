@@ -1,5 +1,5 @@
 // src/views/admin.jsx
-import { useState, useEffect, useMemo, useTransition } from 'react';
+import { Fragment, memo, useCallback, useRef, useState, useEffect, useMemo, useTransition } from 'react';
 import {
   Alert,
   Button,
@@ -20,6 +20,10 @@ import {
   TableContainer,
   Paper,
   IconButton,
+  ToggleButtonGroup,
+  ToggleButton,
+  Chip,
+  Stack,
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import Grid from '@mui/material/Grid';
@@ -28,6 +32,7 @@ import StudentProfile from '../components/StudentProfile';
 import AIAnalytics from './aiAnalytics';
 import GradeSyncControl from './GradeSyncControl';
 import apiv2 from '../utils/apiv2';
+import { cachedApiGet } from '../utils/apiCache';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -53,6 +58,8 @@ ChartJS.register(
   Legend
 );
 
+const STUDENT_SCORE_ROW_HEIGHT = 58;
+const STUDENT_SCORE_OVERSCAN_ROWS = 8;
 const sectionOrderCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 function getTrailingSectionRank(section = '') {
@@ -113,7 +120,93 @@ function hasPolicySummaryTotals(summarySectionTotals = {}) {
   ));
 }
 
+const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
+  student,
+  visibleTableSections,
+  totalMaxPoints,
+  isLight,
+  hdrBorderH,
+  hdrBorderV,
+  onOpenProfile,
+}) {
+  const finalPercentage = totalMaxPoints > 0
+    ? ((student.total / totalMaxPoints) * 100).toFixed(2)
+    : '0.00';
 
+  return (
+    <TableRow sx={{ height: STUDENT_SCORE_ROW_HEIGHT }}>
+      <TableCell sx={{
+        position: 'sticky',
+        left: 0,
+        zIndex: 10,
+        backgroundColor: isLight ? '#FAFAFB' : 'rgba(18, 28, 55, 0.94)',
+        borderRight: `2px solid ${hdrBorderH}`,
+        minWidth: '200px',
+        maxWidth: '250px',
+      }}>
+        <Box
+          sx={{
+            cursor: 'pointer',
+            '&:hover': {
+              color: '#1976d2',
+              textDecoration: 'underline',
+            },
+          }}
+          onClick={() => onOpenProfile(student)}
+        >
+          <strong>{student.name}</strong><br/>
+          <small>{student.email}</small>
+        </Box>
+      </TableCell>
+
+      <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}` }}>
+        {student.total.toFixed(2)}
+      </TableCell>
+      <TableCell align="center" sx={{ borderRight: `2px solid ${hdrBorderH}` }}>
+        {finalPercentage}%
+      </TableCell>
+
+      {visibleTableSections.map(({ section, assignments: visibleInSection, showPolicyTotal }) => (
+        <RowSectionCells
+          key={section}
+          section={section}
+          assignments={visibleInSection}
+          showPolicyTotal={showPolicyTotal}
+          student={student}
+          hdrBorderH={hdrBorderH}
+          hdrBorderV={hdrBorderV}
+        />
+      ))}
+    </TableRow>
+  );
+});
+
+const RowSectionCells = memo(function RowSectionCells({
+  section,
+  assignments,
+  showPolicyTotal,
+  student,
+  hdrBorderH,
+  hdrBorderV,
+}) {
+  return (
+    <>
+      {showPolicyTotal && (
+        <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, fontWeight: 'bold' }}>
+          {student.sectionTotals[section]?.toFixed(2) || '0.00'}
+        </TableCell>
+      )}
+      {assignments.map((assignment) => {
+        const rawScore = student.scores[assignment.name];
+        return (
+          <TableCell key={assignment.name} align="center" sx={{ minWidth: '120px' }}>
+            {(rawScore != null && rawScore !== '') ? Number(rawScore).toFixed(2) : 'N/A'}
+          </TableCell>
+        );
+      })}
+    </>
+  );
+});
 
 export default function Admin() {
   const isLight = true;
@@ -134,6 +227,9 @@ export default function Admin() {
   const [courses, setCourses] = useState([]);
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState(localStorage.getItem('selectedCourseId') || '');
+  const studentsTableRef = useRef(null);
+  const [studentsScrollTop, setStudentsScrollTop] = useState(0);
+  const [studentsViewportHeight, setStudentsViewportHeight] = useState(640);
   
   // Performance optimization for Select All
   const [isPending, startTransition] = useTransition();
@@ -178,6 +274,7 @@ export default function Admin() {
   // --- STUDENT PAGE CUSTOMIZATION ---
   const [visibleAssignments, setVisibleAssignments] = useState({}); // {assignmentName: boolean}
   const [selectorDialogOpen, setSelectorDialogOpen] = useState(null); // Section name or null
+  const [scoreDisplayMode, setScoreDisplayMode] = useState('both'); // policy | raw | both
 
   const buildCourseQuery = (courseId) => {
     if (!courseId) return '';
@@ -203,8 +300,8 @@ export default function Admin() {
   useEffect(() => {
     setLoadingCourses(true);
     Promise.allSettled([
-      apiv2.get('/admin/sync'),
-      apiv2.get('/students/courses'),
+      cachedApiGet('/admin/sync', { ttlMs: 60000 }),
+      cachedApiGet('/students/courses', { ttlMs: 60000 }),
     ])
       .then(([adminResult, studentResult]) => {
         const adminCourses = adminResult.status === 'fulfilled' ? (adminResult.value?.data?.courses || []) : [];
@@ -256,7 +353,7 @@ export default function Admin() {
     setErrorA(null);
 
     // Get assignments directly from database
-    apiv2.get(`/admin/assignments${buildCourseQuery(selectedCourse)}`)
+    cachedApiGet(`/admin/assignments${buildCourseQuery(selectedCourse)}`, { ttlMs: 60000 })
       .then(res => {
         const categoriesData = res.data; // { "Projects": { "Project 1": 100, ... }, "Labs": { ... }, ... }
         const items = Object.entries(categoriesData)
@@ -320,7 +417,7 @@ export default function Admin() {
     setLoadingSS(true);
     setErrorSS(null);
 
-    apiv2.get(`/admin/studentScores${buildCourseQuery(selectedCourse)}`)
+    cachedApiGet(`/admin/studentScores${buildCourseQuery(selectedCourse)}`, { ttlMs: 30000 })
       .then(res => setStudentScores(res.data.students))
       .catch(err => setErrorSS(err.message || 'Failed to load student scores'))
       .finally(() => setLoadingSS(false));
@@ -329,7 +426,7 @@ export default function Admin() {
   /** 4b) Load section caps from grading config (used to enforce per-section caps like Labs=80) **/
   useEffect(() => {
     if (!selectedCourse) return;
-    apiv2.get(`/bins${buildCourseQuery(selectedCourse)}`)
+    cachedApiGet(`/bins${buildCourseQuery(selectedCourse)}`, { ttlMs: 60000 })
       .then(res => {
         const points = res?.data?.assignment_points || {};
         setSectionCaps(points);
@@ -353,9 +450,6 @@ export default function Admin() {
     setStudentsByScore([]);
   }, [selectedCourse]);
 
-  // Flattened assignment list (for columns)
-  const allAssignments = useMemo(() => assignments, [assignments]);
-
   // Group assignments by section with max points
   const assignmentsBySection = useMemo(() => {
     const grouped = {};
@@ -373,29 +467,31 @@ export default function Admin() {
     [assignmentsBySection]
   );
 
-  // Lookup configured cap for a given section name (case-insensitive).
-  // Returns 0 if no cap configured (then caller falls back to raw max).
-  const lookupSectionCap = (sectionName) => {
-    const target = String(sectionName || '').trim().toLowerCase();
-    if (!target) return 0;
-    for (const [key, value] of Object.entries(sectionCaps || {})) {
-      if (String(key).trim().toLowerCase() === target) {
-        return Number(value) || 0;
-      }
-    }
-    return 0;
-  };
+  const normalizedSectionCaps = useMemo(() => (
+    Object.entries(sectionCaps || {}).reduce((acc, [key, value]) => {
+      const normalized = String(key || '').trim().toLowerCase();
+      if (normalized) acc[normalized] = Number(value) || 0;
+      return acc;
+    }, {})
+  ), [sectionCaps]);
+
+  const assignmentNamesBySection = useMemo(() => (
+    Object.entries(assignmentsBySection).reduce((acc, [section, sectionAssignments]) => {
+      acc[section] = sectionAssignments.map((assignment) => assignment.name);
+      return acc;
+    }, {})
+  ), [assignmentsBySection]);
 
   // Calculate display max points per section (configured cap > raw assignment sum)
   const sectionMaxPoints = useMemo(() => {
     const maxPoints = {};
     Object.entries(assignmentsBySection).forEach(([section, sectionAssignments]) => {
       const rawSum = sectionAssignments.reduce((sum, a) => sum + (a.maxPoints || 0), 0);
-      const cap = lookupSectionCap(section);
+      const cap = normalizedSectionCaps[normalizeSectionName(section)] || 0;
       maxPoints[section] = cap > 0 ? cap : rawSum;
     });
     return maxPoints;
-  }, [assignmentsBySection, sectionCaps]);
+  }, [assignmentsBySection, normalizedSectionCaps]);
 
   const totalMaxPoints = useMemo(() => {
     // Prefer authoritative total from /bins (e.g., syllabus says 400);
@@ -414,11 +510,11 @@ export default function Admin() {
       });
 
       const sectionTotals = {};
-      Object.keys(assignmentsBySection).forEach(sec => {
-        const rawSum = allAssignments
-          .filter(a => a.section === sec)
-          .reduce((sum, a) => sum + Number(flatScores[a.name] || 0), 0);
-        const cap = lookupSectionCap(sec);
+      Object.entries(assignmentNamesBySection).forEach(([sec, assignmentNames]) => {
+        const rawSum = assignmentNames.reduce((sum, assignmentName) => (
+          sum + Number(flatScores[assignmentName] || 0)
+        ), 0);
+        const cap = normalizedSectionCaps[normalizeSectionName(sec)] || 0;
         const rawTotal = cap > 0 ? Math.min(rawSum, cap) : rawSum;
         const policyTotal = isRawOnlySection(sec)
           ? null
@@ -434,7 +530,7 @@ export default function Admin() {
       const total = hasPolicySummaryTotals(stu.summarySectionTotals) ? policyTotal : fallbackTotal;
       return { ...stu, scores: flatScores, sectionTotals, total };
     });
-  }, [studentScores, allAssignments, assignmentsBySection, sectionCaps]);
+  }, [studentScores, assignmentNamesBySection, normalizedSectionCaps]);
 
   /** 6) Sort students **/
   const sortedStudents = useMemo(() => {
@@ -455,6 +551,87 @@ export default function Admin() {
     });
     return arr;
   }, [studentWithTotals, sortBy, sortAsc]);
+
+  const visibleTableSections = useMemo(() => (
+    orderedAssignmentSections
+      .map(([section, sectionAssignments]) => {
+        const assignmentsForSection = scoreDisplayMode === 'policy'
+          ? []
+          : sectionAssignments.filter((assignment) => visibleAssignments[assignment.name]);
+        const showPolicyTotal = scoreDisplayMode !== 'raw';
+        return {
+          section,
+          assignments: assignmentsForSection,
+          showPolicyTotal,
+          colSpan: (showPolicyTotal ? 1 : 0) + assignmentsForSection.length,
+        };
+      })
+      .filter((item) => item.colSpan > 0)
+  ), [orderedAssignmentSections, scoreDisplayMode, visibleAssignments]);
+
+  const totalStudentScoreColumns = useMemo(() => (
+    3 + visibleTableSections.reduce((sum, section) => sum + section.colSpan, 0)
+  ), [visibleTableSections]);
+
+  const virtualStudentWindow = useMemo(() => {
+    const totalRows = sortedStudents.length;
+    if (totalRows === 0) {
+      return {
+        rows: [],
+        topPadding: 0,
+        bottomPadding: 0,
+      };
+    }
+
+    const viewportHeight = Math.max(STUDENT_SCORE_ROW_HEIGHT, studentsViewportHeight || 640);
+    const startIndex = Math.max(
+      0,
+      Math.floor(studentsScrollTop / STUDENT_SCORE_ROW_HEIGHT) - STUDENT_SCORE_OVERSCAN_ROWS,
+    );
+    const visibleCount = Math.ceil(viewportHeight / STUDENT_SCORE_ROW_HEIGHT) + (STUDENT_SCORE_OVERSCAN_ROWS * 2);
+    const endIndex = Math.min(totalRows, startIndex + visibleCount);
+
+    return {
+      rows: sortedStudents.slice(startIndex, endIndex),
+      topPadding: startIndex * STUDENT_SCORE_ROW_HEIGHT,
+      bottomPadding: (totalRows - endIndex) * STUDENT_SCORE_ROW_HEIGHT,
+    };
+  }, [sortedStudents, studentsScrollTop, studentsViewportHeight]);
+
+  const handleStudentsTableScroll = useCallback((event) => {
+    setStudentsScrollTop(event.currentTarget.scrollTop);
+  }, []);
+
+  useEffect(() => {
+    const tableEl = studentsTableRef.current;
+    if (!tableEl || tab !== 1) return undefined;
+
+    const updateViewportHeight = () => {
+      setStudentsViewportHeight(tableEl.clientHeight || 640);
+    };
+
+    updateViewportHeight();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateViewportHeight);
+      return () => window.removeEventListener('resize', updateViewportHeight);
+    }
+
+    const observer = new ResizeObserver(updateViewportHeight);
+    observer.observe(tableEl);
+    return () => observer.disconnect();
+  }, [tab]);
+
+  useEffect(() => {
+    setStudentsScrollTop(0);
+    if (studentsTableRef.current) {
+      studentsTableRef.current.scrollTop = 0;
+    }
+  }, [sortBy, sortAsc, scoreDisplayMode, visibleAssignments, selectedCourse, sortedStudents.length]);
+
+  const handleOpenStudentProfile = useCallback((student) => {
+    setSelectedStudent({ email: student.email, name: student.name });
+    setProfileOpen(true);
+  }, []);
 
   // Handlers
   const handleTabChange = (_, newTab) => {
@@ -485,24 +662,19 @@ export default function Admin() {
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const visibleSections = orderedAssignmentSections
-      .map(([section, sectionAssignments]) => [
-        section,
-        sectionAssignments.filter(a => visibleAssignments[a.name]),
-      ])
-      .filter(([, list]) => list.length > 0);
-
-    const header = ['Student Name', 'Email', 'Total', 'Final %'];
-    visibleSections.forEach(([section, list]) => {
-      header.push(`${section} Total`);
-      list.forEach(a => header.push(a.name));
+    const header = ['Student Name', 'Email', 'Total (final policy)', 'Final %'];
+    visibleTableSections.forEach(({ section, assignments: list, showPolicyTotal }) => {
+      if (showPolicyTotal) header.push(`${section} Total (policy)`);
+      list.forEach(a => header.push(`${a.name} (raw)`));
     });
 
     const rows = sortedStudents.map(stu => {
       const finalPct = totalMaxPoints > 0 ? ((stu.total / totalMaxPoints) * 100).toFixed(2) : '0.00';
       const row = [stu.name, stu.email, stu.total.toFixed(2), finalPct];
-      visibleSections.forEach(([section, list]) => {
-        row.push(stu.sectionTotals[section] != null ? stu.sectionTotals[section].toFixed(2) : '0.00');
+      visibleTableSections.forEach(({ section, assignments: list, showPolicyTotal }) => {
+        if (showPolicyTotal) {
+          row.push(stu.sectionTotals[section] != null ? stu.sectionTotals[section].toFixed(2) : '0.00');
+        }
         list.forEach(a => {
           const raw = stu.scores[a.name];
           row.push(raw != null && raw !== '' ? Number(raw).toFixed(2) : '');
@@ -1030,15 +1202,32 @@ export default function Admin() {
                     Use the buttons below to select which assignment columns to display.
                   </Typography>
                   <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#1976d2', fontWeight: 500 }}>
-                    💡 Tip: Table scrolls horizontally - use your mouse or trackpad to scroll left/right to see all columns
+                    Totals are final policy scores. Assignment columns are raw per-assignment scores.
                   </Typography>
                 </Box>
                 
                 {/* Assignment Selector - Buttons for each section */}
                 <Box sx={{ p: 3, bgcolor: isLight ? 'rgba(240, 246, 255, 0.6)' : 'rgba(255,255,255,0.03)' }}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', md: 'center' }} sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                        Score View:
+                    </Typography>
+                    <ToggleButtonGroup
+                      size="small"
+                      exclusive
+                      value={scoreDisplayMode}
+                      onChange={(_, mode) => mode && setScoreDisplayMode(mode)}
+                    >
+                      <ToggleButton value="policy">Policy totals</ToggleButton>
+                      <ToggleButton value="raw">Raw assignments</ToggleButton>
+                      <ToggleButton value="both">Both</ToggleButton>
+                    </ToggleButtonGroup>
+                    <Chip size="small" label="Total = policy final" sx={{ fontWeight: 700 }} />
+                    <Chip size="small" label="Assignment cells = raw" sx={{ fontWeight: 700 }} />
+                  </Stack>
                   <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                        Show Columns:
+                        Raw Columns:
                     </Typography>
                     {isPending && (
                         <Typography variant="caption" sx={{ color: '#6366f1', fontStyle: 'italic' }}>
@@ -1132,13 +1321,55 @@ export default function Admin() {
                                     onClose={() => setSelectorDialogOpen(null)}
                                     maxWidth="sm"
                                     fullWidth
+                                    PaperProps={{
+                                        sx: {
+                                            borderRadius: 2,
+                                            border: '1px solid #E5E7EB',
+                                            boxShadow: '0 18px 45px rgba(17, 24, 39, 0.18)',
+                                            backgroundImage: 'none',
+                                        }
+                                    }}
                                 >
-                                    <DialogTitle>{section} - Select Assignments</DialogTitle>
-                                    <DialogContent sx={{ pt: 2 }}>
-                                        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                                    <DialogTitle
+                                        sx={{
+                                            px: 3,
+                                            pt: 3,
+                                            pb: 1.25,
+                                            color: '#111827',
+                                            fontSize: 24,
+                                            fontWeight: 750,
+                                            letterSpacing: 0,
+                                        }}
+                                    >
+                                        {section} - Select Assignments
+                                    </DialogTitle>
+                                    <DialogContent sx={{ px: 3, pt: '8px !important', pb: 2 }}>
+                                        <Stack
+                                            direction={{ xs: 'column', sm: 'row' }}
+                                            alignItems={{ xs: 'stretch', sm: 'center' }}
+                                            justifyContent="space-between"
+                                            spacing={1.25}
+                                            sx={{ mb: 2 }}
+                                        >
+                                            <Typography variant="body2" sx={{ color: '#6B7280', fontWeight: 600 }}>
+                                                {visibleCount} of {total} selected
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                             <Button
                                                 size="small"
                                                 variant="outlined"
+                                                sx={{
+                                                    minHeight: 34,
+                                                    borderRadius: 1,
+                                                    borderColor: '#D1D5DB',
+                                                    color: '#111827',
+                                                    fontWeight: 650,
+                                                    textTransform: 'none',
+                                                    '&:hover': {
+                                                        borderColor: '#9CA3AF',
+                                                        backgroundColor: '#F9FAFB',
+                                                    },
+                                                }}
                                                 onClick={() => {
                                                     const updated = { ...visibleAssignments };
                                                     sectionAssignments.forEach(a => {
@@ -1152,6 +1383,18 @@ export default function Admin() {
                                             <Button
                                                 size="small"
                                                 variant="outlined"
+                                                sx={{
+                                                    minHeight: 34,
+                                                    borderRadius: 1,
+                                                    borderColor: '#D1D5DB',
+                                                    color: '#111827',
+                                                    fontWeight: 650,
+                                                    textTransform: 'none',
+                                                    '&:hover': {
+                                                        borderColor: '#9CA3AF',
+                                                        backgroundColor: '#F9FAFB',
+                                                    },
+                                                }}
                                                 onClick={() => {
                                                     const updated = { ...visibleAssignments };
                                                     sectionAssignments.forEach(a => {
@@ -1162,44 +1405,89 @@ export default function Admin() {
                                             >
                                                 Deselect All
                                             </Button>
-                                        </Box>
-                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                            {sectionAssignments.map(a => (
-                                                <Box
-                                                    key={a.name}
-                                                    sx={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        padding: '8px',
-                                                border: '1px solid rgba(168, 194, 255, 0.35)',
-                                                        borderRadius: '4px',
-                                                        cursor: 'pointer',
-                                                color: 'rgba(231, 241, 255, 0.96)',
-                                                backgroundColor: visibleAssignments[a.name] ? 'rgba(88, 132, 255, 0.28)' : 'rgba(20, 32, 66, 0.86)',
-                                                '&:hover': {
-                                                  backgroundColor: visibleAssignments[a.name] ? 'rgba(98, 146, 255, 0.34)' : 'rgba(30, 44, 86, 0.9)'
-                                                }
-                                                    }}
-                                                    onClick={() => {
-                                                        setVisibleAssignments(prev => ({
-                                                            ...prev,
-                                                            [a.name]: !prev[a.name]
-                                                        }));
-                                                    }}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={visibleAssignments[a.name] || false}
-                                                        onChange={() => {}}
-                                                      style={{ marginRight: '8px', cursor: 'pointer', accentColor: '#66b2ff' }}
-                                                    />
-                                                    <span style={{ color: isLight ? '#111111' : 'rgba(231, 241, 255, 0.96)' }}>{a.name}</span>
-                                                </Box>
-                                            ))}
+                                            </Box>
+                                        </Stack>
+                                        <Box
+                                            sx={{
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: 0.75,
+                                                maxHeight: 'min(58vh, 520px)',
+                                                overflowY: 'auto',
+                                                pr: 0.5,
+                                            }}
+                                        >
+                                            {sectionAssignments.map(a => {
+                                                const isAssignmentVisible = visibleAssignments[a.name] || false;
+                                                return (
+                                                    <Box
+                                                        key={a.name}
+                                                        sx={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: 1.25,
+                                                            minHeight: 44,
+                                                            px: 1.5,
+                                                            py: 1,
+                                                            border: `1px solid ${isAssignmentVisible ? '#BFD0FF' : '#E5E7EB'}`,
+                                                            borderRadius: 1,
+                                                            cursor: 'pointer',
+                                                            color: '#111827',
+                                                            backgroundColor: isAssignmentVisible ? '#E8F0FF' : '#FFFFFF',
+                                                            transition: 'background-color 120ms ease, border-color 120ms ease',
+                                                            '&:hover': {
+                                                                backgroundColor: isAssignmentVisible ? '#DDE8FF' : '#F9FAFB',
+                                                                borderColor: isAssignmentVisible ? '#9CB7FF' : '#D1D5DB',
+                                                            },
+                                                        }}
+                                                        onClick={() => {
+                                                            setVisibleAssignments(prev => ({
+                                                                ...prev,
+                                                                [a.name]: !prev[a.name]
+                                                            }));
+                                                        }}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isAssignmentVisible}
+                                                            onChange={() => {}}
+                                                            style={{
+                                                                width: 16,
+                                                                height: 16,
+                                                                margin: 0,
+                                                                cursor: 'pointer',
+                                                                accentColor: '#4788B8',
+                                                                flex: '0 0 auto',
+                                                            }}
+                                                        />
+                                                        <Typography
+                                                            component="span"
+                                                            sx={{
+                                                                color: '#111827',
+                                                                fontSize: 15,
+                                                                fontWeight: isAssignmentVisible ? 650 : 500,
+                                                                lineHeight: 1.35,
+                                                                overflowWrap: 'anywhere',
+                                                            }}
+                                                        >
+                                                            {a.name}
+                                                        </Typography>
+                                                    </Box>
+                                                );
+                                            })}
                                         </Box>
                                     </DialogContent>
-                                    <DialogActions>
-                                        <Button onClick={() => setSelectorDialogOpen(null)}>Close</Button>
+                                    <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid #E5E7EB' }}>
+                                        <Button
+                                            onClick={() => setSelectorDialogOpen(null)}
+                                            sx={{
+                                                color: '#111827',
+                                                fontWeight: 650,
+                                                textTransform: 'none',
+                                            }}
+                                        >
+                                            Close
+                                        </Button>
                                     </DialogActions>
                                 </Dialog>
                             </Box>
@@ -1210,10 +1498,14 @@ export default function Admin() {
 
                 {/* Main Table with Tree Structure Headers */}
                 <TableContainer 
+                    ref={studentsTableRef}
+                    onScroll={handleStudentsTableScroll}
                     sx={{ 
                     bgcolor: isLight ? '#FAFAFB' : 'rgba(8, 14, 30, 0.74)',
                     overflowX: 'auto',
-                    overflowY: 'visible',
+                    overflowY: 'auto',
+                    maxHeight: { xs: '70vh', md: 'calc(100vh - 360px)' },
+                    minHeight: sortedStudents.length ? 420 : 'auto',
                         position: 'relative',
                         '&::-webkit-scrollbar': {
                             height: '14px',
@@ -1277,16 +1569,11 @@ export default function Admin() {
                                 </TableCell>
                                 
                                 {/* Section Headers */}
-                                {orderedAssignmentSections.map(([section, sectionAssignments]) => {
-                                    const visibleInSection = sectionAssignments.filter(a => visibleAssignments[a.name]);
-                                    if (visibleInSection.length === 0) return null;
-                                    
-                                    return (
-                                        <TableCell key={section} colSpan={visibleInSection.length + 1} align="center" sx={{ borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
+                                {visibleTableSections.map(({ section, colSpan }) => (
+                                        <TableCell key={section} colSpan={colSpan} align="center" sx={{ borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
                                             <strong>{section}</strong> (Max: {sectionMaxPoints[section] || 0})
                                         </TableCell>
-                                    );
-                                })}
+                                ))}
                             </TableRow>
                             
                             {/* SECOND HEADER ROW */}
@@ -1312,20 +1599,18 @@ export default function Admin() {
                                 </TableCell>
                                 
                                 {/* Section Total + Assignment Sub-headers */}
-                                {orderedAssignmentSections.map(([section, sectionAssignments]) => {
-                                    const visibleInSection = sectionAssignments.filter(a => visibleAssignments[a.name]);
-                                    if (visibleInSection.length === 0) return null;
-                                    
-                                    return (
-                                        <>
+                                {visibleTableSections.map(({ section, assignments: visibleInSection, showPolicyTotal }) => (
+                                        <Fragment key={section}>
+                                            {showPolicyTotal && (
                                             <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}>
                                                 <Box display="flex" alignItems="center" justifyContent="center">
-                                                    <strong>{section} Total</strong>
+                                                    <strong>{section} Policy</strong>
                                                     <IconButton size="small" onClick={() => handleSort(section)}>
                                                         {sortBy === section ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>) : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>}
                                                     </IconButton>
                                                 </Box>
                                             </TableCell>
+                                            )}
                                             {visibleInSection.map(a => (
                                               <TableCell key={a.name} align="center" sx={{ minWidth: '120px', backgroundColor: hdrBg2s, color: hdrColor }}>
                                                     <Box display="flex" alignItems="center" justifyContent="center">
@@ -1336,74 +1621,48 @@ export default function Admin() {
                                                     </Box>
                                                 </TableCell>
                                             ))}
-                                        </>
-                                    );
-                                })}
+                                        </Fragment>
+                                ))}
                             </TableRow>
                         </TableHead>
                         
                         <TableBody>
-                            {sortedStudents.map(stu => (
-                                <TableRow key={stu.email}>
-                                    {/* Student Info */}
-                                    <TableCell sx={{
-                                        position: 'sticky',
-                                        left: 0,
-                                        zIndex: 10,
-                                        backgroundColor: isLight ? '#FAFAFB' : 'rgba(18, 28, 55, 0.94)',
-                                        borderRight: `2px solid ${hdrBorderH}`,
-                                        minWidth: '200px',
-                                        maxWidth: '250px'
-                                    }}>
-                                        <Box
-                                            sx={{
-                                                cursor: 'pointer',
-                                                '&:hover': {
-                                                    color: '#1976d2',
-                                                    textDecoration: 'underline',
-                                                }
-                                            }}
-                                            onClick={() => {
-                                                setSelectedStudent({ email: stu.email, name: stu.name });
-                                                setProfileOpen(true);
-                                            }}
-                                        >
-                                            <strong>{stu.name}</strong><br/>
-                                            <small>{stu.email}</small>
-                                        </Box>
-                                    </TableCell>
-                                    
-                                    {/* Summary Scores */}
-                                    <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}` }}>
-                                        {stu.total.toFixed(2)}
-                                    </TableCell>
-                                    <TableCell align="center" sx={{ borderRight: `2px solid ${hdrBorderH}` }}>
-                                        {totalMaxPoints > 0 ? ((stu.total / totalMaxPoints) * 100).toFixed(2) : '0.00'}%
-                                    </TableCell>
-                                    
-                                    {/* Section + Assignment Scores */}
-                                    {orderedAssignmentSections.map(([section, sectionAssignments]) => {
-                                        const visibleInSection = sectionAssignments.filter(a => visibleAssignments[a.name]);
-                                        if (visibleInSection.length === 0) return null;
-                                        
-                                        return (
-                                            <>
-                                                <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, fontWeight: 'bold' }}>
-                                                    {stu.sectionTotals[section]?.toFixed(2) || '0.00'}
-                                                </TableCell>
-                                                {visibleInSection.map(a => {
-                                                    const rawScore = stu.scores[a.name];
-                                                    return (
-                                                        <TableCell key={a.name} align="center" sx={{ minWidth: '120px' }}>
-                                                            {(rawScore != null && rawScore !== '') ? Number(rawScore).toFixed(2) : 'N/A'}
-                                                        </TableCell>
-                                                    );
-                                                })}
-                                            </>
-                                        );
-                                    })}
+                            {virtualStudentWindow.topPadding > 0 && (
+                                <TableRow aria-hidden="true">
+                                    <TableCell
+                                      colSpan={totalStudentScoreColumns}
+                                      sx={{
+                                        height: virtualStudentWindow.topPadding,
+                                        p: 0,
+                                        border: 0,
+                                      }}
+                                    />
                                 </TableRow>
+                            )}
+                            {virtualStudentWindow.rows.map(stu => (
+                                <AdminStudentScoreRow
+                                  key={stu.email}
+                                  student={stu}
+                                  visibleTableSections={visibleTableSections}
+                                  totalMaxPoints={totalMaxPoints}
+                                  isLight={isLight}
+                                  hdrBorderH={hdrBorderH}
+                                  hdrBorderV={hdrBorderV}
+                                  onOpenProfile={handleOpenStudentProfile}
+                                />
                             ))}
+                            {virtualStudentWindow.bottomPadding > 0 && (
+                                <TableRow aria-hidden="true">
+                                    <TableCell
+                                      colSpan={totalStudentScoreColumns}
+                                      sx={{
+                                        height: virtualStudentWindow.bottomPadding,
+                                        p: 0,
+                                        border: 0,
+                                      }}
+                                    />
+                                </TableRow>
+                            )}
                         </TableBody>
                     </Table>
                 </TableContainer>

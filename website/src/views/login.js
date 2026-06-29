@@ -2,6 +2,7 @@ import React from 'react';
 import { useEffect, useState } from 'react';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
+import SchoolOutlined from '@mui/icons-material/SchoolOutlined';
 import {
     Box,
     OutlinedInput,
@@ -19,16 +20,20 @@ import { jwtDecode } from 'jwt-decode';
 
 export default function Login() {
     const [error, setError] = useState(false);
+    const [demoLoading, setDemoLoading] = useState(false);
 
     // Initialize the google OAUTH
     useEffect(() => {
-        /* global google */
-        google.accounts.id.initialize({
+        if (!window.google?.accounts?.id) {
+            return;
+        }
+
+        window.google.accounts.id.initialize({
             client_id:
                 '960156693240-hje09pstet1al4g4tr08271kkcjfqnn2.apps.googleusercontent.com',
             callback: handleGoogleLogin,
         });
-        google.accounts.id.renderButton(
+        window.google.accounts.id.renderButton(
             document.querySelector('#googleSignInButton'),
             {},
         );
@@ -62,6 +67,38 @@ export default function Login() {
             .catch(() => {
                 setError('An error occurred.  Please try again later.');
             });
+    }
+
+    async function handleDemoLogin() {
+        setError(false);
+        setDemoLoading(true);
+
+        try {
+            const loginRes = await axios.post('/api/v2/login/demo');
+            const data = loginRes?.data || {};
+
+            if (!data.status) {
+                setError(data.message || 'Demo access is not available right now.');
+                return;
+            }
+
+            localStorage.setItem('token', data.token || '');
+            localStorage.setItem('permissions', JSON.stringify(data.permissions || {}));
+            localStorage.setItem('email', data.email || 'public-demo@gradeview.local');
+            localStorage.setItem('name', data.name || 'GradeView Demo');
+            localStorage.setItem('profilepicture', '');
+
+            if (data.demo_course?.id) {
+                localStorage.setItem('selectedCourseId', String(data.demo_course.id));
+            }
+            localStorage.removeItem('selectedStudentEmail');
+
+            window.location.href = '/';
+        } catch (err) {
+            setError(err?.response?.data?.message || 'Demo access is not available right now.');
+        } finally {
+            setDemoLoading(false);
+        }
     }
 
     // Formatting for the input fields
@@ -155,10 +192,22 @@ export default function Login() {
                     <Button
                         variant='contained'
                         size='large'
+                        type='button'
                         onClick={handleLogin}
                         sx={{ width: '100%' }}
                     >
                         Login
+                    </Button>
+                    <Button
+                        variant='outlined'
+                        size='large'
+                        type='button'
+                        startIcon={<SchoolOutlined />}
+                        onClick={handleDemoLogin}
+                        disabled={demoLoading}
+                        sx={{ width: '100%' }}
+                    >
+                        {demoLoading ? 'Opening demo...' : 'Explore Demo Course'}
                     </Button>
                     <Typography variant='body2' sx={{ opacity: 0.76 }}>
                         <i>or</i>

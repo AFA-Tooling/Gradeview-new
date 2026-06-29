@@ -28,6 +28,10 @@ function getRequestedCourseId(req) {
     return req?.query?.course_id || req?.params?.courseId || req?.params?.course_id || null;
 }
 
+function isCourseScopedStaffRole(role) {
+    return role === IAM_ROLE.COURSE_ADMIN || role === IAM_ROLE.INSTRUCTOR;
+}
+
 async function getAuthContext(req) {
     validateAuthenticatedRequestFormat(req);
 
@@ -108,6 +112,10 @@ export async function validateAdminMiddleware(req, _, next) {
 
 export async function validateStaffOrAdminMiddleware(req, _, next) {
     const auth = await getAuthContext(req);
+    if (isCourseScopedStaffRole(auth.role) && !auth.courseId) {
+        ensurePermission(false, 'course_id is required for course-scoped staff/admin access');
+    }
+
     const allowed = await canViewClassData({
         requesterEmail: auth.email,
         courseId: auth.courseId,
@@ -142,6 +150,10 @@ export async function validateCourseAdminOrSuperMiddleware(req, _, next) {
 
 export async function validateStudentSelfOrStaffOrAdminMiddleware(req, _, next) {
     const auth = await getAuthContext(req);
+    if (isCourseScopedStaffRole(auth.role) && !auth.courseId) {
+        ensurePermission(false, 'course_id is required for course-scoped staff/admin access');
+    }
+
     const allowed = await canViewStudentGrades({
         requesterEmail: auth.email,
         targetEmail: req.params?.email,

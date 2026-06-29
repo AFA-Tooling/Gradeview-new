@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Chip, Stack, Tooltip, Typography } from '@mui/material';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
@@ -52,18 +52,18 @@ function policyText(data) {
 }
 
 function nodeTone(type, subtype) {
-  if (type === 'raw') return { border: '#2563eb', bg: '#ffffff', title: '#111827', accent: '#1d4ed8', soft: '#eff6ff' };
-  if (type === 'category_output') return { border: '#0891b2', bg: '#ffffff', title: '#0f172a', accent: '#0e7490', soft: '#ecfeff' };
+  if (type === 'raw') return { border: '#4788B8', bg: '#ffffff', title: '#111827', accent: '#2F6F9E', soft: '#EFF6FB' };
+  if (type === 'category_output') return { border: '#1E9A8A', bg: '#ffffff', title: '#0f172a', accent: '#0F766E', soft: '#ECFDF5' };
   if (type === 'final_output') return { border: '#111111', bg: '#ffffff', title: '#111111', accent: '#111111', soft: '#f3f4f6' };
 
   const logical = {
-    drop: { border: '#c2410c', bg: '#ffffff', title: '#111827', accent: '#c2410c', soft: '#fff7ed' },
-    filter: { border: '#7c3aed', bg: '#ffffff', title: '#111827', accent: '#7c3aed', soft: '#f5f3ff' },
-    max: { border: '#dc2626', bg: '#ffffff', title: '#111827', accent: '#dc2626', soft: '#fef2f2' },
-    clobber: { border: '#dc2626', bg: '#ffffff', title: '#111827', accent: '#dc2626', soft: '#fef2f2' },
-    sum: { border: '#15803d', bg: '#ffffff', title: '#111827', accent: '#15803d', soft: '#f0fdf4' },
-    scale: { border: '#ca8a04', bg: '#ffffff', title: '#111827', accent: '#a16207', soft: '#fefce8' },
-    cap: { border: '#ca8a04', bg: '#ffffff', title: '#111827', accent: '#a16207', soft: '#fefce8' },
+    drop: { border: '#F59E0B', bg: '#ffffff', title: '#111827', accent: '#B45309', soft: '#FFFBEB' },
+    filter: { border: '#8B6FF6', bg: '#ffffff', title: '#111827', accent: '#6D5AD8', soft: '#F5F3FF' },
+    max: { border: '#F43F5E', bg: '#ffffff', title: '#111827', accent: '#BE123C', soft: '#FFF1F2' },
+    clobber: { border: '#F43F5E', bg: '#ffffff', title: '#111827', accent: '#BE123C', soft: '#FFF1F2' },
+    sum: { border: '#1E9A8A', bg: '#ffffff', title: '#111827', accent: '#0F766E', soft: '#ECFDF5' },
+    scale: { border: '#F59E0B', bg: '#ffffff', title: '#111827', accent: '#B45309', soft: '#FFFBEB' },
+    cap: { border: '#F59E0B', bg: '#ffffff', title: '#111827', accent: '#B45309', soft: '#FFFBEB' },
   };
   return logical[subtype] || logical.sum;
 }
@@ -85,7 +85,7 @@ function StatusPill({ status }) {
         py: 0.15,
         borderRadius: 999,
         color: colors[status] || '#64748b',
-        backgroundColor: 'rgba(0,0,0,0.055)',
+        backgroundColor: '#F3F4F6',
         fontSize: 10,
         fontWeight: 800,
         textTransform: 'uppercase',
@@ -107,13 +107,13 @@ function NodeShell({ data, children, sx = {} }) {
         px: 1.15,
         py: 0.9,
         borderRadius: 1,
-        border: `1.5px solid ${c.border}`,
+        border: `1px solid ${c.border}`,
         backgroundColor: c.bg,
-        boxShadow: '0 1px 2px rgba(15,23,42,0.06)',
+        boxShadow: 'none',
         color: c.title,
-        transition: 'border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease',
+        transition: 'border-color 120ms ease, background-color 120ms ease',
         '&:hover': {
-          boxShadow: '0 6px 18px rgba(15,23,42,0.12)',
+          backgroundColor: '#F9FAFB',
         },
         ...sx,
       }}
@@ -188,8 +188,8 @@ const LogicalPolicyNode = memo(({ data }) => {
         <NodeShell
           data={data}
           sx={{
-            borderWidth: upstreamExpanded ? 2 : 1.5,
-            background: detailExpanded ? `linear-gradient(180deg, ${c.soft}, #ffffff)` : '#ffffff',
+            borderWidth: upstreamExpanded ? 1.5 : 1,
+            backgroundColor: detailExpanded ? c.soft : '#ffffff',
             overflow: 'hidden',
           }}
         >
@@ -333,7 +333,7 @@ const CategoryOutputNode = memo(({ data }) => {
           <Typography sx={{ color: c.accent, fontWeight: 900, fontSize: 16, mt: 0.65 }}>
             {data.displayValue}
           </Typography>
-          <Box sx={{ mt: 0.9, height: 5, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+          <Box sx={{ mt: 0.9, height: 5, borderRadius: 999, backgroundColor: '#E5E7EB', overflow: 'hidden' }}>
             <Box sx={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: '100%', backgroundColor: c.accent }} />
           </Box>
         </NodeShell>
@@ -752,7 +752,7 @@ function buildVisibleGraph(graph, upstreamExpandedNodeIds, detailExpandedNodeIds
     source: edge.source,
     target: edge.target,
     type: 'simplebezier',
-    animated: edge.kind === 'clobber',
+    animated: false,
     label: edge.kind === 'clobber' ? edge.label || undefined : undefined,
     markerEnd: { type: MarkerType.ArrowClosed, color: edge.kind === 'clobber' ? '#dc2626' : 'rgba(17,24,39,0.34)' },
     interactionWidth: 12,
@@ -773,7 +773,7 @@ function buildVisibleGraph(graph, upstreamExpandedNodeIds, detailExpandedNodeIds
   };
 }
 
-function FlowCanvas({
+const FlowCanvas = memo(function FlowCanvas({
   nodes,
   edges,
   fitKey,
@@ -802,6 +802,7 @@ function FlowCanvas({
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
+      onlyRenderVisibleElements
       defaultViewport={{ x: 22, y: 22, zoom: 0.78 }}
       minZoom={0.45}
       maxZoom={1.25}
@@ -812,9 +813,9 @@ function FlowCanvas({
       panOnScrollSpeed={0.9}
       panOnDrag
       preventScrolling
-      style={{ background: '#f8fafc' }}
+      style={{ background: '#FAFAFB' }}
     >
-      <Background color="rgba(17,24,39,0.16)" gap={24} size={1} />
+      <Background color="#E1E4EA" gap={24} size={1} />
       <Controls position="bottom-left" showZoom={false} showInteractive={false} />
       <MiniMap
         position="bottom-right"
@@ -823,7 +824,7 @@ function FlowCanvas({
         nodeColor={(node) => nodeTone(node.data?.graphType, node.data?.subtype).border}
         style={{
           backgroundColor: '#ffffff',
-          border: '1px solid rgba(0,0,0,0.18)',
+          border: '1px solid #E5E7EB',
           borderRadius: 6,
         }}
       />
@@ -838,10 +839,9 @@ function FlowCanvas({
             px: 1.15,
             py: 0.9,
             borderRadius: 1,
-            backgroundColor: 'rgba(255,255,255,0.92)',
-            border: '1px solid rgba(0,0,0,0.18)',
-            boxShadow: '0 6px 20px rgba(15,23,42,0.08)',
-            backdropFilter: 'blur(8px)',
+            backgroundColor: '#FFFFFF',
+            border: '1px solid #E5E7EB',
+            boxShadow: 'none',
           }}
         >
           <Stack direction="row" spacing={0.8} alignItems="center">
@@ -864,6 +864,15 @@ function FlowCanvas({
       </Panel>
     </ReactFlow>
   );
+});
+
+function areSetsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
 }
 
 export default function GradeDataFlow({ studentData }) {
@@ -880,11 +889,15 @@ export default function GradeDataFlow({ studentData }) {
   const [detailExpandedNodeIds, setDetailExpandedNodeIds] = useState(defaultDetailExpandedNodeIds);
 
   useEffect(() => {
-    setUpstreamExpandedNodeIds(defaultUpstreamExpandedNodeIds);
+    setUpstreamExpandedNodeIds((prev) => (
+      areSetsEqual(prev, defaultUpstreamExpandedNodeIds) ? prev : defaultUpstreamExpandedNodeIds
+    ));
   }, [defaultUpstreamExpandedNodeIds]);
 
   useEffect(() => {
-    setDetailExpandedNodeIds(defaultDetailExpandedNodeIds);
+    setDetailExpandedNodeIds((prev) => (
+      areSetsEqual(prev, defaultDetailExpandedNodeIds) ? prev : defaultDetailExpandedNodeIds
+    ));
   }, [defaultDetailExpandedNodeIds]);
 
   const toggleUpstreamNode = useCallback((nodeId) => {
@@ -915,17 +928,56 @@ export default function GradeDataFlow({ studentData }) {
     [graph, upstreamExpandedNodeIds, detailExpandedNodeIds, toggleUpstreamNode, toggleDetailNode],
   );
 
+  const showAllSources = useCallback(() => {
+    setUpstreamExpandedNodeIds((prev) => {
+      const next = new Set(upstreamToggleNodeIds);
+      return areSetsEqual(prev, next) ? prev : next;
+    });
+  }, [upstreamToggleNodeIds]);
+
+  const hideAllSources = useCallback(() => {
+    setUpstreamExpandedNodeIds((prev) => {
+      const next = new Set();
+      return areSetsEqual(prev, next) ? prev : next;
+    });
+  }, []);
+
+  const showAllLists = useCallback(() => {
+    setDetailExpandedNodeIds((prev) => {
+      const next = new Set(defaultDetailExpandedNodeIds);
+      return areSetsEqual(prev, next) ? prev : next;
+    });
+  }, [defaultDetailExpandedNodeIds]);
+
+  const hideAllLists = useCallback(() => {
+    setDetailExpandedNodeIds((prev) => {
+      const next = new Set();
+      return areSetsEqual(prev, next) ? prev : next;
+    });
+  }, []);
+
+  const total = graph?.total || {};
+  const components = Array.isArray(graph?.components) ? graph.components : [];
+  const fitKey = `${graph?.student?.email || studentData?.email || 'student'}:${graph?.course?.id || 'course'}:${components.length}`;
+  const upstreamExpandedCount = useMemo(
+    () => upstreamToggleNodeIds.reduce((count, nodeId) => count + (upstreamExpandedNodeIds.has(nodeId) ? 1 : 0), 0),
+    [upstreamToggleNodeIds, upstreamExpandedNodeIds],
+  );
+  const detailExpandedCount = useMemo(() => {
+    let count = 0;
+    defaultDetailExpandedNodeIds.forEach((nodeId) => {
+      if (detailExpandedNodeIds.has(nodeId)) count += 1;
+    });
+    return count;
+  }, [defaultDetailExpandedNodeIds, detailExpandedNodeIds]);
+
   if (!graph) {
     return (
-      <Box sx={{ p: 3, border: '1px solid #e5e7eb', borderRadius: 2, backgroundColor: '#fff' }}>
-        <Typography sx={{ color: '#6b7280' }}>Grade flow graph is not available yet.</Typography>
+      <Box sx={{ p: 3, border: '1px solid #E5E7EB', borderRadius: 2, backgroundColor: '#fff' }}>
+        <Typography sx={{ color: '#6B7280' }}>Grade flow graph is not available yet.</Typography>
       </Box>
     );
   }
-
-  const total = graph.total || {};
-  const components = Array.isArray(graph.components) ? graph.components : [];
-  const fitKey = `${graph.student?.email || studentData?.email || 'student'}:${graph.course?.id || 'course'}:${components.length}`;
 
   return (
     <Box
@@ -934,10 +986,45 @@ export default function GradeDataFlow({ studentData }) {
         minHeight: { xs: 620, md: 680 },
         borderRadius: 1,
         overflow: 'hidden',
-        border: '1px solid rgba(0,0,0,0.18)',
-        backgroundColor: '#f8fafc',
+        border: '1px solid #E5E7EB',
+        backgroundColor: '#FAFAFB',
       }}
     >
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={1}
+        alignItems={{ xs: 'flex-start', md: 'center' }}
+        justifyContent="space-between"
+        sx={{
+          px: 1.5,
+          py: 1.15,
+          borderBottom: '1px solid #E5E7EB',
+          backgroundColor: '#ffffff',
+        }}
+      >
+        <Box>
+          <Typography sx={{ fontSize: 13, fontWeight: 850, color: '#111827' }}>
+            Read-only policy graph
+          </Typography>
+          <Typography sx={{ fontSize: 11.5, color: '#6B7280' }}>
+            Raw scores flow left to right through filter/drop, max/clobber, sum, scale, and cap nodes.
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button size="small" variant="outlined" onClick={showAllSources}>
+            Show sources
+          </Button>
+          <Button size="small" variant="outlined" onClick={hideAllSources}>
+            Hide sources
+          </Button>
+          <Button size="small" variant="outlined" onClick={showAllLists}>
+            Show lists
+          </Button>
+          <Button size="small" variant="outlined" onClick={hideAllLists}>
+            Hide lists
+          </Button>
+        </Stack>
+      </Stack>
       <ReactFlowProvider>
         <FlowCanvas
           nodes={flowNodes}
@@ -945,10 +1032,8 @@ export default function GradeDataFlow({ studentData }) {
           fitKey={fitKey}
           total={total}
           visibleRawCount={visibleRawCount}
-          upstreamExpandedCount={upstreamToggleNodeIds.filter((nodeId) => upstreamExpandedNodeIds.has(nodeId)).length}
-          detailExpandedCount={defaultDetailExpandedNodeIds.size
-            ? Array.from(defaultDetailExpandedNodeIds).filter((nodeId) => detailExpandedNodeIds.has(nodeId)).length
-            : 0}
+          upstreamExpandedCount={upstreamExpandedCount}
+          detailExpandedCount={detailExpandedCount}
         />
       </ReactFlowProvider>
     </Box>

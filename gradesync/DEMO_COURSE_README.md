@@ -219,11 +219,17 @@ Or just use the script with `--clean` flag when creating a new course.
    python create_demo_course.py --clean
    ```
 
-2. Login to your web app with your instructor account
+2. Open the GradeView login page and click **Explore Demo Course**
 
-3. You'll see 30 students with realistic grades across multiple assignments
+3. You'll see synthetic students with realistic grades across multiple assignments
 
-4. Demo the filtering, grade reports, and other features without worrying about real student data!
+4. Demo the filtering, grade reports, and other features without worrying about real student data. The public demo session is scoped to `demo_cs10_spring2025` through:
+
+   ```bash
+   DEMO_ACCESS_ENABLED=true
+   DEMO_COURSE_ID=demo_cs10_spring2025
+   DEMO_USER_EMAIL=public-demo@gradeview.local
+   ```
 
 ---
 

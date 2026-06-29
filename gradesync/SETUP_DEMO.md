@@ -135,9 +135,17 @@ db.close()
 EOF
 ```
 
-### 3. 在演示中登录
+### 3. 在演示中打开公开 Demo
 
-使用你的Berkeley邮箱（比如 `instructor@berkeley.edu`）登录系统，你就能看到所有的虚拟学生和他们的成绩。
+打开 GradeView 登录页，点击 **Explore Demo Course**。系统会创建一个无需 Google 登录的 demo session，并自动限制在 `demo_cs10_spring2025` 这门演示课程内。
+
+这个入口依赖以下默认配置：
+
+```bash
+DEMO_ACCESS_ENABLED=true
+DEMO_COURSE_ID=demo_cs10_spring2025
+DEMO_USER_EMAIL=public-demo@gradeview.local
+```
 
 ## 常见问题
 

@@ -9,17 +9,16 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Paper,
   CircularProgress,
   Alert
 } from '@mui/material';
 import apiv2 from '../utils/apiv2';
+import { cachedApiGet } from '../utils/apiCache';
 import {
-  processStudentData,
-  applyExamPolicyToProcessedData,
-  buildQuestComponentTrendFallback,
-  buildQuestComponentTrendFromAssignments,
-} from '../utils/studentDataProcessor';
+  fetchStudentGradeFlow,
+  fetchStudentProfileData,
+  resolveCourseQueryId,
+} from '../utils/studentProfileData';
 import StudentProfileContent from '../components/StudentProfileContent';
 import GradeDataFlow from '../components/GradeDataFlow';
 import { StudentSelectionContext } from "../components/StudentSelectionWrapper";
@@ -38,17 +37,16 @@ export default function StudentProfile() {
   const [students, setStudents] = useState([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [gradeFlowLoading, setGradeFlowLoading] = useState(false);
+  const [gradeFlowError, setGradeFlowError] = useState(null);
+  const [gradeFlowRequestedFor, setGradeFlowRequestedFor] = useState('');
   const [error, setError] = useState(null);
   const [studentData, setStudentData] = useState(null);
   const [courses, setCourses] = useState([]);
-  const [adminSelectedStudent, setAdminSelectedStudent] = useState('');
+  const [adminSelectedStudent, setAdminSelectedStudent] = useState(
+    selectedStudent || localStorage.getItem('selectedStudentEmail') || '',
+  );
   const [selectedCourse, setSelectedCourse] = useState(localStorage.getItem('selectedCourseId') || '');
-
-  const resolveCourseQueryId = (courseId) => {
-    if (!courseId) return '';
-    const matchedCourse = courses.find((course) => String(course.id) === String(courseId));
-    return matchedCourse?.gradescope_course_id || courseId;
-  };
 
   const normalizeCourseList = (list) => {
     const items = Array.isArray(list) ? list : [];
@@ -85,8 +83,11 @@ export default function StudentProfile() {
           setIsAdmin(adminStatus);
 
           const loadCourses = adminStatus
-            ? Promise.allSettled([apiv2.get('/admin/sync'), apiv2.get('/students/courses')])
-            : Promise.allSettled([apiv2.get('/students/courses')]);
+            ? Promise.allSettled([
+                cachedApiGet('/admin/sync', { ttlMs: 60000 }),
+                cachedApiGet('/students/courses', { ttlMs: 60000 }),
+              ])
+            : Promise.allSettled([cachedApiGet('/students/courses', { ttlMs: 60000 })]);
 
           loadCourses.then((results) => {
               if (!mounted) return;
@@ -139,9 +140,9 @@ export default function StudentProfile() {
 
     let mounted = true;
     setLoadingStudents(true);
-    const queryCourseId = resolveCourseQueryId(selectedCourse);
+    const queryCourseId = resolveCourseQueryId(selectedCourse, courses);
 
-    apiv2.get(`/students?course_id=${encodeURIComponent(queryCourseId)}`)
+    cachedApiGet(`/students?course_id=${encodeURIComponent(queryCourseId)}`, { ttlMs: 60000 })
       .then((studentsRes) => {
         if (!mounted) return;
 
@@ -173,6 +174,11 @@ export default function StudentProfile() {
     };
   }, [isAdmin, selectedCourse, adminSelectedStudent, setSelectedStudent, courses]);
 
+  useEffect(() => {
+    if (!isAdmin || adminSelectedStudent || !selectedStudent) return;
+    setAdminSelectedStudent(selectedStudent);
+  }, [adminSelectedStudent, isAdmin, selectedStudent]);
+
   const fetchEmail = useMemo(() => {
     if (isAdmin) {
       return adminSelectedStudent || selectedStudent;
@@ -188,7 +194,7 @@ export default function StudentProfile() {
     return localStorage.getItem('name') || fetchEmail;
   }, [fetchEmail, isAdmin, students]);
 
-  // Load student data and class averages
+  // Load profile analytics. Grade Flow is loaded lazily when its tab is opened.
   useEffect(() => {
     if (!fetchEmail) {
       setStudentData(null);
@@ -201,118 +207,87 @@ export default function StudentProfile() {
 
     setLoading(true);
     setError(null);
-    const queryCourseId = resolveCourseQueryId(selectedCourse);
-    
-    const courseQuery = queryCourseId ? `?course_id=${encodeURIComponent(queryCourseId)}` : '';
+    setGradeFlowError(null);
+    setGradeFlowRequestedFor('');
 
-    const gradesPath = `/students/${encodeURIComponent(fetchEmail)}/grades?format=db${queryCourseId ? `&course_id=${encodeURIComponent(queryCourseId)}` : ''}`;
+    const controller = new AbortController();
+    let active = true;
 
-    // Fetch both student grades and class category averages
-    Promise.all([
-      apiv2.get(gradesPath),
-      apiv2.get(`${gradesPath}&sort=time`),
-      apiv2.get(`/students/category-stats${courseQuery}`),
-      apiv2.get(`/bins${courseQuery}`),
-      apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/exam-policy${courseQuery}`),
-      apiv2.get(`/students/${encodeURIComponent(fetchEmail)}/grade-flow${courseQuery}`).catch((err) => {
-        console.warn('Grade flow graph unavailable:', err);
-        return { data: null };
-      }),
-    ])
-      .then(([gradesRes, rawGradesRes, statsRes, binsRes, policyRes, gradeFlowRes]) => {
-        const data = gradesRes.data;
-        const rawSubmissions = Array.isArray(rawGradesRes?.data?.submissions)
-          ? rawGradesRes.data.submissions
-          : [];
-        const classAverages = statsRes.data;
-        const policyRows = Array.isArray(policyRes?.data?.rows) ? policyRes.data.rows : [];
-        const gradingConfig = {
-          assignmentPoints: binsRes?.data?.assignment_points || {},
-          totalCoursePoints:
-            Number(binsRes?.data?.overall_cap_points)
-            || Number(binsRes?.data?.total_points_cap)
-            || Number(binsRes?.data?.total_course_points)
-            || 0,
-          gradeBins: Array.isArray(binsRes?.data?.bins) ? binsRes.data.bins : [],
-          roundingPolicy: binsRes?.data?.rounding_policy || '',
-        };
-
-        const processedBase = processStudentData(data, fetchEmail, studentName, undefined, classAverages, gradingConfig);
-        const processed = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
-        const isRollupSubmission = (submission) => {
-          const category = String(submission?.category || '').trim().toLowerCase();
-          const name = String(submission?.name || '').trim().toLowerCase();
-          if (!category || !name || category !== name) return false;
-          return (
-            category.includes('attendance')
-            || category.includes('lab')
-            || category.includes('project')
-          );
-        };
-        const rawAssignmentsList = rawSubmissions
-          .filter((submission) => {
-            const category = String(submission?.category || '').trim();
-            const name = String(submission?.name || '').trim();
-            if (!name || !category || category.toLowerCase() === 'uncategorized') return false;
-            if (isRollupSubmission(submission)) return false;
-            return Number(submission?.maxPoints) > 0;
-          })
-          .map((submission) => {
-            const score = Number(submission.score) || 0;
-            const maxPoints = Number(submission.maxPoints) || 0;
-            return {
-              category: submission.category,
-              name: submission.name,
-              score,
-              maxPoints,
-              capPoints: maxPoints,
-              percentage: maxPoints > 0 ? (score / maxPoints) * 100 : 0,
-              submissionTime: submission.submissionTime,
-              lateness: submission.lateness,
-            };
-          });
-        const rawTrendData = rawAssignmentsList.map((assignment, idx) => ({
-          index: idx + 1,
-          name: `${assignment.category}-${assignment.name}`,
-          percentage: assignment.percentage,
-          category: assignment.category,
-          score: assignment.score,
-          maxPoints: assignment.maxPoints,
-          submissionTime: assignment.submissionTime,
-        }));
-
-        const examComponentTrendsFromApi = policyRes?.data?.examComponentTrends || {};
-        const trendFromApi = examComponentTrendsFromApi.quest || policyRes?.data?.questComponentTrend;
-        const trendFromPolicy = buildQuestComponentTrendFallback(policyRows);
-        const trendFromAssignments = buildQuestComponentTrendFromAssignments(processed?.assignmentsList || []);
-        const hasTrendSeries = (trend) => Array.isArray(trend?.series) && trend.series.length > 0;
-        const questComponentTrend = hasTrendSeries(trendFromApi)
-          ? trendFromApi
-          : (hasTrendSeries(trendFromPolicy) ? trendFromPolicy : trendFromAssignments);
-
-        setStudentData({
-          ...processed,
-          rawAssignmentsList,
-          rawTrendData,
-          gradeBins: gradingConfig.gradeBins,
-          roundingPolicy: gradingConfig.roundingPolicy,
-          examPolicyRows: policyRows,
-          questComponentTrend,
-          examComponentTrends: {
-            ...examComponentTrendsFromApi,
-            quest: questComponentTrend,
-          },
-          gradeFlow: gradeFlowRes?.data || null,
-        });
+    fetchStudentProfileData({
+      studentEmail: fetchEmail,
+      studentName,
+      selectedCourse,
+      courses,
+      signal: controller.signal,
+    })
+      .then((profileData) => {
+        if (!active) return;
+        setStudentData(profileData);
         setLoading(false);
       })
       .catch(err => {
+        if (!active) return;
+        if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
+          return;
+        }
         console.error('Failed to load student profile:', err);
         setError('Failed to load student data. Please try again.');
         setStudentData(null);
         setLoading(false);
       });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [fetchEmail, studentName, selectedCourse, isAdmin, courses]);
+
+  useEffect(() => {
+    const requestKey = `${fetchEmail || ''}:${selectedCourse || ''}`;
+    if (
+      tab !== 2
+      || !fetchEmail
+      || !studentData
+      || studentData.gradeFlow
+      || gradeFlowLoading
+      || gradeFlowRequestedFor === requestKey
+    ) {
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    setGradeFlowRequestedFor(requestKey);
+    setGradeFlowLoading(true);
+    setGradeFlowError(null);
+
+    fetchStudentGradeFlow({
+      studentEmail: fetchEmail,
+      selectedCourse,
+      courses,
+      signal: controller.signal,
+    })
+      .then((gradeFlow) => {
+        if (!active) return;
+        setStudentData((prev) => (prev ? { ...prev, gradeFlow } : prev));
+        setGradeFlowLoading(false);
+      })
+      .catch((err) => {
+        if (!active) return;
+        if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
+          setGradeFlowLoading(false);
+          return;
+        }
+        console.error('Failed to load grade flow graph:', err);
+        setGradeFlowError('Failed to load grade flow graph. Please try again.');
+        setGradeFlowLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [tab, fetchEmail, selectedCourse, courses, studentData, gradeFlowLoading, gradeFlowRequestedFor]);
 
   const handleAdminStudentChange = (event) => {
     const newEmail = event.target.value;
@@ -341,34 +316,62 @@ export default function StudentProfile() {
         minHeight: gradeFlowMode ? 0 : '100vh',
         pb: gradeFlowMode ? 0 : 4,
         overflow: gradeFlowMode ? 'hidden' : 'visible',
+        color: '#111827',
+        display: gradeFlowMode ? 'flex' : 'block',
+        flexDirection: gradeFlowMode ? 'column' : 'initial',
       }}
     >
-      {/* Page Header with Student Name and Admin Student Selector */}
-      <Paper 
-        elevation={0} 
-        className='glass-section'
+      <Box
         sx={{ 
-          p: gradeFlowMode ? 1.5 : 3,
-          mb: gradeFlowMode ? 1 : 3,
-          borderRadius: 2,
+          mb: gradeFlowMode ? 1 : 2.5,
           flexShrink: 0,
+          backgroundColor: '#FFFFFF',
+          borderBottom: '1px solid #E5E7EB',
         }}
       >
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant={gradeFlowMode ? 'h6' : 'h4'} component="h1" sx={{ fontWeight: 600 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: { xs: 'stretch', sm: 'center' },
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: 1.5,
+            pt: gradeFlowMode ? 0.25 : 0,
+            pb: gradeFlowMode ? 0.75 : 1.25,
+          }}
+        >
+          <Typography
+            variant={gradeFlowMode ? 'h6' : 'h5'}
+            component="h1"
+            sx={{
+              fontWeight: 750,
+              letterSpacing: 0,
+              lineHeight: 1.2,
+              color: '#111827',
+              minWidth: 0,
+            }}
+          >
             {studentData?.studentName || studentName || 'Loading...'}
           </Typography>
           
-          {/* Admin Student Selector */}
           {isAdmin && (
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <FormControl sx={{ minWidth: 240 }} size="small">
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'stretch', sm: 'flex-end' } }}>
+              <FormControl sx={{ minWidth: { xs: '100%', sm: 260 } }} size="small">
                 <InputLabel>Select Student</InputLabel>
                 <Select
                   value={adminSelectedStudent}
                   label="Select Student"
                   onChange={handleAdminStudentChange}
                   disabled={loadingStudents}
+                  sx={{
+                    borderRadius: 1,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    backgroundColor: '#FFFFFF',
+                    '& .MuiSelect-select': {
+                      py: 0.85,
+                    },
+                  }}
                 >
                   {students.map((student) => (
                     <MenuItem key={student.email} value={student.email}>
@@ -380,39 +383,50 @@ export default function StudentProfile() {
             </Box>
           )}
         </Box>
-      </Paper>
 
-      <Box
-        sx={{
-          px: gradeFlowMode ? 0 : { xs: 1.5, sm: 2, md: 4 },
-          width: '100%',
-          height: gradeFlowMode ? 'calc(100% - 74px)' : 'auto',
-          minHeight: 0,
-          overflow: gradeFlowMode ? 'hidden' : 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        {/* Tabs */}
         <Tabs 
           value={tab} 
           onChange={(e, newValue) => setTab(newValue)}
           sx={{ 
-            mb: gradeFlowMode ? 1 : 3,
             flexShrink: 0,
+            minHeight: 34,
             '& .MuiTab-root': {
               textTransform: 'none',
-              fontSize: '0.95rem',
-              fontWeight: 500
-            }
+              fontSize: 13,
+              fontWeight: 650,
+              minHeight: 34,
+              px: 1.6,
+              mr: 1,
+              color: '#6B7280',
+            },
+            '& .Mui-selected': {
+              color: '#111827',
+            },
+            '& .MuiTabs-indicator': {
+              height: 2,
+              backgroundColor: '#111827',
+            },
           }}
         >
           <Tab label="Performance Analytics" />
           <Tab label="Buckets" />
           <Tab label="Grade Flow" />
           <Tab label="Concept Map" />
-      </Tabs>
+        </Tabs>
+      </Box>
 
+      <Box
+        sx={{
+          px: 0,
+          width: '100%',
+          height: gradeFlowMode ? 'auto' : 'auto',
+          flex: gradeFlowMode ? 1 : 'initial',
+          minHeight: 0,
+          overflow: gradeFlowMode ? 'hidden' : 'visible',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
       {/* Performance Analytics Tab */}
       {tab === 0 && loading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -441,13 +455,13 @@ export default function StudentProfile() {
 
       {/* Grade Flow Tab */}
       {tab === 2 && (
-        loading ? (
+        (loading || gradeFlowLoading) ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
             <CircularProgress />
           </Box>
-        ) : error ? (
+        ) : (error || gradeFlowError) ? (
           <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
+            {error || gradeFlowError}
           </Alert>
         ) : studentData ? (
           <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>

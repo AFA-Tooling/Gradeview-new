@@ -32,7 +32,7 @@ import {
 } from '@mui/icons-material';
 import PageHeader from '../components/PageHeader';
 import StudentProfile from '../components/StudentProfile';
-import apiv2 from '../utils/apiv2';
+import { cachedApiGet } from '../utils/apiCache';
 
 const REASON_COLORS = {
   overall: '#dc2626',
@@ -393,8 +393,8 @@ export default function Alerts() {
 
   useEffect(() => {
     Promise.allSettled([
-      apiv2.get('/admin/sync'),
-      apiv2.get('/students/courses'),
+      cachedApiGet('/admin/sync', { ttlMs: 60000 }),
+      cachedApiGet('/students/courses', { ttlMs: 60000 }),
     ]).then(([adminResult, studentResult]) => {
       const adminCourses = adminResult.status === 'fulfilled' ? (adminResult.value?.data?.courses || []) : [];
       const studentCourses = studentResult.status === 'fulfilled' ? (studentResult.value?.data?.courses || []) : [];
@@ -430,9 +430,9 @@ export default function Alerts() {
     const query = buildCourseQuery(selectedCourse, courses);
 
     Promise.all([
-      apiv2.get(`/admin/studentScores${query}`),
-      apiv2.get(`/admin/assignments${query}`),
-      apiv2.get(`/bins${query}`),
+      cachedApiGet(`/admin/studentScores${query}`, { ttlMs: 30000 }),
+      cachedApiGet(`/admin/assignments${query}`, { ttlMs: 60000 }),
+      cachedApiGet(`/bins${query}`, { ttlMs: 60000 }),
     ])
       .then(([studentRes, assignmentRes, binsRes]) => {
         setStudents(studentRes?.data?.students || []);

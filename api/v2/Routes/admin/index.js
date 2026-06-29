@@ -23,7 +23,7 @@ router.use(limiter);
 
 router.use(validateAdminPortalMiddleware);
 
-function requireInstructorCourseScope(req, res, next) {
+function requireCourseScopeForClassData(req, res, next) {
     const classDataPrefixes = [
         '/categories',
         '/assignments',
@@ -34,14 +34,14 @@ function requireInstructorCourseScope(req, res, next) {
     ];
     const isClassDataRequest = classDataPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`));
 
-    if (req?.auth?.role === IAM_ROLE.INSTRUCTOR && isClassDataRequest && !req?.query?.course_id) {
-        return res.status(403).json({ error: 'course_id is required for instructor class-data access' });
+    if (req?.auth?.role !== IAM_ROLE.SUPER_ADMIN && isClassDataRequest && !req?.query?.course_id) {
+        return res.status(403).json({ error: 'course_id is required for course-scoped class-data access' });
     }
 
     return next();
 }
 
-router.use(requireInstructorCourseScope);
+router.use(requireCourseScopeForClassData);
 
 // Mount sub-routers
 router.use('/categories', CategoriesRouter);

@@ -11,10 +11,13 @@ import {
     Alert, 
     CircularProgress,
     LinearProgress,
-    Divider
+    Divider,
+    Chip,
+    Stack
 } from '@mui/material';
 import { Refresh, Sync as SyncIcon } from '@mui/icons-material';
 import apiv2 from '../utils/apiv2';
+import { cachedApiGet, clearApiGetCache } from '../utils/apiCache';
 
 export default function GradeSyncControl() {
     const [courses, setCourses] = useState([]);
@@ -81,12 +84,14 @@ export default function GradeSyncControl() {
         return id ? `Gradescope ${id}` : '';
     };
 
+    const sourceResults = Array.isArray(result?.results) ? result.results : [];
+
     const fetchCourses = () => {
         setLoadingCourses(true);
         setError(null);
         Promise.allSettled([
-            apiv2.get('/admin/sync'),
-            apiv2.get('/students/courses'),
+            cachedApiGet('/admin/sync', { ttlMs: 60000 }),
+            cachedApiGet('/students/courses', { ttlMs: 60000 }),
         ])
             .then(([syncResult, courseResult]) => {
                 const syncCourses = syncResult.status === 'fulfilled'
@@ -160,6 +165,7 @@ export default function GradeSyncControl() {
                         setResult(job.result || null);
                         setSyncing(false);
                         setSyncJobId(null);
+                        clearApiGetCache();
                     } else if (job.status === 'failed') {
                         setError(job.error || job.message || 'Sync failed');
                         setSyncing(false);
@@ -201,6 +207,7 @@ export default function GradeSyncControl() {
         setSyncEvents([]);
         setResult(null);
         setError(null);
+        clearApiGetCache();
         
         apiv2.post(`/admin/sync/${selectedCourse}/start`)
             .then(res => {
@@ -373,13 +380,53 @@ export default function GradeSyncControl() {
                 {result && (
                     <Box mt={3}>
                         <Divider sx={{ mb: 3 }} />
-                        <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-                            Last Sync Result
-                        </Typography>
+                        <Box display="flex" alignItems="center" justifyContent="space-between" gap={2} mb={1}>
+                            <Typography variant="subtitle1" fontWeight={600}>
+                                Last Sync Result
+                            </Typography>
+                            <Chip
+                                size="small"
+                                color={result.overall_success ? 'success' : 'warning'}
+                                label={result.overall_success ? 'All sources healthy' : 'Partial sync'}
+                                sx={{ fontWeight: 700 }}
+                            />
+                        </Box>
                         
-                        <Alert severity={result.success !== false ? "success" : "warning"} sx={{ mb: 2 }}>
-                            Sync completed.
+                        <Alert severity={result.overall_success ? "success" : "warning"} sx={{ mb: 2 }}>
+                            External source failures do not erase existing grades. Database refresh can still update derived policy scores from the latest stored raw data.
                         </Alert>
+
+                        {sourceResults.length > 0 && (
+                            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ mb: 2 }}>
+                                {sourceResults.map((item) => (
+                                    <Paper
+                                        key={`${item.source}-${item.timestamp || item.message}`}
+                                        variant="outlined"
+                                        sx={{
+                                            p: 1.5,
+                                            flex: 1,
+                                            borderColor: item.success ? 'rgba(22, 163, 74, 0.32)' : 'rgba(220, 38, 38, 0.28)',
+                                            backgroundColor: item.success ? 'rgba(22, 163, 74, 0.04)' : 'rgba(220, 38, 38, 0.04)',
+                                        }}
+                                    >
+                                        <Box display="flex" alignItems="center" justifyContent="space-between" gap={1}>
+                                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                                                {formatSourceLabel(item.source)}
+                                            </Typography>
+                                            <Chip
+                                                size="small"
+                                                color={item.success ? 'success' : 'error'}
+                                                label={item.success ? 'OK' : 'Needs attention'}
+                                                sx={{ fontWeight: 700 }}
+                                            />
+                                        </Box>
+                                        <Typography variant="caption" sx={{ display: 'block', mt: 0.8, color: 'text.secondary' }}>
+                                            {item.message || (item.success ? 'Completed' : 'Failed')}
+                                        </Typography>
+                                    </Paper>
+                                ))}
+                            </Stack>
+                        )}
                         
                         <Paper variant="outlined" sx={{ p: 2, bgcolor: '#f8f9fa', maxHeight: 400, overflow: 'auto' }}>
                             <pre style={{ margin: 0, fontSize: '0.85rem', fontFamily: 'monospace' }}>

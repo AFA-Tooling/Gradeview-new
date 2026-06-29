@@ -23,38 +23,46 @@ import Alerts from './views/alerts';
 import Settings from './views/settings';
 import GradeSyncControl from './views/GradeSyncControl';
 
-// Mono palette
-const INK = '#111111';
-const INK_HOVER = '#000000';
+const INK = '#111827';
+const INK_HOVER = '#030712';
+const OR_BLUE = '#4788B8';
+const BORDER = '#E5E7EB';
+const SOFT_BG = '#FAFAFB';
 
 const theme = createTheme({
 	palette: {
 		mode: 'light',
-		primary: { main: INK, dark: INK_HOVER, light: '#444444' },
-		secondary: { main: '#555555' },
-		background: { default: '#E8EAEE', paper: '#FFFFFF' },
+		primary: { main: INK, dark: INK_HOVER, light: '#374151' },
+		secondary: { main: OR_BLUE },
+		background: { default: SOFT_BG, paper: '#FFFFFF' },
 		text: {
-			primary: '#111111',
-			secondary: 'rgba(0, 0, 0, 0.62)',
+			primary: INK,
+			secondary: '#6B7280',
 		},
-		divider: 'rgba(0, 0, 0, 0.22)',
+		divider: BORDER,
 	},
-	typography: { fontFamily: ['Roboto'] },
+	typography: {
+		fontFamily: ['Roboto'],
+		h4: { letterSpacing: 0, fontWeight: 650 },
+		h5: { letterSpacing: 0, fontWeight: 650 },
+		h6: { letterSpacing: 0, fontWeight: 650 },
+		button: { letterSpacing: 0 },
+	},
 	shape: { borderRadius: 8 },
 	components: {
 		MuiCssBaseline: {
 			styleOverrides: {
-				body: { backgroundColor: '#E8EAEE', color: '#111111' },
+				body: { backgroundColor: SOFT_BG, color: INK },
 			},
 		},
 		MuiAppBar: {
 			defaultProps: { elevation: 0 },
 			styleOverrides: {
 				root: {
-					color: '#111111',
+					color: INK,
 					backgroundColor: '#FFFFFF',
 					backgroundImage: 'none',
-					borderBottom: '1px solid rgba(0, 0, 0, 0.18)',
+					borderBottom: `1px solid ${BORDER}`,
 					boxShadow: 'none',
 				},
 			},
@@ -65,7 +73,7 @@ const theme = createTheme({
 				root: {
 					backgroundImage: 'none',
 					backgroundColor: '#FFFFFF',
-					border: '1px solid rgba(0, 0, 0, 0.18)',
+					border: `1px solid ${BORDER}`,
 					boxShadow: 'none',
 				},
 			},
@@ -74,7 +82,7 @@ const theme = createTheme({
 			styleOverrides: {
 				root: {
 					backgroundColor: '#FFFFFF',
-					border: '1px solid rgba(0, 0, 0, 0.18)',
+					border: `1px solid ${BORDER}`,
 					boxShadow: 'none',
 				},
 			},
@@ -93,7 +101,14 @@ const theme = createTheme({
 					backgroundColor: INK,
 					'&:hover': { backgroundColor: INK_HOVER },
 				},
-				outlined: { borderColor: 'rgba(0, 0, 0, 0.45)' },
+				outlined: {
+					borderColor: BORDER,
+					color: INK,
+					'&:hover': {
+						borderColor: '#D1D5DB',
+						backgroundColor: '#F9FAFB',
+					},
+				},
 			},
 		},
 		MuiOutlinedInput: {
@@ -102,10 +117,10 @@ const theme = createTheme({
 					backgroundColor: '#FFFFFF',
 					borderRadius: 6,
 					'& .MuiOutlinedInput-notchedOutline': {
-						borderColor: 'rgba(0, 0, 0, 0.28)',
+						borderColor: BORDER,
 					},
 					'&:hover .MuiOutlinedInput-notchedOutline': {
-						borderColor: 'rgba(0, 0, 0, 0.45)',
+						borderColor: '#D1D5DB',
 					},
 					'&.Mui-focused .MuiOutlinedInput-notchedOutline': {
 						borderColor: INK,
@@ -124,7 +139,7 @@ const theme = createTheme({
 				root: {
 					textTransform: 'none',
 					fontWeight: 500,
-					color: 'rgba(0, 0, 0, 0.55)',
+					color: '#6B7280',
 					'&.Mui-selected': { color: INK },
 				},
 			},
@@ -134,7 +149,7 @@ const theme = createTheme({
 				paper: {
 					backgroundImage: 'none',
 					backgroundColor: '#FFFFFF',
-					border: '1px solid rgba(0, 0, 0, 0.18)',
+					border: `1px solid ${BORDER}`,
 					boxShadow: '0 4px 12px rgba(0, 0, 0, 0.06)',
 				},
 			},
@@ -144,36 +159,36 @@ const theme = createTheme({
 				paper: {
 					backgroundImage: 'none',
 					backgroundColor: '#FFFFFF',
-					border: '1px solid rgba(0, 0, 0, 0.18)',
-					boxShadow: '0 8px 24px rgba(0, 0, 0, 0.18)',
+					border: `1px solid ${BORDER}`,
+					boxShadow: '0 12px 32px rgba(17, 24, 39, 0.12)',
 				},
 			},
 		},
 		MuiTableCell: {
 			styleOverrides: {
 				head: {
-					backgroundColor: '#EDEEF1',
-					color: '#111111',
+					backgroundColor: '#F9FAFB',
+					color: INK,
 					fontWeight: 600,
-					borderBottom: '1px solid rgba(0, 0, 0, 0.18)',
+					borderBottom: `1px solid ${BORDER}`,
 				},
 				body: {
-					color: 'rgba(0, 0, 0, 0.85)',
-					borderBottom: '1px solid rgba(0, 0, 0, 0.1)',
+					color: '#374151',
+					borderBottom: `1px solid ${BORDER}`,
 				},
 			},
 		},
 		MuiTableRow: {
 			styleOverrides: {
 				root: {
-					'&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' },
+					'&:hover': { backgroundColor: '#F9FAFB' },
 				},
 			},
 		},
 		MuiChip: {
 			styleOverrides: {
 				root: {
-					backgroundColor: 'rgba(0, 0, 0, 0.06)',
+					backgroundColor: '#F3F4F6',
 					color: INK,
 					border: 'none',
 					fontWeight: 500,
@@ -183,7 +198,7 @@ const theme = createTheme({
 		MuiAlert: {
 			styleOverrides: {
 				root: {
-					border: '1px solid rgba(0, 0, 0, 0.18)',
+					border: `1px solid ${BORDER}`,
 					boxShadow: 'none',
 				},
 			},
@@ -193,7 +208,7 @@ const theme = createTheme({
 				root: {
 					height: 6,
 					borderRadius: 3,
-					backgroundColor: 'rgba(0, 0, 0, 0.22)',
+					backgroundColor: '#E5E7EB',
 				},
 				bar: { borderRadius: 3, backgroundColor: INK },
 			},
