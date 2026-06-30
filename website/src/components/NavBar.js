@@ -17,14 +17,24 @@ import {
     useMediaQuery,
 } from '@mui/material';
 import {
-    AccountCircleOutlined,
     AccountTree,
+    AdminPanelSettingsOutlined,
+    ArticleOutlined,
+    AssignmentOutlined,
+    DashboardOutlined,
+    EventAvailableOutlined,
+    HelpOutlineOutlined,
     KeyboardArrowDown,
     LoginOutlined,
     Logout,
-    Settings as SettingsIcon,
-    StorageOutlined,
-    Warning,
+    PolicyOutlined,
+    QuizOutlined,
+    SchoolOutlined,
+    ScienceOutlined,
+    SettingsOutlined as SettingsIcon,
+    SyncOutlined,
+    WarningAmberOutlined,
+    WorkOutlineOutlined,
 } from '@mui/icons-material';
 import MenuIcon from '@mui/icons-material/Menu';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -35,24 +45,25 @@ import { StudentSelectionContext } from './StudentSelectionWrapper';
 const SIDEBAR_WIDTH = 244;
 const TOPBAR_HEIGHT = 42;
 
-function SidebarNavItem({ href, icon, text, active }) {
+function SidebarNavItem({ href, icon, text, active, indent = false }) {
     return (
         <Link component={NavLink} to={href} color="inherit" underline="none">
             <Button
                 fullWidth
-                startIcon={React.cloneElement(icon, { sx: { fontSize: 17 } })}
+                startIcon={React.cloneElement(icon, { sx: { fontSize: indent ? 15 : 17 } })}
                 sx={{
                     justifyContent: 'flex-start',
-                    minHeight: 34,
+                    minHeight: indent ? 30 : 34,
                     px: 1,
+                    pl: indent ? 1.5 : 1,
                     borderRadius: 1,
                     color: active ? '#111827' : '#737780',
                     backgroundColor: active ? '#E6E7E9' : 'transparent',
-                    fontSize: 13,
+                    fontSize: indent ? 12.5 : 13,
                     fontWeight: active ? 700 : 600,
                     lineHeight: 1.25,
                     '& .MuiButton-startIcon': {
-                        mr: 1,
+                        mr: 0.9,
                         color: active ? '#111827' : '#8B9099',
                     },
                     '&:hover': {
@@ -72,6 +83,30 @@ function SidebarNavItem({ href, icon, text, active }) {
     );
 }
 
+function SidebarSection({ title, items, isRouteActive }) {
+    if (!items.length) return null;
+
+    return (
+        <Box>
+            <Typography sx={{ px: 0.75, mb: 0.45, color: '#A0A4AC', fontSize: 10, fontWeight: 800 }}>
+                {title}
+            </Typography>
+            <Stack spacing={0.15}>
+                {items.map((item) => (
+                    <SidebarNavItem
+                        key={item.name}
+                        href={item.href}
+                        icon={item.icon}
+                        text={item.name}
+                        active={isRouteActive(item)}
+                        indent={item.indent}
+                    />
+                ))}
+            </Stack>
+        </Box>
+    );
+}
+
 export default function ButtonAppBar() {
     const mobileView = useMediaQuery('(max-width:900px)');
     const location = useLocation();
@@ -83,24 +118,48 @@ export default function ButtonAppBar() {
     const [profilePicture, updateProfilePicture] = useState('');
     const [anchorEl, setAnchorEl] = useState(null);
 
-    const navigationItems = useMemo(() => {
-        const items = [];
-        if (loggedIn) {
-            items.push({ name: 'Profile', href: '/profile', icon: <AccountCircleOutlined /> });
-        }
-        if (isAdmin) {
-            items.push(
-                { name: 'Grade Sync', href: '/gradesync', icon: <StorageOutlined /> },
-                { name: 'Admin', href: '/admin', icon: <AccountTree /> },
-                { name: 'Alerts', href: '/alerts', icon: <Warning /> },
-            );
-        }
-        return items;
+    const navSections = useMemo(() => {
+        const studentItems = loggedIn ? [
+            { name: 'Workspace', href: '/profile', icon: <DashboardOutlined />, exact: true, indent: true },
+            {
+                name: 'Report',
+                href: '/profile/report',
+                icon: <ArticleOutlined />,
+                indent: true,
+                match: (pathname) => pathname === '/profile/report' || /^\/students\/[^/]+\/report$/.test(pathname),
+            },
+            { name: 'Attendance', href: '/profile/attendance', icon: <EventAvailableOutlined />, exact: true, indent: true },
+            { name: 'Labs', href: '/profile/labs', icon: <ScienceOutlined />, exact: true, indent: true },
+            { name: 'Projects', href: '/profile/projects', icon: <WorkOutlineOutlined />, exact: true, indent: true },
+            { name: 'Exams', href: '/profile/exams', icon: <QuizOutlined />, indent: true },
+            { name: 'Assignments', href: '/profile/assignments', icon: <AssignmentOutlined />, exact: true, indent: true },
+            { name: 'Explain Score', href: '/profile/explain', icon: <HelpOutlineOutlined />, exact: true, indent: true },
+            { name: 'Concepts', href: '/profile/concepts', icon: <SchoolOutlined />, exact: true, indent: true },
+            { name: 'Policy', href: '/profile/policy', icon: <PolicyOutlined />, exact: true, indent: true },
+        ] : [];
+
+        const adminItems = isAdmin ? [
+            { name: 'Class Health', href: '/admin', icon: <AdminPanelSettingsOutlined /> },
+            { name: 'Grade Sync', href: '/gradesync', icon: <SyncOutlined /> },
+            { name: 'Alerts', href: '/alerts', icon: <WarningAmberOutlined /> },
+            { name: 'Settings', href: '/settings', icon: <SettingsIcon /> },
+        ] : [];
+
+        return [
+            { title: 'STUDENT', items: studentItems },
+            { title: 'ADMIN', items: adminItems },
+        ].filter((section) => section.items.length > 0);
     }, [isAdmin, loggedIn]);
 
-    const isRouteActive = (href) => {
-        if (href === '/') return location.pathname === '/';
-        return location.pathname === href || location.pathname.startsWith(`${href}/`);
+    const navigationItems = useMemo(() => (
+        navSections.flatMap((section) => section.items)
+    ), [navSections]);
+
+    const isRouteActive = (item) => {
+        if (typeof item.match === 'function') return item.match(location.pathname);
+        if (item.href === '/') return location.pathname === '/';
+        if (item.exact) return location.pathname === item.href;
+        return location.pathname === item.href || location.pathname.startsWith(`${item.href}/`);
     };
 
     function renderMenuItems() {
@@ -209,7 +268,9 @@ export default function ButtonAppBar() {
         const queryCourseId = resolveCourseQueryId(courseId, courseList);
         if (!queryCourseId) return;
 
-        const studentsRes = await cachedApiGet(`/students?course_id=${encodeURIComponent(queryCourseId)}`, { ttlMs: 60000 });
+        const studentsRes = await cachedApiGet(`/students?course_id=${encodeURIComponent(queryCourseId)}`, { ttlMs: 60000 }).catch(() => ({
+            data: { students: [] },
+        }));
         const sortedStudents = (studentsRes?.data?.students || [])
             .filter((student) => Array.isArray(student) && student[1])
             .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || '')));
@@ -221,7 +282,9 @@ export default function ButtonAppBar() {
 
     const fetchCourses = async () => {
         if (!isAdmin) {
-            const studentRes = await cachedApiGet('/students/courses', { ttlMs: 60000 });
+            const studentRes = await cachedApiGet('/students/courses', { ttlMs: 60000 }).catch(() => ({
+                data: { courses: [] },
+            }));
             return normalizeCourseList(studentRes?.data?.courses || []);
         }
 
@@ -275,9 +338,7 @@ export default function ButtonAppBar() {
                 refreshPermissions(nextCourse, fetchedCourses).catch((err) => {
                     console.error('Failed to refresh permissions for selected course:', err);
                 });
-                selectFirstStudentForCourse(nextCourse, fetchedCourses).catch((err) => {
-                    console.error('Failed to load students for selected course:', err);
-                });
+                selectFirstStudentForCourse(nextCourse, fetchedCourses);
             })
             .catch((err) => {
                 console.error('Failed to load courses in navbar:', err);
@@ -299,9 +360,7 @@ export default function ButtonAppBar() {
         refreshPermissions(nextCourse).catch((err) => {
             console.error('Failed to refresh permissions for selected course:', err);
         });
-        selectFirstStudentForCourse(nextCourse).catch((err) => {
-            console.error('Failed to load students for selected course:', err);
-        });
+        selectFirstStudentForCourse(nextCourse);
     };
 
     const courseSelect = courses.length > 0 && (
@@ -484,6 +543,8 @@ export default function ButtonAppBar() {
                             alignItems: 'stretch',
                             px: 1.25,
                             py: 1,
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
                         }}
                     >
                         {loggedIn && courseSelect && (
@@ -493,31 +554,17 @@ export default function ButtonAppBar() {
                         )}
 
                         <Stack component="nav" spacing={0.25} sx={{ mt: loggedIn && courseSelect ? 0 : 0.5 }}>
-                            {navigationItems.map((tab) => (
-                                <SidebarNavItem
-                                    key={tab.name}
-                                    href={tab.href}
-                                    icon={tab.icon}
-                                    text={tab.name}
-                                    active={isRouteActive(tab.href)}
-                                />
+                            {navSections.map((section, index) => (
+                                <React.Fragment key={section.title}>
+                                    {index > 0 && <Divider sx={{ my: 1.05, borderColor: '#ECEEF2' }} />}
+                                    <SidebarSection
+                                        title={section.title}
+                                        items={section.items}
+                                        isRouteActive={isRouteActive}
+                                    />
+                                </React.Fragment>
                             ))}
                         </Stack>
-
-                        {loggedIn && isAdmin && (
-                            <>
-                                <Divider sx={{ my: 1.25, borderColor: '#ECEEF2' }} />
-                                <Typography sx={{ px: 0.75, mb: 0.4, color: '#A0A4AC', fontSize: 10, fontWeight: 800 }}>
-                                    ACCOUNT
-                                </Typography>
-                                <SidebarNavItem
-                                    href="/settings"
-                                    icon={<SettingsIcon />}
-                                    text="Settings"
-                                    active={isRouteActive('/settings')}
-                                />
-                            </>
-                        )}
                     </Toolbar>
                 </AppBar>
             </>

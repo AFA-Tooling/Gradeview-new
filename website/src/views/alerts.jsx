@@ -30,8 +30,8 @@ import {
   TrendingDown,
   WarningAmber,
 } from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import StudentProfile from '../components/StudentProfile';
 import { cachedApiGet } from '../utils/apiCache';
 
 const REASON_COLORS = {
@@ -378,6 +378,7 @@ function compactReasonText(alert) {
 }
 
 export default function Alerts() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [students, setStudents] = useState([]);
@@ -388,8 +389,6 @@ export default function Alerts() {
   const [selectedLevel, setSelectedLevel] = useState('actionable');
   const [selectedSection, setSelectedSection] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [selectedStudent, setSelectedStudent] = useState(null);
 
   useEffect(() => {
     Promise.allSettled([
@@ -512,8 +511,7 @@ export default function Alerts() {
   }), [analysis.alerts]);
 
   const handleStudentClick = (student) => {
-    setSelectedStudent({ email: student.email, name: student.name });
-    setProfileOpen(true);
+    navigate(`/students/${encodeURIComponent(student.email)}/report`);
   };
 
   const currentCourse = courses.find((course) => String(course.id) === String(selectedCourse));
@@ -715,17 +713,6 @@ export default function Alerts() {
         </Stack>
       </Box>
 
-      <StudentProfile
-        open={profileOpen}
-        onClose={() => {
-          setProfileOpen(false);
-          setSelectedStudent(null);
-        }}
-        studentEmail={selectedStudent?.email}
-        studentName={selectedStudent?.name}
-        selectedCourse={selectedCourse}
-        courses={courses}
-      />
     </>
   );
 }

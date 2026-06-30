@@ -27,8 +27,8 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import Grid from '@mui/material/Grid';
+import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import StudentProfile from '../components/StudentProfile';
 import AIAnalytics from './aiAnalytics';
 import GradeSyncControl from './GradeSyncControl';
 import apiv2 from '../utils/apiv2';
@@ -209,6 +209,7 @@ const RowSectionCells = memo(function RowSectionCells({
 });
 
 export default function Admin() {
+  const navigate = useNavigate();
   const isLight = true;
 
   // Adaptive palette — use once, ref everywhere
@@ -266,10 +267,6 @@ export default function Admin() {
 
   const [sortBy, setSortBy]   = useState(null); // 'Quest','Midterm','Labs','total' or assignment.name
   const [sortAsc, setSortAsc] = useState(true);
-  
-  // --- STUDENT PROFILE DIALOG ---
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [selectedStudent, setSelectedStudent] = useState(null); // {email, name}
   
   // --- STUDENT PAGE CUSTOMIZATION ---
   const [visibleAssignments, setVisibleAssignments] = useState({}); // {assignmentName: boolean}
@@ -629,9 +626,8 @@ export default function Admin() {
   }, [sortBy, sortAsc, scoreDisplayMode, visibleAssignments, selectedCourse, sortedStudents.length]);
 
   const handleOpenStudentProfile = useCallback((student) => {
-    setSelectedStudent({ email: student.email, name: student.name });
-    setProfileOpen(true);
-  }, []);
+    navigate(`/students/${encodeURIComponent(student.email)}/report`);
+  }, [navigate]);
 
   // Handlers
   const handleTabChange = (_, newTab) => {
@@ -1675,19 +1671,6 @@ export default function Admin() {
         {tab === 2 && (
           <AIAnalytics />
         )}
-
-        {/* Student Profile Dialog */}
-        <StudentProfile 
-          open={profileOpen}
-          onClose={() => {
-            setProfileOpen(false);
-            setSelectedStudent(null);
-          }}
-          studentEmail={selectedStudent?.email}
-          studentName={selectedStudent?.name}
-          selectedCourse={selectedCourse}
-          courses={courses}
-        />
 
     </Box>
   );

@@ -11,15 +11,14 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import { getGradeLevel } from '../utils/studentDataProcessor';
 import { applyCanonicalSummaryTotals, fetchStudentProfileData } from '../utils/studentProfileData';
-import StudentProfileContent from './StudentProfileContent';
+import { StudentReportContent } from './studentExperienceV2';
 
 export { applyCanonicalSummaryTotals };
 
 /**
  * StudentProfile Component - Dialog Version
- * Displays detailed student profile in a dialog
+ * Displays the student report in a dialog.
  */
 export default function StudentProfile({ open, onClose, studentEmail, studentName, selectedCourse, courses = [] }) {
   const [loading, setLoading] = useState(false);
@@ -81,7 +80,7 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
     >
       <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Box>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>Student Profile</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>Student Report</Typography>
           {studentName && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {studentName} ({studentEmail})
@@ -107,9 +106,11 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
         )}
 
         {!loading && !error && studentData && (
-          <StudentProfileContent 
-            studentData={studentData} 
-            getGradeLevel={getGradeLevel}
+          <StudentReportContent
+            studentData={studentData}
+            studentEmail={studentEmail}
+            currentCourse=""
+            staffMode
           />
         )}
       </DialogContent>

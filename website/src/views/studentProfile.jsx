@@ -1,17 +1,17 @@
 // src/views/studentProfile.jsx
-import React, { useMemo, useContext, useState, useEffect } from 'react';
+import React, { useMemo, useContext, useState, useEffect, useRef } from 'react';
 import {
+  Alert,
   Box,
-  Tabs,
-  Tab,
-  Typography,
+  CircularProgress,
   FormControl,
   InputLabel,
-  Select,
   MenuItem,
-  CircularProgress,
-  Alert
+  Select,
+  Stack,
+  Typography,
 } from '@mui/material';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import apiv2 from '../utils/apiv2';
 import { cachedApiGet } from '../utils/apiCache';
 import {
@@ -19,19 +19,124 @@ import {
   fetchStudentProfileData,
   resolveCourseQueryId,
 } from '../utils/studentProfileData';
-import StudentProfileContent from '../components/StudentProfileContent';
-import GradeDataFlow from '../components/GradeDataFlow';
 import { StudentSelectionContext } from "../components/StudentSelectionWrapper";
-import Buckets from './buckets';
-import ConceptMap from './conceptMap';
+import {
+  AssignmentLedger,
+  CategoryDetailPage,
+  ConceptsPage,
+  ExamsOverviewPage,
+  ExplainScorePage,
+  PolicyReference,
+  SingleExamPage,
+  StudentReportContent,
+  StudentWorkspaceHome,
+  UnknownStudentExperienceRoute,
+} from '../components/studentExperienceV2';
+
+function normalizeCourseList(list) {
+  const items = Array.isArray(list) ? list : [];
+  const merged = new Map();
+  items.forEach((course) => {
+    const key = String(course?.gradescope_course_id || course?.id || '').trim();
+    if (!key) return;
+    if (!merged.has(key)) {
+      merged.set(key, { ...course, id: String(course.id) });
+    }
+  });
+  return Array.from(merged.values());
+}
+
+function formatCourseLabel(course) {
+  if (!course) return '';
+  const year = String(course?.year || '').trim();
+  const semester = String(course?.semester || '').trim();
+  const name = String(course?.name || '').trim();
+  const pieces = [year, semester, name].filter(Boolean);
+  return pieces.length ? pieces.join(' ') : String(course?.gradescope_course_id || course?.id || '').trim();
+}
+
+function resolveProfilePage(pathname, routeEmail) {
+  if (routeEmail) return { kind: 'report' };
+  const normalized = String(pathname || '').replace(/\/+$/, '') || '/profile';
+  if (normalized === '/profile') return { kind: 'workspace' };
+  if (normalized === '/profile/report') return { kind: 'report' };
+  if (normalized === '/profile/attendance') return { kind: 'category', pageKey: 'attendance' };
+  if (normalized === '/profile/labs') return { kind: 'category', pageKey: 'labs' };
+  if (normalized === '/profile/projects') return { kind: 'category', pageKey: 'projects' };
+  if (normalized === '/profile/exams') return { kind: 'exams' };
+  if (normalized === '/profile/exams/quest') return { kind: 'singleExam', examKey: 'quest' };
+  if (normalized === '/profile/exams/midterm') return { kind: 'singleExam', examKey: 'midterm' };
+  if (normalized === '/profile/exams/postterm') return { kind: 'singleExam', examKey: 'postterm' };
+  if (normalized === '/profile/assignments') return { kind: 'assignments' };
+  if (normalized === '/profile/explain') return { kind: 'explain' };
+  if (normalized === '/profile/concepts') return { kind: 'concepts' };
+  if (normalized === '/profile/policy') return { kind: 'policy' };
+  return { kind: 'unknown' };
+}
+
+function renderExperiencePage({
+  page,
+  studentData,
+  fetchEmail,
+  currentCourseLabel,
+  isStaffReport,
+  gradeFlowLoading,
+  gradeFlowError,
+}) {
+  if (page.kind === 'workspace') {
+    return <StudentWorkspaceHome studentData={studentData} />;
+  }
+  if (page.kind === 'report') {
+    return (
+      <StudentReportContent
+        studentData={studentData}
+        studentEmail={fetchEmail}
+        currentCourse={currentCourseLabel}
+        staffMode={isStaffReport}
+      />
+    );
+  }
+  if (page.kind === 'category') {
+    return <CategoryDetailPage studentData={studentData} pageKey={page.pageKey} />;
+  }
+  if (page.kind === 'exams') {
+    return <ExamsOverviewPage studentData={studentData} />;
+  }
+  if (page.kind === 'singleExam') {
+    return <SingleExamPage studentData={studentData} examKey={page.examKey} />;
+  }
+  if (page.kind === 'assignments') {
+    return <AssignmentLedger studentData={studentData} />;
+  }
+  if (page.kind === 'explain') {
+    return (
+      <ExplainScorePage
+        studentData={studentData}
+        gradeFlowLoading={gradeFlowLoading}
+        gradeFlowError={gradeFlowError}
+      />
+    );
+  }
+  if (page.kind === 'concepts') {
+    return <ConceptsPage studentData={studentData} />;
+  }
+  if (page.kind === 'policy') {
+    return <PolicyReference studentData={studentData} />;
+  }
+  return <UnknownStudentExperienceRoute />;
+}
 
 /**
- * Unified Student Profile Page
- * Combines detailed student analytics, Buckets, and Concept Map into tabs
+ * Student Profile V2
+ * Route-driven student workspace and staff report experience.
  */
 export default function StudentProfile() {
-  const [tab, setTab] = useState(0);
   const { selectedStudent, setSelectedStudent } = useContext(StudentSelectionContext);
+  const { email: routeEmailParam } = useParams();
+  const routeEmail = routeEmailParam ? decodeURIComponent(routeEmailParam) : '';
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const [isAdmin, setIsAdmin] = useState(false);
   const [needsSelection, setNeedsSelection] = useState(false);
   const [students, setStudents] = useState([]);
@@ -39,27 +144,22 @@ export default function StudentProfile() {
   const [loading, setLoading] = useState(false);
   const [gradeFlowLoading, setGradeFlowLoading] = useState(false);
   const [gradeFlowError, setGradeFlowError] = useState(null);
-  const [gradeFlowRequestedFor, setGradeFlowRequestedFor] = useState('');
+  const gradeFlowRequestKeyRef = useRef('');
   const [error, setError] = useState(null);
   const [studentData, setStudentData] = useState(null);
   const [courses, setCourses] = useState([]);
   const [adminSelectedStudent, setAdminSelectedStudent] = useState(
-    selectedStudent || localStorage.getItem('selectedStudentEmail') || '',
+    routeEmail || selectedStudent || localStorage.getItem('selectedStudentEmail') || '',
   );
   const [selectedCourse, setSelectedCourse] = useState(localStorage.getItem('selectedCourseId') || '');
 
-  const normalizeCourseList = (list) => {
-    const items = Array.isArray(list) ? list : [];
-    const merged = new Map();
-    items.forEach((course) => {
-      const key = String(course?.gradescope_course_id || course?.id || '').trim();
-      if (!key) return;
-      if (!merged.has(key)) {
-        merged.set(key, { ...course, id: String(course.id) });
-      }
-    });
-    return Array.from(merged.values());
-  };
+  const page = useMemo(() => resolveProfilePage(location.pathname, routeEmail), [location.pathname, routeEmail]);
+
+  useEffect(() => {
+    if (!routeEmail) return;
+    setAdminSelectedStudent(routeEmail);
+    setSelectedStudent(routeEmail);
+  }, [routeEmail, setSelectedStudent]);
 
   useEffect(() => {
     const handleSelectedCourseChanged = (event) => {
@@ -73,69 +173,63 @@ export default function StudentProfile() {
     };
   }, []);
 
-  // Check if user is admin and load student list
   useEffect(() => {
     let mounted = true;
     apiv2.get('/isadmin')
       .then((res) => {
-        if (mounted) {
-          const adminStatus = res?.data?.isAdmin === true;
-          setIsAdmin(adminStatus);
+        if (!mounted) return;
+        const adminStatus = res?.data?.isAdmin === true;
+        setIsAdmin(adminStatus);
 
-          const loadCourses = adminStatus
-            ? Promise.allSettled([
-                cachedApiGet('/admin/sync', { ttlMs: 60000 }),
-                cachedApiGet('/students/courses', { ttlMs: 60000 }),
-              ])
-            : Promise.allSettled([cachedApiGet('/students/courses', { ttlMs: 60000 })]);
+        const loadCourses = adminStatus
+          ? Promise.allSettled([
+              cachedApiGet('/admin/sync', { ttlMs: 60000 }),
+              cachedApiGet('/students/courses', { ttlMs: 60000 }),
+            ])
+          : Promise.allSettled([cachedApiGet('/students/courses', { ttlMs: 60000 })]);
 
-          loadCourses.then((results) => {
-              if (!mounted) return;
+        loadCourses
+          .then((results) => {
+            if (!mounted) return;
 
-              const fetchedCourses = adminStatus
-                ? normalizeCourseList([
-                    ...(results[0]?.status === 'fulfilled' ? (results[0].value?.data?.courses || []) : []),
-                    ...(results[1]?.status === 'fulfilled' ? (results[1].value?.data?.courses || []) : []),
-                  ])
-                : normalizeCourseList([
-                    ...(results[0]?.status === 'fulfilled' ? (results[0].value?.data?.courses || []) : []),
-                  ]);
+            const fetchedCourses = adminStatus
+              ? normalizeCourseList([
+                  ...(results[0]?.status === 'fulfilled' ? (results[0].value?.data?.courses || []) : []),
+                  ...(results[1]?.status === 'fulfilled' ? (results[1].value?.data?.courses || []) : []),
+                ])
+              : normalizeCourseList([
+                  ...(results[0]?.status === 'fulfilled' ? (results[0].value?.data?.courses || []) : []),
+                ]);
 
-              setCourses(fetchedCourses);
+            setCourses(fetchedCourses);
 
-              if (fetchedCourses.length === 0) {
-                setSelectedCourse('');
-                localStorage.removeItem('selectedCourseId');
-                return;
-              }
+            if (fetchedCourses.length === 0) {
+              setSelectedCourse('');
+              localStorage.removeItem('selectedCourseId');
+              return;
+            }
 
-              const rememberedCourse = localStorage.getItem('selectedCourseId') || selectedCourse;
-              const hasSelected = fetchedCourses.some((course) => String(course.id) === String(rememberedCourse));
-              const nextCourse = hasSelected ? String(rememberedCourse) : String(fetchedCourses[0].id);
-              setSelectedCourse(nextCourse);
-              localStorage.setItem('selectedCourseId', nextCourse);
-            })
-            .catch((err) => {
-              console.error('Failed to load courses:', err);
-            });
-          
-          // Check if admin needs to select a student
-          if (adminStatus && !selectedStudent && !localStorage.getItem('email')) {
-            setNeedsSelection(true);
-          } else {
-            setNeedsSelection(false);
-          }
-        }
+            const rememberedCourse = localStorage.getItem('selectedCourseId') || selectedCourse;
+            const hasSelected = fetchedCourses.some((course) => String(course.id) === String(rememberedCourse));
+            const nextCourse = hasSelected ? String(rememberedCourse) : String(fetchedCourses[0].id);
+            setSelectedCourse(nextCourse);
+            localStorage.setItem('selectedCourseId', nextCourse);
+          })
+          .catch((err) => {
+            console.error('Failed to load courses:', err);
+          });
+
+        setNeedsSelection(Boolean(adminStatus && !routeEmail && !selectedStudent && !localStorage.getItem('email')));
       })
       .catch(() => {
         if (mounted) setIsAdmin(false);
       });
     return () => { mounted = false; };
-  }, [selectedStudent, setSelectedStudent]);
+  }, [routeEmail, selectedCourse, selectedStudent]);
 
   useEffect(() => {
     if (!isAdmin || !selectedCourse) {
-      return;
+      return undefined;
     }
 
     let mounted = true;
@@ -155,8 +249,9 @@ export default function StudentProfile() {
 
         setStudents(studentsList);
 
-        const stillExists = studentsList.some((student) => student.email === adminSelectedStudent);
-        if (!stillExists) {
+        const currentStudent = routeEmail || adminSelectedStudent;
+        const stillExists = studentsList.some((student) => student.email === currentStudent);
+        if (!routeEmail && !stillExists) {
           const nextEmail = studentsList[0]?.email || '';
           setAdminSelectedStudent(nextEmail);
           setSelectedStudent(nextEmail);
@@ -164,51 +259,62 @@ export default function StudentProfile() {
 
         setLoadingStudents(false);
       })
-      .catch((err) => {
-        console.error('Failed to load students:', err);
-        if (mounted) setLoadingStudents(false);
+      .catch(() => {
+        if (mounted) {
+          setStudents([]);
+          setLoadingStudents(false);
+        }
       });
 
     return () => {
       mounted = false;
     };
-  }, [isAdmin, selectedCourse, adminSelectedStudent, setSelectedStudent, courses]);
+  }, [isAdmin, selectedCourse, adminSelectedStudent, setSelectedStudent, courses, routeEmail]);
 
   useEffect(() => {
-    if (!isAdmin || adminSelectedStudent || !selectedStudent) return;
+    if (!isAdmin || routeEmail || adminSelectedStudent || !selectedStudent) return;
     setAdminSelectedStudent(selectedStudent);
-  }, [adminSelectedStudent, isAdmin, selectedStudent]);
+  }, [adminSelectedStudent, isAdmin, routeEmail, selectedStudent]);
 
   const fetchEmail = useMemo(() => {
+    if (routeEmail) return routeEmail;
     if (isAdmin) {
       return adminSelectedStudent || selectedStudent;
     }
     return localStorage.getItem('email');
-  }, [isAdmin, adminSelectedStudent, selectedStudent]);
+  }, [routeEmail, isAdmin, adminSelectedStudent, selectedStudent]);
 
   const studentName = useMemo(() => {
-    if (isAdmin && students.length > 0 && fetchEmail) {
+    if ((isAdmin || routeEmail) && students.length > 0 && fetchEmail) {
       const student = students.find(s => s.email === fetchEmail);
       return student ? student.name : fetchEmail;
     }
     return localStorage.getItem('name') || fetchEmail;
-  }, [fetchEmail, isAdmin, students]);
+  }, [fetchEmail, isAdmin, routeEmail, students]);
 
-  // Load profile analytics. Grade Flow is loaded lazily when its tab is opened.
+  const currentCourse = useMemo(() => (
+    courses.find((course) => String(course.id) === String(selectedCourse))
+  ), [courses, selectedCourse]);
+  const currentCourseLabel = useMemo(() => formatCourseLabel(currentCourse), [currentCourse]);
+  const selectedStudentInMenu = useMemo(() => (
+    students.some((student) => student.email === adminSelectedStudent)
+  ), [adminSelectedStudent, students]);
+
   useEffect(() => {
     if (!fetchEmail) {
       setStudentData(null);
-      return;
+      return undefined;
     }
 
     if (isAdmin && !selectedCourse) {
-      return;
+      return undefined;
     }
 
     setLoading(true);
     setError(null);
     setGradeFlowError(null);
-    setGradeFlowRequestedFor('');
+    setGradeFlowLoading(false);
+    gradeFlowRequestKeyRef.current = '';
 
     const controller = new AbortController();
     let active = true;
@@ -245,19 +351,18 @@ export default function StudentProfile() {
   useEffect(() => {
     const requestKey = `${fetchEmail || ''}:${selectedCourse || ''}`;
     if (
-      tab !== 2
+      page.kind !== 'explain'
       || !fetchEmail
       || !studentData
       || studentData.gradeFlow
-      || gradeFlowLoading
-      || gradeFlowRequestedFor === requestKey
+      || gradeFlowRequestKeyRef.current === requestKey
     ) {
       return undefined;
     }
 
     const controller = new AbortController();
     let active = true;
-    setGradeFlowRequestedFor(requestKey);
+    gradeFlowRequestKeyRef.current = requestKey;
     setGradeFlowLoading(true);
     setGradeFlowError(null);
 
@@ -270,6 +375,7 @@ export default function StudentProfile() {
       .then((gradeFlow) => {
         if (!active) return;
         setStudentData((prev) => (prev ? { ...prev, gradeFlow } : prev));
+        setGradeFlowError(null);
         setGradeFlowLoading(false);
       })
       .catch((err) => {
@@ -280,22 +386,28 @@ export default function StudentProfile() {
         }
         console.error('Failed to load grade flow graph:', err);
         setGradeFlowError('Failed to load grade flow graph. Please try again.');
+        gradeFlowRequestKeyRef.current = '';
         setGradeFlowLoading(false);
       });
 
     return () => {
       active = false;
       controller.abort();
+      if (gradeFlowRequestKeyRef.current === requestKey) {
+        gradeFlowRequestKeyRef.current = '';
+      }
     };
-  }, [tab, fetchEmail, selectedCourse, courses, studentData, gradeFlowLoading, gradeFlowRequestedFor]);
+  }, [page.kind, fetchEmail, selectedCourse, courses, studentData]);
 
   const handleAdminStudentChange = (event) => {
     const newEmail = event.target.value;
     setAdminSelectedStudent(newEmail);
     setSelectedStudent(newEmail);
+    if (routeEmail) {
+      navigate(`/students/${encodeURIComponent(newEmail)}/report`);
+    }
   };
 
-  // Show message if admin needs to select a student
   if (needsSelection || !fetchEmail) {
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
@@ -306,179 +418,105 @@ export default function StudentProfile() {
     );
   }
 
-  const gradeFlowMode = tab === 2;
+  const isStaffReport = Boolean(routeEmail || (isAdmin && page.kind === 'report'));
 
   return (
     <Box
       className='student-profile-shell'
       sx={{
-        height: gradeFlowMode ? '100%' : 'auto',
-        minHeight: gradeFlowMode ? 0 : '100vh',
-        pb: gradeFlowMode ? 0 : 4,
-        overflow: gradeFlowMode ? 'hidden' : 'visible',
+        minHeight: '100vh',
+        pb: 4,
         color: '#111827',
-        display: gradeFlowMode ? 'flex' : 'block',
-        flexDirection: gradeFlowMode ? 'column' : 'initial',
       }}
     >
       <Box
-        sx={{ 
-          mb: gradeFlowMode ? 1 : 2.5,
-          flexShrink: 0,
+        sx={{
+          mb: 2.5,
           backgroundColor: '#FFFFFF',
           borderBottom: '1px solid #E5E7EB',
         }}
       >
-        <Box
-          sx={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: { xs: 'stretch', sm: 'center' },
-            flexDirection: { xs: 'column', sm: 'row' },
-            gap: 1.5,
-            pt: gradeFlowMode ? 0.25 : 0,
-            pb: gradeFlowMode ? 0.75 : 1.25,
-          }}
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          spacing={1.5}
+          alignItems={{ xs: 'stretch', md: 'center' }}
+          justifyContent="space-between"
+          sx={{ pb: 1.25 }}
         >
-          <Typography
-            variant={gradeFlowMode ? 'h6' : 'h5'}
-            component="h1"
-            sx={{
-              fontWeight: 750,
-              letterSpacing: 0,
-              lineHeight: 1.2,
-              color: '#111827',
-              minWidth: 0,
-            }}
-          >
-            {studentData?.studentName || studentName || 'Loading...'}
-          </Typography>
-          
-          {isAdmin && (
-            <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'stretch', sm: 'flex-end' } }}>
-              <FormControl sx={{ minWidth: { xs: '100%', sm: 260 } }} size="small">
-                <InputLabel>Select Student</InputLabel>
-                <Select
-                  value={adminSelectedStudent}
-                  label="Select Student"
-                  onChange={handleAdminStudentChange}
-                  disabled={loadingStudents}
-                  sx={{
-                    borderRadius: 1,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    backgroundColor: '#FFFFFF',
-                    '& .MuiSelect-select': {
-                      py: 0.85,
-                    },
-                  }}
-                >
-                  {students.map((student) => (
-                    <MenuItem key={student.email} value={student.email}>
-                      {student.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
-          )}
-        </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              variant="h5"
+              component="h1"
+              sx={{
+                fontWeight: 750,
+                letterSpacing: 0,
+                lineHeight: 1.2,
+                color: '#111827',
+                minWidth: 0,
+              }}
+            >
+              {studentData?.studentName || studentName || 'Loading...'}
+            </Typography>
+            <Typography sx={{ color: '#6B7280', fontSize: 13, mt: 0.35 }}>
+              {fetchEmail}{currentCourseLabel ? ` · ${currentCourseLabel}` : ''}
+            </Typography>
+          </Box>
 
-        <Tabs 
-          value={tab} 
-          onChange={(e, newValue) => setTab(newValue)}
-          sx={{ 
-            flexShrink: 0,
-            minHeight: 34,
-            '& .MuiTab-root': {
-              textTransform: 'none',
-              fontSize: 13,
-              fontWeight: 650,
-              minHeight: 34,
-              px: 1.6,
-              mr: 1,
-              color: '#6B7280',
-            },
-            '& .Mui-selected': {
-              color: '#111827',
-            },
-            '& .MuiTabs-indicator': {
-              height: 2,
-              backgroundColor: '#111827',
-            },
-          }}
-        >
-          <Tab label="Performance Analytics" />
-          <Tab label="Buckets" />
-          <Tab label="Grade Flow" />
-          <Tab label="Concept Map" />
-        </Tabs>
+          {isAdmin && (
+            <FormControl sx={{ minWidth: { xs: '100%', sm: 280 } }} size="small">
+              <InputLabel>Select Student</InputLabel>
+              <Select
+                value={adminSelectedStudent}
+                label="Select Student"
+                onChange={handleAdminStudentChange}
+                disabled={loadingStudents}
+                sx={{
+                  borderRadius: 1,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  backgroundColor: '#FFFFFF',
+                  '& .MuiSelect-select': {
+                    py: 0.85,
+                  },
+                }}
+              >
+                {adminSelectedStudent && !selectedStudentInMenu && (
+                  <MenuItem value={adminSelectedStudent}>
+                    {studentName || adminSelectedStudent}
+                  </MenuItem>
+                )}
+                {students.map((student) => (
+                  <MenuItem key={student.email} value={student.email}>
+                    {student.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+        </Stack>
       </Box>
 
-      <Box
-        sx={{
-          px: 0,
-          width: '100%',
-          height: gradeFlowMode ? 'auto' : 'auto',
-          flex: gradeFlowMode ? 1 : 'initial',
-          minHeight: 0,
-          overflow: gradeFlowMode ? 'hidden' : 'visible',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-      {/* Performance Analytics Tab */}
-      {tab === 0 && loading && (
+      {loading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
           <CircularProgress />
         </Box>
       )}
 
-      {tab === 0 && error && (
+      {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
-      {tab === 0 && studentData && (
-        <StudentProfileContent 
-          studentData={studentData}
-        />
-      )}
-
-      {/* Buckets Tab */}
-      {tab === 1 && (
-        <Box sx={{ p: 0 }}>
-          <Buckets embedded />
-        </Box>
-      )}
-
-      {/* Grade Flow Tab */}
-      {tab === 2 && (
-        (loading || gradeFlowLoading) ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-            <CircularProgress />
-          </Box>
-        ) : (error || gradeFlowError) ? (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error || gradeFlowError}
-          </Alert>
-        ) : studentData ? (
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <GradeDataFlow studentData={studentData} />
-          </Box>
-        ) : (
-          <Typography sx={{ color: 'text.secondary' }}>No grade data available yet.</Typography>
-        )
-      )}
-
-      {/* Concept Map Tab */}
-      {tab === 3 && (
-        <Box sx={{ p: 0 }}>
-          <ConceptMap embedded />
-        </Box>
-      )}
-      </Box>
+      {!loading && !error && studentData && renderExperiencePage({
+        page,
+        studentData,
+        fetchEmail,
+        currentCourseLabel,
+        isStaffReport,
+        gradeFlowLoading,
+        gradeFlowError,
+      })}
     </Box>
   );
 }

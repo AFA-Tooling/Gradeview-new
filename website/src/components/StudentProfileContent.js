@@ -373,7 +373,7 @@ const ProgressBattery = memo(function ProgressBattery({ value, segmentCount = 10
  * Shared Student Profile Content Component
  * Used by both the dialog version and the page version
  */
-function StudentProfileContent({ studentData }) {
+function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
   const hasStudentData = Boolean(studentData);
 
   const assignmentsList = Array.isArray(studentData?.assignmentsList) ? studentData.assignmentsList : [];
@@ -540,21 +540,7 @@ function StudentProfileContent({ studentData }) {
           label: seriesItem?.name || `${fallbackLabel} ${index + 1}`,
           data,
           borderColor: c.line,
-          backgroundColor: (context) => {
-            const scale = context.chart?.scales?.r;
-            if (!scale) return c.fill;
-            const gradient = context.chart.ctx.createRadialGradient(
-              scale.xCenter,
-              scale.yCenter,
-              0,
-              scale.xCenter,
-              scale.yCenter,
-              scale.drawingArea || 160,
-            );
-            gradient.addColorStop(0, c.inner);
-            gradient.addColorStop(1, c.outer);
-            return gradient;
-          },
+          backgroundColor: c.fill,
           borderWidth: index === trend.series.length - 1 ? 2.5 : 1.8,
           pointRadius: index === trend.series.length - 1 ? 4 : 3,
           pointHoverRadius: 6,
@@ -903,42 +889,44 @@ function StudentProfileContent({ studentData }) {
 
   return (
     <Box>
-      <Paper
-        elevation={0}
-        sx={{
-          ...cardSx,
-          p: 2.5,
-          mb: 3,
-        }}
-      >
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between">
-          <Box>
-            <Typography variant="overline" sx={{ color: chartColors.muted, fontWeight: 800, letterSpacing: 0 }}>
-              Final Policy Snapshot
-            </Typography>
-            <Typography variant="h5" sx={{ color: chartColors.ink, fontWeight: 750, lineHeight: 1.15 }}>
-              {roundUpPoints(studentData.totalScore)} / {roundUpPoints(overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints))}
-              {currentGrade ? ` · ${currentGrade.grade}` : ''}
-            </Typography>
-            <Typography variant="caption" sx={{ color: chartColors.muted, display: 'block', mt: 0.5 }}>
-              Final totals use CS10 policy: question/topic best, drops, clobber, scale, cap, then course rounding.
-            </Typography>
-          </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {['Quest', 'Midterm', 'Postterm'].map((category) => {
-              const item = categorySnapshot[category];
-              return (
-                <Chip
-                  key={category}
-                  size="small"
-                  label={`${category}: ${item ? `${roundUpPoints(item.score)}/${roundUpPoints(item.cap)}` : '-'}`}
-                  sx={{ fontWeight: 700, backgroundColor: '#EFF6FB', color: chartColors.blueDark }}
-                />
-              );
-            })}
+      {!hideTopSnapshot && (
+        <Paper
+          elevation={0}
+          sx={{
+            ...cardSx,
+            p: 2.5,
+            mb: 3,
+          }}
+        >
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between">
+            <Box>
+              <Typography variant="overline" sx={{ color: chartColors.muted, fontWeight: 800, letterSpacing: 0 }}>
+                Final Policy Snapshot
+              </Typography>
+              <Typography variant="h5" sx={{ color: chartColors.ink, fontWeight: 750, lineHeight: 1.15 }}>
+                {roundUpPoints(studentData.totalScore)} / {roundUpPoints(overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints))}
+                {currentGrade ? ` · ${currentGrade.grade}` : ''}
+              </Typography>
+              <Typography variant="caption" sx={{ color: chartColors.muted, display: 'block', mt: 0.5 }}>
+                Final totals use CS10 policy: question/topic best, drops, clobber, scale, cap, then course rounding.
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {['Quest', 'Midterm', 'Postterm'].map((category) => {
+                const item = categorySnapshot[category];
+                return (
+                  <Chip
+                    key={category}
+                    size="small"
+                    label={`${category}: ${item ? `${roundUpPoints(item.score)}/${roundUpPoints(item.cap)}` : '-'}`}
+                    sx={{ fontWeight: 700, backgroundColor: '#EFF6FB', color: chartColors.blueDark }}
+                  />
+                );
+              })}
+            </Stack>
           </Stack>
-        </Stack>
-      </Paper>
+        </Paper>
+      )}
 
       <StudentCategoryBlocks blocks={categoryBlocks} />
 
