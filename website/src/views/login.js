@@ -1,19 +1,14 @@
 import React from 'react';
 import { useEffect, useState } from 'react';
-import Visibility from '@mui/icons-material/Visibility';
-import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import SchoolOutlined from '@mui/icons-material/SchoolOutlined';
 import {
     Box,
-    OutlinedInput,
     Stack,
     Button,
-    InputAdornment,
-    IconButton,
-    FormControl,
-    InputLabel,
     Typography,
     Alert,
+    Divider,
+    Paper,
 } from '@mui/material';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
@@ -64,8 +59,11 @@ export default function Login() {
                     window.location.reload(false);
                 }
             })
-            .catch(() => {
-                setError('An error occurred.  Please try again later.');
+            .catch((err) => {
+                const errorMessage = err?.response?.data?.message
+                    || err?.response?.data?.detail
+                    || 'An error occurred. Please try again later.';
+                setError(errorMessage);
             });
     }
 
@@ -101,23 +99,6 @@ export default function Login() {
         }
     }
 
-    // Formatting for the input fields
-    const [showPassword, setShowPassword] = React.useState(false);
-    const handleClickShowPassword = () => setShowPassword((show) => !show);
-    const handleMouseDownPassword = (event) => {
-        event.preventDefault();
-    };
-
-    const [username, setUsername] = React.useState('');
-    const [password, setPassword] = React.useState('');
-
-    function handleLogin(e) {
-        e.preventDefault();
-        console.log(username + ' ' + password);
-        // TODO: Make a post request to the server to verify username and password
-        // TODO: store retreived JWT token to localStorage
-    }
-
     return (
         <Box
             sx={{
@@ -125,79 +106,51 @@ export default function Login() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                px: 2,
+                px: { xs: 2, sm: 3 },
             }}
         >
-            <form>
+            <Paper
+                className='glass-panel'
+                sx={{
+                    width: 'min(480px, 100%)',
+                    p: { xs: 3, sm: 4 },
+                    borderRadius: 2,
+                }}
+            >
                 <Stack
-                    spacing={2}
-                    className='glass-panel'
+                    spacing={2.5}
                     sx={{
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: 'min(420px, 88vw)',
-                        p: 4,
-                        borderRadius: 4,
+                        alignItems: 'stretch',
                     }}
                 >
-                    <Typography variant='h3' sx={{ fontWeight: 600, letterSpacing: '0.06em' }}>
-                        Login
-                    </Typography>
-                    <FormControl
-                        sx={{ width: '100%' }}
-                        variant='outlined'
-                    >
-                        <InputLabel htmlFor='username'>Username</InputLabel>
-                        <OutlinedInput
-                            id='username'
-                            autoComplete='username'
-                            label='Username'
-                            onChange={(e) => {
-                                setUsername(e.target.value);
-                            }}
-                        />
-                    </FormControl>
-                    <FormControl
-                        sx={{ width: '100%' }}
-                        variant='outlined'
-                    >
-                        <InputLabel htmlFor='password'>Password</InputLabel>
-                        <OutlinedInput
-                            id='password'
-                            type={showPassword ? 'text' : 'password'}
-                            autoComplete='current-password'
-                            endAdornment={
-                                <InputAdornment position='end'>
-                                    <IconButton
-                                        aria-label='toggle password visibility'
-                                        onClick={handleClickShowPassword}
-                                        onMouseDown={handleMouseDownPassword}
-                                        edge='end'
-                                    >
-                                        {showPassword ? (
-                                            <VisibilityOff />
-                                        ) : (
-                                            <Visibility />
-                                        )}
-                                    </IconButton>
-                                </InputAdornment>
-                            }
-                            label='Password'
-                            onChange={(e) => {
-                                setPassword(e.target.value);
-                            }}
-                        />
-                    </FormControl>
+                    <Box>
+                        <Typography variant='h4' sx={{ fontWeight: 700, mb: 0.75 }}>
+                            Sign in to GradeView
+                        </Typography>
+                        <Typography variant='body2' color='text.secondary'>
+                            Use your Berkeley Google account to view course grades and staff tools.
+                        </Typography>
+                    </Box>
+
                     {error && <Alert severity='error' sx={{ width: '100%' }}>{error}</Alert>}
-                    <Button
-                        variant='contained'
-                        size='large'
-                        type='button'
-                        onClick={handleLogin}
-                        sx={{ width: '100%' }}
+
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            py: 0.5,
+                            minHeight: 44,
+                        }}
                     >
-                        Login
-                    </Button>
+                        <div id='googleSignInButton'></div>
+                    </Box>
+
+                    <Divider>
+                        <Typography variant='caption' color='text.secondary'>
+                            or
+                        </Typography>
+                    </Divider>
+
                     <Button
                         variant='outlined'
                         size='large'
@@ -209,12 +162,8 @@ export default function Login() {
                     >
                         {demoLoading ? 'Opening demo...' : 'Explore Demo Course'}
                     </Button>
-                    <Typography variant='body2' sx={{ opacity: 0.76 }}>
-                        <i>or</i>
-                    </Typography>
-                    <div id='googleSignInButton'></div>
                 </Stack>
-            </form>
+            </Paper>
         </Box>
     );
 }

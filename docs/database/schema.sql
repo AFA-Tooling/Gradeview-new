@@ -116,6 +116,20 @@ CREATE TABLE IF NOT EXISTS course_configs (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS sync_runs (
+    id SERIAL PRIMARY KEY,
+    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    trigger VARCHAR(50) NOT NULL DEFAULT 'manual',
+    status VARCHAR(50) NOT NULL DEFAULT 'running',
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP WITH TIME ZONE,
+    duration_seconds INTEGER,
+    summary JSONB,
+    error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS assignment_categories (
     id SERIAL PRIMARY KEY,
     course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
@@ -195,6 +209,9 @@ CREATE INDEX IF NOT EXISTS idx_summary_sheets_student_id ON summary_sheets(stude
 CREATE INDEX IF NOT EXISTS idx_summary_sheets_assignment_id ON summary_sheets(assignment_id);
 
 CREATE INDEX IF NOT EXISTS idx_course_configs_course_id ON course_configs(course_id);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_course_started ON sync_runs(course_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_status_started ON sync_runs(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_trigger_started ON sync_runs(trigger, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assignment_categories_course_id ON assignment_categories(course_id);
 
 CREATE INDEX IF NOT EXISTS idx_config_audit_log_user_id ON config_audit_log(user_id);

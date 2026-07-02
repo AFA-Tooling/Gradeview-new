@@ -134,6 +134,35 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
+  gradesync-maintainer:
+    container_name: gradeview-gradesync-maintainer
+    image: ${CI_REGISTRY_IMAGE:-gradeview}/gradesync:${GRADESYNC_VERSION:-development}
+    build: ./gradesync
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=cloud-sql-proxy
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@cloud-sql-proxy:5432/${POSTGRES_DB}
+      - GRADESYNC_MAINTAINER_ENABLED=${GRADESYNC_MAINTAINER_ENABLED:-true}
+      - GRADESYNC_MAINTAINER_TIME=${GRADESYNC_MAINTAINER_TIME:-03:00}
+      - GRADESYNC_MAINTAINER_TIMEZONE=${GRADESYNC_MAINTAINER_TIMEZONE:-America/Los_Angeles}
+      - GRADESYNC_MAINTAINER_STAGGER_SECONDS=${GRADESYNC_MAINTAINER_STAGGER_SECONDS:-30}
+    networks:
+      - db
+    command: python -m api.sync.maintainer
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
 
 networks:
   frontend:

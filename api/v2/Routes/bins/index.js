@@ -1,43 +1,10 @@
 import { Router } from 'express';
 import { getPool } from '../../../lib/dbHelper.mjs';
+import { getCoursePolicy, getDefaultCoursePolicy, policyToBinsResponse } from '../../../lib/coursePolicy.mjs';
 
 const router = Router({ mergeParams: true });
 
-const DEFAULT_ASSIGNMENT_POINTS = {
-    'Quest': 25,
-    'Midterm': 50,
-    'Postterm': 75,
-    'Project 1: Wordle™-lite': 15,
-    'Project 2: Spelling-Bee': 25,
-    'Project 3: 2048': 35,
-    'Project 4: Explore': 20,
-    'Final Project': 60,
-    'Labs': 80,
-    'Attendance / Participation': 15,
-};
-
-const DEFAULT_COMPONENT_PERCENTAGES = [
-    { component: 'Attendance / Participation', percentage: 3.75 },
-    { component: 'Labs', percentage: 20 },
-    { component: 'Projects', percentage: 38.75 },
-    { component: 'Quest', percentage: 6.25 },
-    { component: 'Midterm', percentage: 12.5 },
-    { component: 'Postterm', percentage: 18.75 },
-];
-
-const DEFAULT_GRADE_BINS = [
-    { grade: 'A+', range: '390-400' },
-    { grade: 'A', range: '370-390' },
-    { grade: 'A-', range: '360-370' },
-    { grade: 'B+', range: '350-360' },
-    { grade: 'B', range: '330-350' },
-    { grade: 'B-', range: '320-330' },
-    { grade: 'C+', range: '310-320' },
-    { grade: 'C', range: '290-310' },
-    { grade: 'C-', range: '280-290' },
-    { grade: 'D', range: '240-280' },
-    { grade: 'F', range: '0-240' }
-];
+const DEFAULT_BINS_RESPONSE = policyToBinsResponse(getDefaultCoursePolicy(), null, 'default_policy');
 
 async function loadGradeSyncConfig() {
     const pool = getPool();
@@ -84,7 +51,7 @@ function resolveCourseById(courses, requestedCourseId) {
 
 function normalizeBins(rawBins) {
     if (!Array.isArray(rawBins) || rawBins.length === 0) {
-        return DEFAULT_GRADE_BINS;
+        return DEFAULT_BINS_RESPONSE.bins;
     }
 
     const formatted = rawBins
@@ -111,7 +78,7 @@ function normalizeBins(rawBins) {
         })
         .filter(Boolean);
 
-    return formatted.length > 0 ? formatted : DEFAULT_GRADE_BINS;
+    return formatted.length > 0 ? formatted : DEFAULT_BINS_RESPONSE.bins;
 }
 
 function normalizeAssignmentPoints(rawBreakdown) {
@@ -159,27 +126,23 @@ export async function getBinsResponse(requestedCourseId = null) {
     try {
         const courses = await loadGradeSyncConfig();
         const course = resolveCourseById(courses, requestedCourseId);
+        const effectiveCourseId = requestedCourseId || course?.sources?.gradescope?.course_id || course?.id || null;
+        const policy = await getCoursePolicy(effectiveCourseId, getPool());
+        const response = policyToBinsResponse(policy, effectiveCourseId, policy.source || (course ? 'course_policies' : 'default_policy'));
 
-        const bins = normalizeBins(null);
-        const assignmentPointsFromConfig = normalizeAssignmentPoints(null);
-        const assignmentPoints = Object.keys(assignmentPointsFromConfig).length > 0
-            ? assignmentPointsFromConfig
-            : DEFAULT_ASSIGNMENT_POINTS;
-        const totalCoursePoints = Object.values(assignmentPoints).reduce((sum, val) => sum + (Number(val) || 0), 0);
-        const configuredCapPoints = totalCoursePoints;
+        const bins = normalizeBins(response.bins);
+        const assignmentPoints = normalizeAssignmentPoints(response.assignment_points);
         const maxBinPoints = getMaxBinPoints(bins);
-        const overallCapPoints = maxBinPoints || configuredCapPoints || totalCoursePoints;
 
         return {
+            ...response,
             bins,
-            assignment_points: assignmentPoints,
-            total_course_points: totalCoursePoints,
-            total_points_cap: configuredCapPoints,
-            overall_cap_points: overallCapPoints,
-            component_percentages: DEFAULT_COMPONENT_PERCENTAGES,
-            rounding_policy: 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
-            course_id: course?.id || requestedCourseId || null,
-            source: course ? 'db_default_policy' : 'default_policy',
+            assignment_points: Object.keys(assignmentPoints).length > 0
+                ? assignmentPoints
+                : DEFAULT_BINS_RESPONSE.assignment_points,
+            total_course_points: response.total_points_cap || response.total_course_points,
+            overall_cap_points: response.total_points_cap || maxBinPoints || response.total_course_points,
+            course_id: effectiveCourseId,
         };
     } catch (err) {
         console.error('Error retrieving bins from GradeSync config:', {
@@ -187,13 +150,7 @@ export async function getBinsResponse(requestedCourseId = null) {
             courseId: requestedCourseId || null,
         });
         return {
-            bins: DEFAULT_GRADE_BINS,
-            assignment_points: DEFAULT_ASSIGNMENT_POINTS,
-            total_course_points: 400,
-            total_points_cap: 400,
-            overall_cap_points: 400,
-            component_percentages: DEFAULT_COMPONENT_PERCENTAGES,
-            rounding_policy: 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.',
+            ...DEFAULT_BINS_RESPONSE,
             course_id: requestedCourseId || null,
             source: 'default_policy_fallback',
         };

@@ -1,18 +1,6 @@
 import { Router } from 'express';
-import { getAssignmentDistribution, getCategorySummaryDistribution } from '../../../../lib/dbHelper.mjs';
+import { getAssignmentDistribution, getCategorySummaryDistribution, getConfiguredSummaryCap } from '../../../../lib/dbHelper.mjs';
 const router = Router({ mergeParams: true });
-
-const QUEST_SUMMARY_CAP = 25;
-const ATTENDANCE_SUMMARY_CAP = 15;
-
-function normalizeCategoryName(value = '') {
-    return String(value || '').trim().toLowerCase();
-}
-
-function isAttendanceCategory(value = '') {
-    const normalized = normalizeCategoryName(value);
-    return normalized.includes('attendance') || normalized.includes('attendence');
-}
 
 /**
  * GET /admin/distribution/:section/:name
@@ -47,12 +35,7 @@ router.get('/:section/:name', async (req, res) => {
         if (name.includes('Summary')) {
             console.log(`[PERF] Fetching category summary from DB: ${section}`);
             scoreData = await getCategorySummaryDistribution(section, courseId || null);
-            const normalizedSection = normalizeCategoryName(section);
-            if (normalizedSection === 'quest') {
-                maxPossibleScore = QUEST_SUMMARY_CAP;
-            } else if (isAttendanceCategory(section)) {
-                maxPossibleScore = ATTENDANCE_SUMMARY_CAP;
-            }
+            maxPossibleScore = await getConfiguredSummaryCap(section, courseId || null);
             dataSource = 'database-summary';
         } else {
             console.log(`[PERF] Fetching assignment distribution from DB: ${section}/${name}`);

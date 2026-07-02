@@ -96,6 +96,38 @@ class CourseConfig(Base):
     course = relationship("Course", back_populates="config")
 
 
+class CoursePolicy(Base):
+    __tablename__ = "course_policies"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), unique=True, nullable=False, index=True)
+    policy_version = Column(String, default="v1")
+    is_active = Column(Boolean, default=True)
+    total_points_cap = Column(Numeric, default=400)
+    rounding_policy = Column(Text)
+    grade_bins = Column(JSONB)
+    component_percentages = Column(JSONB)
+    components = Column(JSONB)
+    assignment_points = Column(JSONB)
+    rules = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SyncRun(Base):
+    __tablename__ = "sync_runs"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    trigger = Column(String(50), nullable=False, default="manual")
+    status = Column(String(50), nullable=False, default="running")
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    finished_at = Column(DateTime(timezone=True), index=True)
+    duration_seconds = Column(Integer)
+    summary = Column(JSONB)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AssignmentCategory(Base):
     __tablename__ = "assignment_categories"
     id = Column(Integer, primary_key=True)

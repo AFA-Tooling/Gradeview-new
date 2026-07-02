@@ -9,18 +9,34 @@ Orchestrates grade synchronization across all platforms:
 import logging
 import sys
 import os
+import json
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from api.config_manager import get_course_config, get_config_manager, EnvConfig
-from api.core.db import SessionLocal
-from api.core.models import Course
+from api.core.db import SessionLocal, engine
+from api.core.models import Course, SyncRun
+from sqlalchemy import String, cast, or_, text
 
 logger = logging.getLogger(__name__)
+
+SYNC_LOCK_NAMESPACE = int(os.getenv("GRADESYNC_LOCK_NAMESPACE", "734501"))
+
+
+class SyncAlreadyRunningError(RuntimeError):
+    """Raised when a course-level sync lock is already held."""
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _json_safe(payload: Any) -> Any:
+    return json.loads(json.dumps(payload, default=str))
 
 
 class GradeSyncResult:
@@ -56,6 +72,42 @@ class GradeSyncService:
             raise ValueError(f"Course configuration not found: {course_id}")
         
         self.results: List[GradeSyncResult] = []
+
+    def resolve_or_create_course_row(self, session) -> Course:
+        """Resolve the DB course row used for sync locking and run tracking."""
+        requested_id = str(self.course_id or "").strip()
+        external_course_id = str(self.config.gradescope_course_id or requested_id).strip()
+        if not external_course_id:
+            raise ValueError(f"Course {self.course_id} does not have a Gradescope course id")
+
+        course = (
+            session.query(Course)
+            .filter(
+                or_(
+                    Course.gradescope_course_id == external_course_id,
+                    cast(Course.id, String) == requested_id,
+                )
+            )
+            .first()
+        )
+
+        if course:
+            return course
+
+        course = Course(
+            name=self.config.name,
+            gradescope_course_id=external_course_id,
+            department=self.config.department,
+            course_number=self.config.course_number,
+            semester=self.config.semester,
+            year=str(self.config.year or ""),
+            instructor=self.config.instructor,
+            is_active=True,
+        )
+        session.add(course)
+        session.commit()
+        session.refresh(course)
+        return course
     
     def sync_all(self, progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         """
@@ -332,10 +384,10 @@ class GradeSyncService:
                 policy_result = compute_effective_exam_scores(session, course.id)
 
                 from api.core.attendance_policy import compute_attendance_scores
-                attendance_result = compute_attendance_scores(session, course.id)
+                attendance_result = compute_attendance_scores(session, course.id, policy=self.config.policy)
 
                 from api.core.lab_project_policy import compute_all_lab_project_scores
-                lab_project_result = compute_all_lab_project_scores(session, course.id)
+                lab_project_result = compute_all_lab_project_scores(session, course.id, policy=self.config.policy)
 
                 session.commit()
 
@@ -367,16 +419,102 @@ class GradeSyncService:
 
 def sync_course_grades(
     course_id: str,
-    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    triggered_by: str = "manual",
 ) -> Dict[str, Any]:
     """
     Convenience function to sync all grades for a course.
     
     Args:
         course_id: Course identifier (e.g., 'cs10_fa25')
+        triggered_by: Source of the sync request (manual, maintainer, etc.)
     
     Returns:
         Dict with sync results
     """
     service = GradeSyncService(course_id)
-    return service.sync_all(progress_callback=progress_callback)
+    session = SessionLocal()
+    lock_connection = None
+    lock_acquired = False
+    lock_course_id: Optional[int] = None
+    run_id: Optional[int] = None
+
+    try:
+        course = service.resolve_or_create_course_row(session)
+        lock_course_id = int(course.id)
+        lock_connection = engine.connect()
+        lock_acquired = bool(
+            lock_connection.execute(
+                text("SELECT pg_try_advisory_lock(:namespace, :course_id)"),
+                {"namespace": SYNC_LOCK_NAMESPACE, "course_id": lock_course_id},
+            ).scalar()
+        )
+
+        if not lock_acquired:
+            raise SyncAlreadyRunningError(f"Grade sync is already running for course {course_id}")
+
+        started_at = _utc_now()
+        run = SyncRun(
+            course_id=course.id,
+            trigger=(triggered_by or "manual")[:50],
+            status="running",
+            started_at=started_at,
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        run_id = run.id
+
+        result = service.sync_all(progress_callback=progress_callback)
+        overall_success = bool(result.get("overall_success"))
+        finished_at = _utc_now()
+
+        run_update = {
+            "status": "completed" if overall_success else "failed",
+            "finished_at": finished_at,
+            "duration_seconds": max(0, int((finished_at - started_at).total_seconds())),
+            "summary": _json_safe(result),
+            "error": None if overall_success else "One or more sync steps failed",
+        }
+        session.query(SyncRun).filter(SyncRun.id == run_id).update(run_update)
+
+        if overall_success:
+            session.query(Course).filter(Course.id == course.id).update({
+                "last_synced_at": finished_at,
+            })
+
+        session.commit()
+        return result
+
+    except Exception as exc:
+        session.rollback()
+        if run_id is not None:
+            finished_at = _utc_now()
+            try:
+                run = session.query(SyncRun).filter(SyncRun.id == run_id).first()
+                if run is not None:
+                    started_at = run.started_at or finished_at
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                    run.status = "failed"
+                    run.finished_at = finished_at
+                    run.duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
+                    run.error = str(exc)
+                    session.commit()
+            except Exception:
+                session.rollback()
+                logger.exception("Failed to record sync failure for course %s", course_id)
+        raise
+
+    finally:
+        if lock_acquired and lock_course_id is not None and lock_connection is not None:
+            try:
+                lock_connection.execute(
+                    text("SELECT pg_advisory_unlock(:namespace, :course_id)"),
+                    {"namespace": SYNC_LOCK_NAMESPACE, "course_id": lock_course_id},
+                )
+            except Exception:
+                logger.exception("Failed to release sync lock for course %s", course_id)
+        if lock_connection is not None:
+            lock_connection.close()
+        session.close()

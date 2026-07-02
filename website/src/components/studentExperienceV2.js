@@ -1352,6 +1352,9 @@ function TopicMasteryRadar({ trend, height = 360 }) {
           color: colors.muted,
         },
       },
+      datalabels: {
+        display: false,
+      },
       tooltip: {
         backgroundColor: '#111111',
         titleColor: '#FFFFFF',
@@ -1439,26 +1442,78 @@ function QuestionBestMatrix({ trend, compact = false }) {
   });
 
   return (
-    <TableContainer sx={{ borderRadius: 1.5, border: `1px solid ${colors.border}`, maxHeight: compact ? 360 : 'none' }}>
-      <Table size="small" stickyHeader>
-        <TableHead>
-          <TableRow>
-            <TableCell>Topic</TableCell>
-            {series.map((item, index) => <TableCell key={`${item.name}-${index}`} align="center">{item.name || `Attempt ${index + 1}`}</TableCell>)}
-            <TableCell align="center">Best Used</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.component} hover>
-              <TableCell sx={{ fontWeight: 700 }}>{row.component}</TableCell>
-              {row.values.map((value, index) => <TableCell key={`${row.component}-${index}`} align="center">{formatPercentage(value, 0)}</TableCell>)}
-              <TableCell align="center"><Chip size="small" label={formatPercentage(row.best, 0)} sx={{ fontWeight: 800 }} /></TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </TableContainer>
+    <Stack spacing={1.25} sx={{ maxHeight: compact ? 360 : 'none', overflowY: compact ? 'auto' : 'visible', pr: compact ? 0.5 : 0 }}>
+      {rows.map((row) => (
+        <Box
+          key={row.component}
+          sx={{
+            border: `1px solid ${colors.border}`,
+            borderRadius: 1.5,
+            backgroundColor: colors.surface,
+            p: 1.25,
+          }}
+        >
+          <Stack spacing={1}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+              <Typography sx={{ color: colors.ink, fontWeight: 750, fontSize: 14, minWidth: 0 }}>
+                {row.component}
+              </Typography>
+              <Typography sx={{ color: colors.ink, fontWeight: 850, fontSize: 14, flexShrink: 0 }}>
+                {formatPercentage(row.best, 0)}
+              </Typography>
+            </Stack>
+
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: `repeat(${Math.min(series.length, 3)}, minmax(0, 1fr))` },
+                gap: 0.75,
+              }}
+            >
+              {row.values.map((value, index) => (
+                <Box
+                  key={`${row.component}-${index}`}
+                  sx={{
+                    minWidth: 0,
+                    borderRadius: 1,
+                    backgroundColor: colors.band,
+                    px: 1,
+                    py: 0.75,
+                  }}
+                >
+                  <Typography sx={{ color: colors.muted, fontSize: 11.5, fontWeight: 700, lineHeight: 1.25 }}>
+                    {series[index]?.name || `Attempt ${index + 1}`}
+                  </Typography>
+                  <Typography sx={{ color: colors.ink, fontSize: 15, fontWeight: 750, lineHeight: 1.3 }}>
+                    {formatPercentage(value, 0)}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+
+            <Box>
+              <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ mb: 0.5 }}>
+                <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>Best Used</Typography>
+                <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>{formatPercentage(row.best, 0)}</Typography>
+              </Stack>
+              <LinearProgress
+                variant="determinate"
+                value={Math.max(0, Math.min(100, row.best))}
+                sx={{
+                  height: 10,
+                  borderRadius: 999,
+                  backgroundColor: colors.border,
+                  '& .MuiLinearProgress-bar': {
+                    borderRadius: 999,
+                    backgroundColor: colors.ink,
+                  },
+                }}
+              />
+            </Box>
+          </Stack>
+        </Box>
+      ))}
+    </Stack>
   );
 }
 

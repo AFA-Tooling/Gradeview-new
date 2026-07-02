@@ -34,6 +34,8 @@ class CourseConfig:
         self.iclicker = self._resolve_source("iclicker")
         self.database = self.gradesync_section.get("database", course_data.get("database", {}))
         self.assignment_categories = self.gradesync_section.get("assignment_categories", course_data.get("assignment_categories", []))
+        self.buckets = self.gradeview_section.get("buckets", course_data.get("buckets", {}))
+        self.policy = self.gradeview_section.get("policy", course_data.get("policy", self.buckets))
 
     def _resolve_general(self, course_data: Dict[str, Any]) -> Dict[str, Any]:
         general = course_data.get("general", {})
@@ -118,7 +120,7 @@ class ConfigManager:
         except (TypeError, ValueError):
             return default
 
-    def _build_course_config_from_db(self, course: Any, db_config: Any, categories: List[Any]) -> Optional[CourseConfig]:
+    def _build_course_config_from_db(self, course: Any, db_config: Any, categories: List[Any], policy: Any = None) -> Optional[CourseConfig]:
         if not course:
             return None
 
@@ -145,6 +147,18 @@ class ConfigManager:
             or getattr(course, "gradescope_course_id", None)
             or external_course_id
         )
+
+        policy_payload = {}
+        if policy is not None:
+            policy_payload = {
+                "total_points_cap": float(getattr(policy, "total_points_cap", 0) or 0),
+                "rounding_policy": getattr(policy, "rounding_policy", None) or "",
+                "grade_bins": getattr(policy, "grade_bins", None) or [],
+                "component_percentages": getattr(policy, "component_percentages", None) or [],
+                "components": getattr(policy, "components", None) or [],
+                "assignment_points": getattr(policy, "assignment_points", None) or {},
+                "rules": getattr(policy, "rules", None) or {},
+            }
 
         course_data = {
             "id": external_course_id,
@@ -182,6 +196,10 @@ class ConfigManager:
                 },
                 "assignment_categories": assignment_categories,
             },
+            "gradeview": {
+                "buckets": policy_payload,
+                "policy": policy_payload,
+            },
         }
 
         return CourseConfig(course_data)
@@ -189,7 +207,7 @@ class ConfigManager:
     def _get_course_from_db(self, course_id: str) -> Optional[CourseConfig]:
         from sqlalchemy import String, cast, or_
         from api.core.db import SessionLocal
-        from api.core.models import Course, CourseConfig as CourseConfigModel, AssignmentCategory
+        from api.core.models import Course, CourseConfig as CourseConfigModel, AssignmentCategory, CoursePolicy
 
         session = SessionLocal()
         try:
@@ -198,8 +216,9 @@ class ConfigManager:
                 return None
 
             row = (
-                session.query(Course, CourseConfigModel)
+                session.query(Course, CourseConfigModel, CoursePolicy)
                 .outerjoin(CourseConfigModel, CourseConfigModel.course_id == Course.id)
+                .outerjoin(CoursePolicy, (CoursePolicy.course_id == Course.id) & (CoursePolicy.is_active == True))
                 .filter(
                     or_(
                         Course.gradescope_course_id == normalized,
@@ -211,27 +230,28 @@ class ConfigManager:
             if not row:
                 return None
 
-            course, db_config = row
+            course, db_config, policy = row
             categories = session.query(AssignmentCategory).filter(AssignmentCategory.course_id == course.id).all()
-            return self._build_course_config_from_db(course, db_config, categories)
+            return self._build_course_config_from_db(course, db_config, categories, policy)
         finally:
             session.close()
 
     def _list_course_configs_from_db(self) -> List[CourseConfig]:
         from api.core.db import SessionLocal
-        from api.core.models import Course, CourseConfig as CourseConfigModel, AssignmentCategory
+        from api.core.models import Course, CourseConfig as CourseConfigModel, AssignmentCategory, CoursePolicy
 
         session = SessionLocal()
         try:
             rows = (
-                session.query(Course, CourseConfigModel)
+                session.query(Course, CourseConfigModel, CoursePolicy)
                 .outerjoin(CourseConfigModel, CourseConfigModel.course_id == Course.id)
+                .outerjoin(CoursePolicy, (CoursePolicy.course_id == Course.id) & (CoursePolicy.is_active == True))
                 .all()
             )
             if not rows:
                 return []
 
-            course_ids = [course.id for course, _ in rows]
+            course_ids = [course.id for course, _, _ in rows]
             category_rows = (
                 session.query(AssignmentCategory)
                 .filter(AssignmentCategory.course_id.in_(course_ids))
@@ -242,11 +262,12 @@ class ConfigManager:
                 categories_by_course.setdefault(category.course_id, []).append(category)
 
             built: List[CourseConfig] = []
-            for course, db_config in rows:
+            for course, db_config, policy in rows:
                 cfg = self._build_course_config_from_db(
                     course,
                     db_config,
                     categories_by_course.get(course.id, []),
+                    policy,
                 )
                 if cfg is not None:
                     built.append(cfg)

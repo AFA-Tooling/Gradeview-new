@@ -273,7 +273,36 @@ def _process_iclicker_submission(
     return attended, total, details
 
 
-def compute_attendance_scores(session: Session, course_id: int) -> Dict[str, Any]:
+def _attendance_policy_rules(policy: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(policy, dict):
+        return {}
+    rules = policy.get("rules", {})
+    attendance = rules.get("attendance", {}) if isinstance(rules, dict) else {}
+    return attendance if isinstance(attendance, dict) else {}
+
+
+def _attendance_cap(policy: Optional[Dict[str, Any]]) -> float:
+    rules = _attendance_policy_rules(policy)
+    try:
+        value = float(rules.get("cap", 15))
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    for component in (policy or {}).get("components", []) if isinstance(policy, dict) else []:
+        if not isinstance(component, dict):
+            continue
+        if str(component.get("type", "")).lower() == "attendance":
+            try:
+                value = float(component.get("cap", 15))
+                if value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+    return 15
+
+
+def compute_attendance_scores(session: Session, course_id: int, policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Compute & persist effective attendance scores for a course.
 
     Idempotent: re-running overwrites the matching rows in
@@ -397,7 +426,7 @@ def compute_attendance_scores(session: Session, course_id: int) -> Dict[str, Any
         "lecture": LECTURE_DROPS,
         "lab": LAB_DROPS,
         "discussion": DISCUSSION_DROPS,
-    })
+    }, policy=policy)
 
     # ---- Hide raw makeup assignments from the dashboard ------------------
     # iClicker raw category was already set to '_attendance_raw' at ingest.
@@ -451,6 +480,7 @@ def _write_rollup_assignment(
     session: Session,
     course_id: int,
     drops_per_kind: Dict[str, int],
+    policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Materialise a single 'Attendance / Participation' Assignment + per-student
     Submission carrying the policy-correct 0-15 score.
@@ -463,9 +493,9 @@ def _write_rollup_assignment(
 
     title = "Attendance / Participation"
     rollup_assignment_id = "attendance_rollup:participation"
-    max_points_total = 15
-    per_kind_pts = 5
     kinds = ("lecture", "lab", "discussion")
+    max_points_total = _attendance_cap(policy)
+    per_kind_pts = max_points_total / max(1, len(kinds))
 
     rollup = session.query(Assignment).filter(
         Assignment.assignment_id == rollup_assignment_id,

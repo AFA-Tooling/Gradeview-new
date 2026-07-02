@@ -96,6 +96,42 @@ function toStoredConfigValue(value) {
     return { value: String(value ?? ''), valueType: 'string' };
 }
 
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeGradingBreakdown(rawBreakdown) {
+    if (!rawBreakdown) {
+        return {};
+    }
+    if (isPlainObject(rawBreakdown)) {
+        return Object.fromEntries(
+            Object.entries(rawBreakdown)
+                .map(([name, points]) => [String(name || '').trim(), Number(points) || 0])
+                .filter(([name]) => Boolean(name)),
+        );
+    }
+    if (!Array.isArray(rawBreakdown)) {
+        return {};
+    }
+    return Object.fromEntries(rawBreakdown
+        .map((item) => [
+            String(item?.assignment || item?.name || item?.component || '').trim(),
+            Number(item?.points ?? item?.cap ?? item?.max_points) || 0,
+        ])
+        .filter(([name]) => Boolean(name)));
+}
+
+function assignmentPointsToBreakdown(assignmentPoints = {}) {
+    if (!isPlainObject(assignmentPoints)) {
+        return [];
+    }
+    return Object.entries(assignmentPoints).map(([assignment, points]) => ({
+        assignment,
+        points: Number(points) || 0,
+    }));
+}
+
 function resolveCourseSections(courseData) {
     const base = courseData && typeof courseData === 'object' ? courseData : {};
     const general = base.general && typeof base.general === 'object' ? base.general : base;
@@ -124,6 +160,15 @@ function resolveCourseSections(courseData) {
         ? gradesync.assignment_categories
         : (Array.isArray(base.assignment_categories) ? base.assignment_categories : []);
 
+    const gradeview = base.gradeview && typeof base.gradeview === 'object' ? base.gradeview : {};
+    const buckets = gradesync.buckets && typeof gradesync.buckets === 'object'
+        ? gradesync.buckets
+        : (
+            gradeview.buckets && typeof gradeview.buckets === 'object'
+                ? gradeview.buckets
+                : (base.buckets && typeof base.buckets === 'object' ? base.buckets : {})
+        );
+
     return {
         base,
         general,
@@ -131,6 +176,7 @@ function resolveCourseSections(courseData) {
         prairielearn,
         iclicker,
         database,
+        buckets,
         assignmentCategories,
     };
 }
@@ -157,6 +203,13 @@ async function loadGradeSyncConfigFromDatabase() {
             cc.iclicker_course_names,
             cc.database_enabled,
             cc.use_as_primary,
+            cp.total_points_cap,
+            cp.rounding_policy,
+            cp.grade_bins,
+            cp.component_percentages,
+            cp.components,
+            cp.assignment_points,
+            cp.rules,
             json_agg(
                 json_build_object(
                     'name', ac.name,
@@ -167,9 +220,10 @@ async function loadGradeSyncConfigFromDatabase() {
             ) FILTER (WHERE ac.id IS NOT NULL) AS assignment_categories
         FROM courses c
         LEFT JOIN course_configs cc ON cc.course_id = c.id
+        LEFT JOIN course_policies cp ON cp.course_id = c.id AND cp.is_active = true
         LEFT JOIN assignment_categories ac ON ac.course_id = c.id
         WHERE c.is_active = true
-        GROUP BY c.id, cc.id
+        GROUP BY c.id, cc.id, cp.id
         ORDER BY c.year DESC NULLS LAST, c.semester ASC NULLS LAST, c.department ASC NULLS LAST, c.course_number ASC NULLS LAST, c.name ASC NULLS LAST
         `,
     );
@@ -210,6 +264,15 @@ async function loadGradeSyncConfigFromDatabase() {
         database: {
             enabled: row.database_enabled ?? true,
             use_as_primary: row.use_as_primary ?? true,
+        },
+        buckets: {
+            total_points_cap: row.total_points_cap ? Number(row.total_points_cap) : '',
+            rounding_policy: row.rounding_policy || '',
+            component_percentages: Array.isArray(row.component_percentages) ? row.component_percentages : [],
+            grade_bins: Array.isArray(row.grade_bins) ? row.grade_bins : [],
+            grading_breakdown: assignmentPointsToBreakdown(row.assignment_points || {}),
+            components: Array.isArray(row.components) ? row.components : [],
+            rules: isPlainObject(row.rules) ? row.rules : {},
         },
         assignment_categories: Array.isArray(row.assignment_categories)
             ? row.assignment_categories.map((item) => ({
@@ -258,6 +321,7 @@ async function saveGradeSyncConfigToDatabase(syncConfig) {
                 prairielearn,
                 iclicker,
                 database,
+                buckets,
                 assignmentCategories,
             } = resolveCourseSections(courseData);
 
@@ -370,6 +434,80 @@ async function saveGradeSyncConfigToDatabase(syncConfig) {
                         name,
                         Array.isArray(category.patterns) ? category.patterns : [],
                         index,
+                    ],
+                );
+            }
+
+            const existingPolicyResult = await client.query(
+                `
+                SELECT components, rules, assignment_points
+                FROM course_policies
+                WHERE course_id = $1
+                  AND is_active = true
+                LIMIT 1
+                `,
+                [internalCourseId],
+            );
+            const existingPolicy = existingPolicyResult.rows[0] || {};
+            const assignmentPoints = normalizeGradingBreakdown(
+                buckets?.assignment_points || buckets?.grading_breakdown || existingPolicy.assignment_points || {},
+            );
+            const components = Array.isArray(buckets?.components)
+                ? buckets.components
+                : (Array.isArray(existingPolicy.components) ? existingPolicy.components : []);
+            const rules = isPlainObject(buckets?.rules)
+                ? buckets.rules
+                : (isPlainObject(existingPolicy.rules) ? existingPolicy.rules : {});
+            const gradeBins = Array.isArray(buckets?.grade_bins) ? buckets.grade_bins : [];
+            const componentPercentages = Array.isArray(buckets?.component_percentages) ? buckets.component_percentages : [];
+            const totalPointsCap = Number(buckets?.total_points_cap)
+                || Object.values(assignmentPoints).reduce((sum, value) => sum + (Number(value) || 0), 0)
+                || null;
+
+            if (
+                totalPointsCap
+                || gradeBins.length > 0
+                || componentPercentages.length > 0
+                || Object.keys(assignmentPoints).length > 0
+                || components.length > 0
+                || Object.keys(rules).length > 0
+            ) {
+                await client.query(
+                    `
+                    INSERT INTO course_policies (
+                        course_id,
+                        policy_version,
+                        is_active,
+                        total_points_cap,
+                        rounding_policy,
+                        grade_bins,
+                        component_percentages,
+                        components,
+                        assignment_points,
+                        rules
+                    )
+                    VALUES ($1, 'v1', true, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb)
+                    ON CONFLICT (course_id)
+                    DO UPDATE SET
+                        is_active = true,
+                        total_points_cap = COALESCE(EXCLUDED.total_points_cap, course_policies.total_points_cap),
+                        rounding_policy = EXCLUDED.rounding_policy,
+                        grade_bins = EXCLUDED.grade_bins,
+                        component_percentages = EXCLUDED.component_percentages,
+                        components = EXCLUDED.components,
+                        assignment_points = EXCLUDED.assignment_points,
+                        rules = EXCLUDED.rules,
+                        updated_at = CURRENT_TIMESTAMP
+                    `,
+                    [
+                        internalCourseId,
+                        totalPointsCap,
+                        buckets?.rounding_policy || null,
+                        JSON.stringify(gradeBins),
+                        JSON.stringify(componentPercentages),
+                        JSON.stringify(components),
+                        JSON.stringify(assignmentPoints),
+                        JSON.stringify(rules),
                     ],
                 );
             }

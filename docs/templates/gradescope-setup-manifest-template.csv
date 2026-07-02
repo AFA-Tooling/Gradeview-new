@@ -1,0 +1,23 @@
+record_type,key,name,email,role,student_id,section,course_number,course_title,term,year,gradescope_course_id,assignment_type,category,max_points,release_at,due_at,late_due_at,component_key,component_cap,component_weight,grade,range_min,range_max,patterns,notes
+course,course,CS 61B Spring 2026,,,,,CS 61B,Data Structures,Spring,2026,123456,,,,,,,,,,,,,,Canonical course setup row. gradescope_course_id is required for MVP.
+staff,instructor,Joshua Hug,jhug@berkeley.edu,instructor,,,,,,,,,,,,,,,,,,,,,Staff rows become setup instructions; roster upload can include staff if desired.
+staff,ta-example,Course TA,ta@example.edu,ta,,,,,,,,,,,,,,,,,,,,,Replace or delete sample rows.
+roster,student-1,Ada Lovelace,ada@berkeley.edu,student,303000001,101,,,,,,,,,,,,,,,,,,,Used to generate Gradescope roster CSV.
+roster,student-2,Grace Hopper,grace@berkeley.edu,student,303000002,102,,,,,,,,,,,,,,,,,,,Keep email stable; Gradescope uses email to match roster updates.
+category,labs,Labs,,,,,,,,,,,,,,,,,,,,,,\blab\s*\d+;\blabs?\b,Patterns classify visible Gradescope assignments in GradeView.
+category,projects,Projects,,,,,,,,,,,,,,,,,,,,,,\bproject\s*\d+;\bproj\s*\d+,Separate patterns with semicolons.
+category,midterm,Midterm,,,,,,,,,,,,,,,,,,,,,,\bmidterm\b,
+category,final,Final,,,,,,,,,,,,,,,,,,,,,,\bfinal\b,
+component,labs,Labs,,,,,,,,,,,,,,,,labs,80,20,,,,,Component rows define GradeView policy.
+component,projects,Projects,,,,,,,,,,,,,,,,projects,120,30,,,,,Use either caps or weights depending on course policy.
+component,midterm,Midterm,,,,,,,,,,,,,,,,midterm,80,20,,,,,
+component,final,Final,,,,,,,,,,,,,,,,final,120,30,,,,,
+bin,a,A,,,,,,,,,,,,,,,,,,,A,90,100,,Range is inclusive/exclusive according to course notes.
+bin,b,B,,,,,,,,,,,,,,,,,,,B,80,90,,
+bin,c,C,,,,,,,,,,,,,,,,,,,C,70,80,,
+bin,d,D,,,,,,,,,,,,,,,,,,,D,60,70,,
+bin,f,F,,,,,,,,,,,,,,,,,,,F,0,60,,
+assignment,lab01,Lab 01,,,,,,,,,,programming,Labs,10,2026-01-20T09:00:00-08:00,2026-01-27T23:59:00-08:00,2026-01-29T23:59:00-08:00,,,,,,,,Expected Gradescope assignment. MVP validates existence/name/category after teacher creates it.
+assignment,project1,Project 1,,,,,,,,,,programming,Projects,40,2026-02-01T09:00:00-08:00,2026-02-15T23:59:00-08:00,2026-02-17T23:59:00-08:00,,,,,,,,
+assignment,midterm,Midterm,,,,,,,,,,exam,Midterm,80,2026-03-10T18:00:00-08:00,2026-03-10T20:00:00-08:00,,,,,,,,,
+assignment,final,Final,,,,,,,,,,exam,Final,120,2026-05-10T15:00:00-07:00,2026-05-10T18:00:00-07:00,,,,,,,,,

@@ -105,6 +105,8 @@ export default function Settings() {
                     component_percentages: gradesyncSection.buckets?.component_percentages || course.buckets?.component_percentages || [],
                     grade_bins: gradesyncSection.buckets?.grade_bins || course.buckets?.grade_bins || [],
                     grading_breakdown: gradesyncSection.buckets?.grading_breakdown || course.buckets?.grading_breakdown || [],
+                    components: gradesyncSection.buckets?.components || course.buckets?.components || [],
+                    rules: gradesyncSection.buckets?.rules || course.buckets?.rules || {},
                 },
                 assignment_categories: gradesyncSection.assignment_categories || course.assignment_categories || [],
             };
@@ -327,6 +329,8 @@ export default function Settings() {
                 component_percentages: [],
                 grade_bins: [],
                 grading_breakdown: [],
+                components: [],
+                rules: {},
             },
             assignment_categories: []
         };

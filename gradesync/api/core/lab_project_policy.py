@@ -35,7 +35,7 @@ from .models import Assignment, Student, Submission
 
 logger = logging.getLogger(__name__)
 
-# ------------- Hardcoded per-project caps ---------------------------------
+# ------------- Default per-project caps -----------------------------------
 PROJECT_CAPS = [
     ("1", "Project 1: Wordle™-lite",   15, [re.compile(r"\bproject\s*1\b", re.I)]),
     ("2", "Project 2: Spelling Bee",   25, [re.compile(r"\bproject\s*2\b", re.I)]),
@@ -98,6 +98,77 @@ def _frac(score: Any, max_pts: Any) -> Optional[float]:
     return s / m
 
 
+def _policy_dict(policy: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    return policy if isinstance(policy, dict) else {}
+
+
+def _policy_rules(policy: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    rules = _policy_dict(policy).get("rules", {})
+    return rules if isinstance(rules, dict) else {}
+
+
+def _lab_total_pts(policy: Optional[Dict[str, Any]]) -> float:
+    rules = _policy_rules(policy).get("labs", {})
+    if isinstance(rules, dict):
+        try:
+            value = float(rules.get("cap", LAB_TOTAL_PTS))
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+
+    for component in _policy_dict(policy).get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        if str(component.get("type", "")).lower() == "labs" or str(component.get("key", "")).lower() == "labs":
+            try:
+                value = float(component.get("cap", LAB_TOTAL_PTS))
+                if value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+
+    return LAB_TOTAL_PTS
+
+
+def _lab_drop_lowest(policy: Optional[Dict[str, Any]]) -> int:
+    rules = _policy_rules(policy).get("labs", {})
+    if isinstance(rules, dict):
+        try:
+            return max(0, int(rules.get("drop_lowest", LAB_DROP_LOWEST)))
+        except (TypeError, ValueError):
+            return LAB_DROP_LOWEST
+    return LAB_DROP_LOWEST
+
+
+def _project_caps(policy: Optional[Dict[str, Any]]) -> List[Tuple[str, str, float, List[re.Pattern]]]:
+    rules = _policy_rules(policy).get("projects", {})
+    items = rules.get("items", []) if isinstance(rules, dict) else []
+    if not isinstance(items, list) or not items:
+        return PROJECT_CAPS
+
+    parsed: List[Tuple[str, str, float, List[re.Pattern]]] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or index)
+        label = str(item.get("label") or item.get("title") or f"Project {key}")
+        try:
+            cap = float(item.get("cap", 0))
+        except (TypeError, ValueError):
+            cap = 0
+        patterns = []
+        for pattern in item.get("patterns", []) or []:
+            try:
+                patterns.append(re.compile(str(pattern), re.I))
+            except re.error:
+                patterns.append(re.compile(re.escape(str(pattern)), re.I))
+        if cap > 0 and patterns:
+            parsed.append((key, label, cap, patterns))
+
+    return parsed or PROJECT_CAPS
+
+
 def _lab_base_title(title: str) -> str:
     """Strip '(Code)' / '(Conceptual)' suffix to get the canonical lab name."""
     return LAB_BASE_TITLE_RE.sub("", title or "").strip()
@@ -117,8 +188,8 @@ def _is_optional_lab(title: str) -> bool:
     return bool(OPTIONAL_LAB_PATTERN.search(title or ""))
 
 
-def _detect_project_key(title: str) -> Optional[str]:
-    for key, _, _, patterns in PROJECT_CAPS:
+def _detect_project_key(title: str, project_caps: Optional[List[Tuple[str, str, float, List[re.Pattern]]]] = None) -> Optional[str]:
+    for key, _, _, patterns in (project_caps or PROJECT_CAPS):
         for p in patterns:
             if p.search(title or ""):
                 return key
@@ -127,8 +198,10 @@ def _detect_project_key(title: str) -> Optional[str]:
 
 # ----------- Public API ---------------------------------------------------
 
-def compute_lab_score(session: Session, course_id: int) -> Dict[str, Any]:
+def compute_lab_score(session: Session, course_id: int, policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Compute the 80-pt Labs rollup per student, write virtual Assignment+Submissions."""
+    lab_total_pts = _lab_total_pts(policy)
+    lab_drop_lowest = _lab_drop_lowest(policy)
     # Pull every assignment that could be a lab. We look at:
     #   - current 'Labs' category
     #   - already-hidden '_labs_raw' (re-runs)
@@ -196,12 +269,12 @@ def compute_lab_score(session: Session, course_id: int) -> Dict[str, Any]:
     students = session.query(Student).filter(Student.course_id == course_id).all()
 
     total_groups = len(group_keys)
-    drops = LAB_DROP_LOWEST
+    drops = lab_drop_lowest
     effective_total = max(1, total_groups - drops)
 
     rollup_assignment = _ensure_rollup_assignment(
         session, course_id, "labs_rollup:total",
-        title="Labs", category="Labs", max_points=LAB_TOTAL_PTS,
+        title="Labs", category="Labs", max_points=lab_total_pts,
     )
 
     students_written = 0
@@ -222,12 +295,12 @@ def compute_lab_score(session: Session, course_id: int) -> Dict[str, Any]:
         # Drop lowest 2 (i.e. drop 2 fails first; if 0 fails, drop nothing
         # changes since all passes contribute equally).
         passed_after_drop = min(passed_count, effective_total)
-        score = passed_after_drop / effective_total * LAB_TOTAL_PTS
+        score = passed_after_drop / effective_total * lab_total_pts
 
         _upsert_submission(
             session, rollup_assignment.id, stu.id,
             total_score=round(score, 2),
-            max_points=LAB_TOTAL_PTS,
+            max_points=lab_total_pts,
             scores_by_question={
                 "passed_count": passed_count,
                 "total_groups": total_groups,
@@ -246,8 +319,9 @@ def compute_lab_score(session: Session, course_id: int) -> Dict[str, Any]:
     }
 
 
-def compute_project_scores(session: Session, course_id: int) -> Dict[str, Any]:
+def compute_project_scores(session: Session, course_id: int, policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Compute one rollup per project (5 total), write virtual Assignments+Submissions."""
+    project_caps = _project_caps(policy)
     # Gather candidates from current 'Projects' or already-hidden '_projects_raw'
     candidates = session.query(Assignment).filter(
         Assignment.course_id == course_id,
@@ -258,7 +332,7 @@ def compute_project_scores(session: Session, course_id: int) -> Dict[str, Any]:
 
     by_project: Dict[str, List[Assignment]] = defaultdict(list)
     for a in candidates:
-        key = _detect_project_key(a.title)
+        key = _detect_project_key(a.title, project_caps)
         if key is None:
             logger.debug("Skipping unrecognised project assignment: %r", a.title)
             continue
@@ -277,7 +351,7 @@ def compute_project_scores(session: Session, course_id: int) -> Dict[str, Any]:
     total_written = 0
     project_summary = []
 
-    for key, _, cap, _ in PROJECT_CAPS:
+    for key, _, cap, _ in project_caps:
         assignments_in_proj = by_project.get(key, [])
         if not assignments_in_proj:
             logger.info("Course %s: no assignments for project %s", course_id, key)
@@ -299,7 +373,7 @@ def compute_project_scores(session: Session, course_id: int) -> Dict[str, Any]:
             continue
 
         # Cap meta: write canonical title (e.g. "Project 1: Wordle™-lite")
-        canon_title = next(t for k, t, _, _ in PROJECT_CAPS if k == key)
+        canon_title = next(t for k, t, _, _ in project_caps if k == key)
         rollup = _ensure_rollup_assignment(
             session, course_id, f"project_rollup:{key}",
             title=canon_title, category="Projects", max_points=cap,
@@ -487,10 +561,10 @@ def _upsert_submission(
 
 # ----------- Top-level driver --------------------------------------------
 
-def compute_all_lab_project_scores(session: Session, course_id: int) -> Dict[str, Any]:
+def compute_all_lab_project_scores(session: Session, course_id: int, policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run all lab+project rollups and hide raws. Idempotent."""
-    lab_result = compute_lab_score(session, course_id)
-    proj_result = compute_project_scores(session, course_id)
+    lab_result = compute_lab_score(session, course_id, policy=policy)
+    proj_result = compute_project_scores(session, course_id, policy=policy)
     session.flush()
     hide_result = hide_lab_project_raw(session, course_id)
     session.flush()

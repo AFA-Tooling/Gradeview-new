@@ -35,7 +35,7 @@ from backoff_utils import backoff
 from api.services.gradescope import GradescopeClient
 from api.utils import *
 from api.config_manager import get_config_manager, list_available_courses
-from api.sync.service import sync_course_grades
+from api.sync.service import SyncAlreadyRunningError, sync_course_grades
 from api.schemas import (
     CourseInfo, 
     CoursesResponse, 
@@ -262,6 +262,8 @@ async def sync_all_grades(course_id: str, background_tasks: BackgroundTasks):
         
     except HTTPException:
         raise
+    except SyncAlreadyRunningError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.exception(f"Failed to sync grades for {course_id}")
         raise HTTPException(
