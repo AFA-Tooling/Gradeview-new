@@ -62,6 +62,7 @@ function normalizeBins(rawBins) {
 
             if (item.grade && item.range) {
                 return {
+                    ...item,
                     grade: String(item.grade),
                     range: String(item.range)
                 };
@@ -69,6 +70,7 @@ function normalizeBins(rawBins) {
 
             if (item.letter && item.range) {
                 return {
+                    ...item,
                     grade: String(item.letter),
                     range: String(item.range)
                 };
@@ -145,6 +147,9 @@ export async function getBinsResponse(requestedCourseId = null) {
             course_id: effectiveCourseId,
         };
     } catch (err) {
+        if (err?.code === 'INVALID_GRADE_POLICY') {
+            throw err;
+        }
         console.error('Error retrieving bins from GradeSync config:', {
             message: err?.message,
             courseId: requestedCourseId || null,
@@ -159,8 +164,17 @@ export async function getBinsResponse(requestedCourseId = null) {
 
 router.get('/', async (req, res) => {
     const { course_id: requestedCourseId } = req.query;
-    const response = await getBinsResponse(requestedCourseId || null);
-    return res.status(200).json(response);
+    try {
+        const response = await getBinsResponse(requestedCourseId || null);
+        return res.status(200).json(response);
+    } catch (err) {
+        const status = Number(err?.status) || 500;
+        return res.status(status).json({
+            error: err?.code || 'FAILED_TO_LOAD_GRADE_POLICY',
+            message: err?.message || 'Failed to load grade policy',
+            details: err?.details || null,
+        });
+    }
 });
 
 export default router;

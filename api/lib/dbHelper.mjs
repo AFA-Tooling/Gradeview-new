@@ -11,6 +11,16 @@ import {
     getPolicySummaryCap,
     normalizePolicyKey,
 } from './coursePolicy.mjs';
+import {
+    buildCanonicalGrade,
+    buildPolicySummary,
+    canonicalGradeToGradeFlowTotal,
+    canonicalGradeToLegacySummary,
+    resolveQuestPolicyScore,
+} from './canonicalGrade.mjs';
+import { buildPolicySummaryFromComponentMaps } from './policySummaryBuilder.mjs';
+
+export { buildPolicySummaryFromComponentMaps } from './policySummaryBuilder.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Relative to api/lib/ is ../../
@@ -43,30 +53,6 @@ function getPolicySummaryCacheKey(courseId = null) {
     return String(courseId || '__all_courses__');
 }
 
-function createEmptyPolicySummary() {
-    return {
-        summaryByKey: {},
-        summarySectionTotals: {},
-        summaryTotal: 0,
-    };
-}
-
-function applyPolicyComponentSummary(summary, component, rawValue) {
-    const rawScore = graphSafeNumber(rawValue);
-    const score = Math.min(component.cap, rawScore);
-    summary.summaryByKey[component.key] = {
-        ...component,
-        score,
-        rawScore,
-        percentage: graphPercentage(score, component.cap),
-    };
-    summary.summarySectionTotals[component.label] = score;
-    if (component.summary_source && component.summary_source !== component.label) {
-        summary.summarySectionTotals[component.summary_source] = score;
-    }
-    summary.summaryTotal += score;
-}
-
 async function buildCoursePolicySummaryMaps(courseId = null) {
     const policy = await getCoursePolicy(courseId, getPool());
     const components = getCoursePolicyComponents(policy);
@@ -81,13 +67,22 @@ async function buildCoursePolicySummaryMaps(courseId = null) {
             (rows || []).forEach((row) => {
                 const email = String(row?.studentEmail || '').trim().toLowerCase();
                 if (!email) return;
-                rowMap.set(email, Number(row?.score) || 0);
+                rowMap.set(email, {
+                    exactScore: Number(row?.exactScore ?? row?.score) || 0,
+                    status: String(row?.status || 'available'),
+                    source: String(row?.source || component.summary_source || component.label),
+                });
             });
             return { component, rowMap };
         }),
     );
 
-    return { byComponent };
+    return {
+        policy,
+        components,
+        byComponent,
+        asOf: new Date().toISOString(),
+    };
 }
 
 async function getCoursePolicySummaryMaps(courseId = null) {
@@ -1104,8 +1099,8 @@ async function getExamSummaryDistribution(examType, capPoints, courseId = null, 
 
     const result = await pool.query(query, params);
     const hasEffectiveData = result.rows.some((row) => (
-        Number.isFinite(Number(row.primary_best_percentage))
-        || (includePosttermClobber && Number.isFinite(Number(row.postterm_best_percentage)))
+        toOptionalNumber(row.primary_best_percentage) != null
+        || (includePosttermClobber && toOptionalNumber(row.postterm_best_percentage) != null)
     ));
 
     if (!hasEffectiveData && rawCategory) {
@@ -1113,19 +1108,23 @@ async function getExamSummaryDistribution(examType, capPoints, courseId = null, 
     }
 
     return result.rows.map((row) => {
-        const primaryBestPct = Number(row.primary_best_percentage);
-        const posttermBestPct = Number(row.postterm_best_percentage);
+        const primaryBestPct = toOptionalNumber(row.primary_best_percentage);
+        const posttermBestPct = toOptionalNumber(row.postterm_best_percentage);
 
-        let effectivePct = Number.isFinite(primaryBestPct) ? primaryBestPct : 0;
-        if (includePosttermClobber && Number.isFinite(posttermBestPct)) {
+        let effectivePct = primaryBestPct ?? 0;
+        if (includePosttermClobber && posttermBestPct != null) {
             effectivePct = Math.max(effectivePct, posttermBestPct);
         }
 
         const rawScore = (effectivePct / 100) * capPoints;
+        const hasPolicyEvidence = primaryBestPct != null
+            || (includePosttermClobber && posttermBestPct != null);
         return {
             studentName: row.student_name,
             studentEmail: row.student_email,
-            score: Math.min(capPoints, toCeilNumber(rawScore)),
+            score: Math.min(capPoints, toExactNumber(rawScore)),
+            status: hasPolicyEvidence ? 'available' : 'unavailable',
+            source: `student_exam_effective_scores:${normalizedExamType}`,
         };
     });
 }
@@ -1149,10 +1148,16 @@ function normalizeQuestCategoryKey(value = '') {
     return null;
 }
 
-function toCeilNumber(value) {
+function toExactNumber(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return 0;
-    return Math.ceil(numeric);
+    return numeric;
+}
+
+function toOptionalNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
 }
 
 function buildQuestComponentCapMap(assignmentMetadata = {}, scoresByQuestion = {}) {
@@ -1283,7 +1288,7 @@ function extractQuestComponentScores(scoresByQuestion = {}, componentCaps = new 
     return componentScores;
 }
 
-async function getQuestSummaryDistributionFromComponents(courseId = null) {
+async function getQuestSummaryDistributionFromComponents(courseId = null, questCap = QUEST_SUMMARY_CAP) {
     const pool = getPool();
 
     let query = `
@@ -1487,12 +1492,14 @@ async function getQuestSummaryDistributionFromComponents(courseId = null) {
         return {
             studentName: student.studentName,
             studentEmail: student.studentEmail,
-            score: Math.min(QUEST_SUMMARY_CAP, toCeilNumber(categoryTotal)),
+            score: Math.min(questCap, toExactNumber(categoryTotal)),
+            status: 'available',
+            source: 'quest_component_best',
         };
     });
 }
 
-async function getQuestSummaryDistribution(courseId = null) {
+async function getQuestSummaryDistribution(courseId = null, questCap = QUEST_SUMMARY_CAP) {
     const pool = getPool();
 
     let policyQuery = `
@@ -1500,7 +1507,8 @@ async function getQuestSummaryDistribution(courseId = null) {
             st.id AS student_id,
             st.legal_name AS student_name,
             st.email AS student_email,
-            MAX(COALESCE(e.question_best_percentage, e.final_percentage)) AS best_percentage
+            MAX(e.final_percentage) AS final_percentage,
+            MAX(e.question_best_percentage) AS question_best_percentage
         FROM students st
         JOIN courses c ON st.course_id = c.id
         LEFT JOIN student_exam_effective_scores e
@@ -1522,10 +1530,13 @@ async function getQuestSummaryDistribution(courseId = null) {
 
     try {
         const policyResult = await pool.query(policyQuery, params);
-        const hasPolicyData = policyResult.rows.some((row) => Number.isFinite(Number(row.best_percentage)));
+        const hasPolicyData = policyResult.rows.some((row) => (
+            toOptionalNumber(row.final_percentage) != null
+            || toOptionalNumber(row.question_best_percentage) != null
+        ));
 
         if (hasPolicyData) {
-            const componentFallbackRows = await getQuestSummaryDistributionFromComponents(courseId);
+            const componentFallbackRows = await getQuestSummaryDistributionFromComponents(courseId, questCap);
             const componentFallbackByEmail = new Map(
                 componentFallbackRows.map((row) => [
                     String(row.studentEmail || '').trim().toLowerCase(),
@@ -1534,36 +1545,33 @@ async function getQuestSummaryDistribution(courseId = null) {
             );
 
             return policyResult.rows.map((row) => {
-                const bestPct = Number(row.best_percentage);
+                const finalPct = toOptionalNumber(row.final_percentage);
+                const questionBestPct = toOptionalNumber(row.question_best_percentage);
                 const fallbackRow = componentFallbackByEmail.get(
                     String(row.student_email || '').trim().toLowerCase(),
                 );
-                const policyRawScore = Number.isFinite(bestPct)
-                    ? (bestPct / 100) * QUEST_SUMMARY_CAP
-                    : null;
-                const policyScore = Number.isFinite(policyRawScore)
-                    ? Math.min(QUEST_SUMMARY_CAP, toCeilNumber(policyRawScore))
-                    : null;
                 const fallbackScore = Number(fallbackRow?.score);
-                const effectiveScore = Math.max(
-                    Number.isFinite(policyScore) ? policyScore : 0,
-                    Number.isFinite(fallbackScore) ? fallbackScore : 0,
-                );
+                const resolution = resolveQuestPolicyScore({
+                    policyFinalScore: finalPct == null ? null : (finalPct / 100) * questCap,
+                    questionBestScore: questionBestPct == null ? null : (questionBestPct / 100) * questCap,
+                    reconstructedScore: Number.isFinite(fallbackScore) ? fallbackScore : null,
+                    cap: questCap,
+                });
 
                 return {
                     studentName: row.student_name,
                     studentEmail: row.student_email,
-                    score: Math.min(QUEST_SUMMARY_CAP, effectiveScore),
+                    score: resolution.exactScore,
+                    status: resolution.status,
+                    source: resolution.source,
                 };
-            }).filter((row) => row.score > 0 || componentFallbackByEmail.has(
-                String(row.studentEmail || '').trim().toLowerCase(),
-            ));
+            }).filter((row) => row.status === 'available');
         }
     } catch (err) {
         console.warn('Quest policy summary query failed, falling back to component summary:', err?.message || err);
     }
 
-    return getQuestSummaryDistributionFromComponents(courseId);
+    return getQuestSummaryDistributionFromComponents(courseId, questCap);
 }
 
 async function getAttendanceSummaryDistribution(category, courseId = null, policy = null) {
@@ -1603,7 +1611,9 @@ async function getAttendanceSummaryDistribution(category, courseId = null, polic
         return effectiveResult.rows.map((row) => ({
             studentName: row.student_name,
             studentEmail: row.student_email,
-            score: Math.min(attendanceCap, toCeilNumber(row.policy_score)),
+            score: Math.min(attendanceCap, toExactNumber(row.policy_score)),
+            status: 'available',
+            source: 'student_attendance_effective_scores',
         }));
     }
 
@@ -1651,6 +1661,7 @@ async function getAttendanceSummaryDistribution(category, courseId = null, polic
                 studentName: row.student_name,
                 studentEmail: row.student_email,
                 passCount: 0,
+                hasAttendanceData: false,
             });
         }
 
@@ -1658,6 +1669,7 @@ async function getAttendanceSummaryDistribution(category, courseId = null, polic
         if (!hasAttendanceRow) {
             return;
         }
+        studentMap.get(studentId).hasAttendanceData = true;
 
         const score = Number(row.total_score);
         const submissionMax = Number(row.submission_max_points);
@@ -1681,7 +1693,9 @@ async function getAttendanceSummaryDistribution(category, courseId = null, polic
     return Array.from(studentMap.values()).map((student) => ({
         studentName: student.studentName,
         studentEmail: student.studentEmail,
-        score: Math.min(attendanceCap, toCeilNumber(student.passCount)),
+        score: Math.min(attendanceCap, toExactNumber(student.passCount)),
+        status: student.hasAttendanceData ? 'available' : 'unavailable',
+        source: 'attendance_submission_fallback',
     }));
 }
 
@@ -1840,6 +1854,7 @@ async function getProjectsSummaryDistribution(courseId = null, policy = null) {
                 studentName: row.student_name,
                 studentEmail: row.student_email,
                 byProject: new Map(),
+                hasProjectData: false,
             });
         }
 
@@ -1848,6 +1863,7 @@ async function getProjectsSummaryDistribution(courseId = null, policy = null) {
         if (!project) return;
 
         const student = studentMap.get(studentId);
+        student.hasProjectData = true;
         if (!student.byProject.has(project.key)) {
             student.byProject.set(project.key, { project, bySubitem: new Map() });
         }
@@ -1896,7 +1912,9 @@ async function getProjectsSummaryDistribution(courseId = null, policy = null) {
         return {
             studentName: student.studentName,
             studentEmail: student.studentEmail,
-            score: Math.min(projectsCap, toCeilNumber(totalScore)),
+            score: Math.min(projectsCap, toExactNumber(totalScore)),
+            status: student.hasProjectData ? 'available' : 'unavailable',
+            source: 'project_policy_rollup',
         };
     });
 }
@@ -1935,11 +1953,13 @@ async function getRawCategorySummaryDistribution(category, courseId = null, capP
     const cap = Number(capPoints);
 
     return result.rows.map((row) => {
-        const score = toCeilNumber(row.total_score);
+        const score = toExactNumber(row.total_score);
         return {
             studentName: row.student_name,
             studentEmail: row.student_email,
             score: Number.isFinite(cap) && cap > 0 ? Math.min(cap, score) : score,
+            status: 'available',
+            source: `raw_category:${category}`,
         };
     });
 }
@@ -1976,7 +1996,7 @@ export async function getCategorySummaryDistribution(category, courseId = null, 
         const examType = String(component?.exam_type || component?.examType || '').trim().toLowerCase();
         const cap = Number(configuredCap) || getSummaryCapByCategory(summarySource) || 0;
         if (examType === 'quest') {
-            return getQuestSummaryDistribution(courseId);
+            return getQuestSummaryDistribution(courseId, cap || QUEST_SUMMARY_CAP);
         }
         if (examType === 'midterm' || examType === 'postterm') {
             return getExamSummaryDistribution(examType, cap, courseId, {
@@ -1988,7 +2008,7 @@ export async function getCategorySummaryDistribution(category, courseId = null, 
     }
 
     if (normalizedCategory === 'quest') {
-        return getQuestSummaryDistribution(courseId);
+        return getQuestSummaryDistribution(courseId, Number(configuredCap) || QUEST_SUMMARY_CAP);
     }
 
     if (normalizedCategory.includes('midterm')) {
@@ -2013,35 +2033,27 @@ export async function getCategorySummaryDistribution(category, courseId = null, 
 }
 
 export async function getAllStudentPolicySummaries(courseId = null) {
-    const { byComponent } = await getCoursePolicySummaryMaps(courseId);
-    const summariesByEmail = new Map();
-
-    byComponent.forEach(({ component, rowMap }) => {
-        rowMap.forEach((rawScore, email) => {
-            if (!summariesByEmail.has(email)) {
-                summariesByEmail.set(email, createEmptyPolicySummary());
-            }
-            applyPolicyComponentSummary(summariesByEmail.get(email), component, rawScore);
-        });
+    const summaryMaps = await getCoursePolicySummaryMaps(courseId);
+    const emails = new Set();
+    summaryMaps.byComponent.forEach(({ rowMap }) => {
+        rowMap.forEach((_score, email) => emails.add(email));
     });
 
-    return summariesByEmail;
+    return new Map(Array.from(emails).map((email) => [
+        email,
+        buildPolicySummaryFromComponentMaps({
+            ...summaryMaps,
+            email,
+        }),
+    ]));
 }
 
 export async function getStudentPolicySummaries(email, courseId = null) {
-    const targetEmail = String(email || '').trim().toLowerCase();
-    if (!targetEmail) {
-        return createEmptyPolicySummary();
-    }
-
-    const { byComponent } = await getCoursePolicySummaryMaps(courseId);
-    const summary = createEmptyPolicySummary();
-
-    byComponent.forEach(({ component, rowMap }) => {
-        applyPolicyComponentSummary(summary, component, rowMap.get(targetEmail));
+    const summaryMaps = await getCoursePolicySummaryMaps(courseId);
+    return buildPolicySummaryFromComponentMaps({
+        ...summaryMaps,
+        email,
     });
-
-    return summary;
 }
 
 /**
@@ -3356,14 +3368,31 @@ export async function getStudentGradeFlow(email, courseId = null, options = {}) 
     const courseQueryId = resolved.gradescope_course_id || resolved.course_id;
     const policy = await getCoursePolicy(courseQueryId, getPool());
     const policyComponents = getCoursePolicyComponents(policy);
-    const [submissions, attendanceRows, examRows, summaries] = await Promise.all([
+    let policySummaryPromise;
+    if (options.canonicalGrade) {
+        policySummaryPromise = Promise.resolve(buildPolicySummary(options.canonicalGrade));
+    } else if (options.summaryByKey) {
+        policySummaryPromise = Promise.resolve(buildPolicySummary(buildCanonicalGrade({
+            components: policyComponents,
+            categoryScores: options.summaryByKey,
+            totalCap: policy.total_points_cap,
+            gradeBins: policy.grade_bins,
+            roundingPolicy: policy.rounding || policy.rounding_policy,
+            source: 'legacy_summary_adapter',
+            asOf: options.asOf || null,
+        })));
+    } else {
+        policySummaryPromise = getStudentPolicySummaries(resolved.student_email, courseQueryId);
+    }
+
+    const [submissions, attendanceRows, examRows, policySummary] = await Promise.all([
         getGraphStudentSubmissions(resolved.student_id, resolved.course_id),
         getGraphAttendanceRows(resolved.student_id, resolved.course_id),
         getGraphExamPolicyRows(resolved.student_id, resolved.course_id),
-        options.summaryByKey
-            ? Promise.resolve(options.summaryByKey)
-            : getGraphSummaryTotals(resolved.student_email, courseQueryId),
+        policySummaryPromise,
     ]);
+    const canonicalGrade = policySummary.canonicalGrade;
+    const summaries = canonicalGradeToLegacySummary(canonicalGrade).summaryByKey;
 
     const builder = createGradeFlowBuilder();
 
@@ -3400,8 +3429,6 @@ export async function getStudentGradeFlow(email, courseId = null, options = {}) 
         return addCategoryOutput(builder, summary, sourceNodeId);
     });
 
-    const totalScore = Object.values(summaries).reduce((sum, item) => sum + graphSafeNumber(item.score), 0);
-    const totalCap = policyComponents.reduce((sum, item) => sum + graphSafeNumber(item.cap), 0);
     const finalNodeId = 'course:final_output';
     builder.addNode({
         id: finalNodeId,
@@ -3410,14 +3437,15 @@ export async function getStudentGradeFlow(email, courseId = null, options = {}) 
         label: 'Final Output',
         group: 'course',
         layer: 6,
-        score: totalScore,
-        maxScore: totalCap,
-        displayValue: `${graphFormatPoints(totalScore)} / ${graphFormatPoints(totalCap)}`,
+        score: canonicalGrade.exactScore,
+        maxScore: canonicalGrade.cap,
+        displayValue: `${canonicalGrade.displayScore} / ${graphFormatPoints(canonicalGrade.cap)}`,
         status: 'output',
         details: {
             quality: 'direct',
-            percentage: graphPercentage(totalScore, totalCap),
-            rounding: 'letter grade uses rounded total',
+            percentage: canonicalGrade.percentage,
+            letter: canonicalGrade.letter,
+            rounding: canonicalGrade.rounding,
         },
     });
     outputNodeIds.forEach((outputId) => builder.addEdge(outputId, finalNodeId, { kind: 'score', label: 'sum' }));
@@ -3450,12 +3478,8 @@ export async function getStudentGradeFlow(email, courseId = null, options = {}) 
             collapsedByDefault: true,
         })),
         components,
-        total: {
-            score: totalScore,
-            cap: totalCap,
-            percentage: graphPercentage(totalScore, totalCap),
-            displayValue: `${graphFormatPoints(totalScore)} / ${graphFormatPoints(totalCap)}`,
-        },
+        canonicalGrade,
+        total: canonicalGradeToGradeFlowTotal(canonicalGrade),
     };
 }
 

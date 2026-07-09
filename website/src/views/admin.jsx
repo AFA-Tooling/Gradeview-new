@@ -524,8 +524,19 @@ export default function Admin() {
         (sum, [section, value]) => sum + (isRawOnlySection(section) ? 0 : (Number(value) || 0)),
         0
       );
-      const total = hasPolicySummaryTotals(stu.summarySectionTotals) ? policyTotal : fallbackTotal;
-      return { ...stu, scores: flatScores, sectionTotals, total };
+      const canonicalExactScore = Number(stu?.canonicalGrade?.exactScore);
+      const total = Number.isFinite(canonicalExactScore)
+        ? canonicalExactScore
+        : (hasPolicySummaryTotals(stu.summarySectionTotals) ? policyTotal : fallbackTotal);
+      return {
+        ...stu,
+        scores: flatScores,
+        sectionTotals,
+        total,
+        displayTotal: stu?.canonicalGrade?.displayScore ?? total,
+        totalPercentage: stu?.canonicalGrade?.percentage ?? null,
+        gradeLetter: stu?.canonicalGrade?.letter ?? null,
+      };
     });
   }, [studentScores, assignmentNamesBySection, normalizedSectionCaps]);
 

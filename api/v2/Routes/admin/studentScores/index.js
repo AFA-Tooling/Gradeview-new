@@ -6,6 +6,7 @@ import {
     getCategorySummaryDistribution,
     getStudentPolicySummaries,
 } from '../../../../lib/dbHelper.mjs';
+import { canonicalGradeToAdminSummary } from '../../../../lib/canonicalGrade.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -61,19 +62,25 @@ function keepDisplayedPolicySections(summarySectionTotals = {}, studentScores = 
 async function buildStudentsWithSummary(students = [], courseId = null) {
     const summariesByEmail = await getAllStudentPolicySummaries(courseId || null);
 
-    return students.map((student) => {
+    return Promise.all(students.map(async (student) => {
         const studentEmail = String(student?.email || '').trim().toLowerCase();
-        const summary = summariesByEmail.get(studentEmail) || {};
-        const summarySectionTotals = keepDisplayedPolicySections(
+        const summary = summariesByEmail.get(studentEmail)
+            || await getStudentPolicySummaries(studentEmail, courseId || null);
+        const displayedSummarySectionTotals = keepDisplayedPolicySections(
             summary.summarySectionTotals || {},
             student?.scores || {},
         );
 
         return {
             ...student,
-            summarySectionTotals,
+            canonicalGrade: summary.canonicalGrade,
+            summaryByKey: summary.summaryByKey || {},
+            summarySectionTotals: summary.summarySectionTotals || {},
+            displayedSummarySectionTotals,
+            summaryTotal: summary.summaryTotal,
+            deprecated: summary.deprecated || {},
         };
-    });
+    }));
 }
 
 /**
@@ -99,7 +106,10 @@ router.get('/', async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching student scores:', error);
-        res.status(500).json({ 
+        const status = Number(error?.status) || 500;
+        res.status(status).json({
+            code: error?.code || 'STUDENT_SCORES_FAILED',
+            details: error?.details || null,
             error: error.message || 'Failed to fetch student scores',
             students: []
         });
@@ -120,16 +130,17 @@ router.get('/summary/:email', async (req, res) => {
             return res.status(400).json({ error: 'Missing student email' });
         }
 
-        const { summarySectionTotals, summaryTotal } = await getStudentPolicySummaries(decodedEmail, courseId || null);
+        const summary = await getStudentPolicySummaries(decodedEmail, courseId || null);
 
-        return res.json({
-            email: decodedEmail,
-            summarySectionTotals,
-            summaryTotal,
-        });
+        return res.json(canonicalGradeToAdminSummary(decodedEmail, summary.canonicalGrade));
     } catch (error) {
         console.error('Error fetching student summary totals:', error);
-        return res.status(500).json({ error: error.message || 'Failed to fetch student summary totals' });
+        const status = Number(error?.status) || 500;
+        return res.status(status).json({
+            code: error?.code || 'STUDENT_SUMMARY_FAILED',
+            details: error?.details || null,
+            error: error.message || 'Failed to fetch student summary totals',
+        });
     }
 });
 
@@ -160,10 +171,10 @@ router.get('/:section/:assignment/:score', async (req, res) => {
     }
 
     try {
-        const ceilScore = (value) => {
+        const exactScore = (value) => {
             const numeric = Number(value);
             if (!Number.isFinite(numeric)) return 0;
-            return Math.ceil(numeric);
+            return numeric;
         };
 
         let rows = [];
@@ -176,11 +187,13 @@ router.get('/:section/:assignment/:score', async (req, res) => {
 
         const matchingStudents = rows
             .map((row) => {
-                const scoreVal = ceilScore(row.score);
+                const scoreVal = exactScore(row.score);
                 return {
                     name: row.studentName,
                     email: row.studentEmail,
-                    score: scoreVal
+                    exactScore: scoreVal,
+                    score: scoreVal,
+                    deprecated: { score: 'Use exactScore' },
                 };
             })
             .filter((student) => !Number.isNaN(student.score) && student.score >= minScore && student.score <= maxScore);

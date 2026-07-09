@@ -191,10 +191,11 @@ ChartJS.register(
 
 const DEFAULT_BATTERY_SEGMENTS = Array.from({ length: 10 }, (_, index) => index);
 
-function roundUpPoints(value) {
+function formatPolicyPoints(value) {
+  if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.ceil(numeric);
+  if (!Number.isFinite(numeric)) return '-';
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
 }
 
 function toSafePercentage(value) {
@@ -315,8 +316,8 @@ function createExamTrendOptions(trend, fallbackCap) {
             const pct = Number(context.parsed.r || 0);
             const topicCap = Number(trend.componentCaps?.[context.dataIndex]);
             const cap = Number.isFinite(topicCap) && topicCap > 0 ? topicCap : fallbackCap;
-            const points = Math.min(cap, roundUpPoints((pct / 100) * cap));
-            return `${context.dataset.label}: ${pct.toFixed(2)}% (${points}/${cap})`;
+            const points = Math.min(cap, (pct / 100) * cap);
+            return `${context.dataset.label}: ${pct.toFixed(2)}% (${formatPolicyPoints(points)}/${formatPolicyPoints(cap)})`;
           },
         },
       },
@@ -383,37 +384,18 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
   ), [categoriesData]);
 
   const currentGrade = useMemo(() => {
-    const total = Number(studentData?.totalScore);
-    const bins = Array.isArray(studentData?.gradeBins) ? studentData.gradeBins : [];
-    if (!Number.isFinite(total) || bins.length === 0) {
+    const canonicalGrade = studentData?.canonicalGrade;
+    if (!canonicalGrade?.letter) {
       return null;
     }
-
-    const roundedTotal = Math.round(total);
-    const parsedBins = bins
-      .map((bin) => {
-        const range = String(bin?.range || '');
-        const match = range.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
-        if (!match) return null;
-        const low = Number(match[1]);
-        const high = Number(match[2]);
-        if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
-        return {
-          grade: String(bin?.grade || bin?.letter || ''),
-          low: Math.min(low, high),
-          high: Math.max(low, high),
-          range,
-        };
-      })
-      .filter((bin) => bin && bin.grade);
-
-    const matched = parsedBins.find((bin) => roundedTotal >= bin.low && roundedTotal <= bin.high)
-      || parsedBins[parsedBins.length - 1];
-
-    return matched
-      ? { ...matched, roundedTotal }
-      : null;
-  }, [studentData?.gradeBins, studentData?.totalScore]);
+    return {
+      grade: canonicalGrade.letter,
+      range: canonicalGrade.bin?.range || '',
+      low: canonicalGrade.bin?.minScore ?? null,
+      high: canonicalGrade.bin?.maxScore ?? null,
+      roundedTotal: canonicalGrade.displayScore,
+    };
+  }, [studentData?.canonicalGrade]);
 
   const categorySnapshot = useMemo(() => {
     const get = (categoryName) => {
@@ -869,7 +851,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                 Final Policy Snapshot
               </Typography>
               <Typography variant="h5" sx={{ color: chartColors.ink, fontWeight: 750, lineHeight: 1.15 }}>
-                {roundUpPoints(studentData.totalScore)} / {roundUpPoints(overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints))}
+                {formatPolicyPoints(studentData.policyFinalDisplayScore ?? studentData.displayScore ?? studentData.totalScore)} / {formatPolicyPoints(studentData.policyFinalCap ?? (overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints)))}
                 {currentGrade ? ` · ${currentGrade.grade}` : ''}
               </Typography>
               <Typography variant="caption" sx={{ color: chartColors.muted, display: 'block', mt: 0.5 }}>
@@ -883,7 +865,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                   <Chip
                     key={category}
                     size="small"
-                    label={`${category}: ${item ? `${roundUpPoints(item.score)}/${roundUpPoints(item.cap)}` : '-'}`}
+                    label={`${category}: ${item ? `${formatPolicyPoints(item.score)}/${formatPolicyPoints(item.cap)}` : '-'}`}
                     sx={{ fontWeight: 700, backgroundColor: '#EFF6FB', color: chartColors.blueDark }}
                   />
                 );
@@ -946,10 +928,10 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                           mt: 0.4,
                         }}
                       >
-                        {roundUpPoints(studentData.totalScore)}
+                        {formatPolicyPoints(studentData.policyFinalDisplayScore ?? studentData.displayScore ?? studentData.totalScore)}
                       </Typography>
                       <Typography variant="body2" sx={{ color: chartColors.softText, fontSize: 17, mt: 0.6 }}>
-                        / {roundUpPoints(overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints))}
+                        / {formatPolicyPoints(studentData.policyFinalCap ?? (overallCategoryDonut.totalCap || (studentData.totalCapPoints ?? studentData.totalMaxPoints)))}
                       </Typography>
                       {currentGrade && (
                         <Box
@@ -1017,7 +999,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                       {segment.category}
                     </Typography>
                     <Typography variant="caption" sx={{ color: chartColors.muted, fontWeight: 650, whiteSpace: 'nowrap' }}>
-                      {roundUpPoints(segment.earned)}/{roundUpPoints(segment.cap)} · {Math.round(segment.weightPercentage)}%
+                      {formatPolicyPoints(segment.earned)}/{formatPolicyPoints(segment.cap)} · {Math.round(segment.weightPercentage)}%
                     </Typography>
                   </Box>
                 ))}
@@ -1060,8 +1042,8 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                     return (
                       <TableRow key={category} hover>
                         <TableCell><strong>{category}</strong></TableCell>
-                        <TableCell align="center">{roundUpPoints(data.total)}</TableCell>
-                        <TableCell align="center">{roundUpPoints(data.capPoints ?? data.maxPoints)}</TableCell>
+                        <TableCell align="center">{formatPolicyPoints(data.exactScore ?? data.total)}</TableCell>
+                        <TableCell align="center">{formatPolicyPoints(data.capPoints ?? data.maxPoints)}</TableCell>
                         <TableCell align="center"><ProgressBattery value={data.percentage} /></TableCell>
                         <TableCell align="center">
                           <Chip size="small" label="Final policy" sx={{ fontWeight: 700, color: chartColors.muted }} />
@@ -1127,12 +1109,12 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                   <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
                     <Chip
                       size="small"
-                      label={`Topic best ${roundUpPoints(card.topicScore)} / ${roundUpPoints(card.topicCap || card.cap)}`}
+                      label={`Topic best ${formatPolicyPoints(card.topicScore)} / ${formatPolicyPoints(card.topicCap || card.cap)}`}
                       sx={{ fontWeight: 700, color: '#0F766E', backgroundColor: '#ECFDF5' }}
                     />
                     <Chip
                       size="small"
-                      label={`Final ${card.finalSnapshot ? `${roundUpPoints(card.finalSnapshot.score)} / ${roundUpPoints(card.finalSnapshot.cap)}` : '-'}`}
+                      label={`Final ${card.finalSnapshot ? `${formatPolicyPoints(card.finalSnapshot.score)} / ${formatPolicyPoints(card.finalSnapshot.cap)}` : '-'}`}
                       sx={{ fontWeight: 700, color: chartColors.ink, backgroundColor: chartColors.band }}
                     />
                   </Stack>
