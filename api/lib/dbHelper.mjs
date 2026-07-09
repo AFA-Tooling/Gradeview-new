@@ -1497,7 +1497,7 @@ async function getQuestSummaryDistribution(courseId = null, questCap = QUEST_SUM
             st.id AS student_id,
             st.legal_name AS student_name,
             st.email AS student_email,
-            MAX(COALESCE(e.question_best_percentage, e.final_percentage)) AS best_percentage
+            MAX(COALESCE(e.final_percentage, e.question_best_percentage)) AS best_percentage
         FROM students st
         JOIN courses c ON st.course_id = c.id
         LEFT JOIN student_exam_effective_scores e
@@ -1542,10 +1542,12 @@ async function getQuestSummaryDistribution(courseId = null, questCap = QUEST_SUM
                     ? Math.min(questCap, toExactNumber(policyRawScore))
                     : null;
                 const fallbackScore = Number(fallbackRow?.score);
-                const effectiveScore = Math.max(
-                    Number.isFinite(policyScore) ? policyScore : 0,
-                    Number.isFinite(fallbackScore) ? fallbackScore : 0,
-                );
+                // The effective policy score is authoritative when available.
+                // Component reconstruction is evidence fallback, never a
+                // competing "best" total that can override the final value.
+                const effectiveScore = Number.isFinite(policyScore)
+                    ? policyScore
+                    : (Number.isFinite(fallbackScore) ? fallbackScore : 0);
 
                 return {
                     studentName: row.student_name,

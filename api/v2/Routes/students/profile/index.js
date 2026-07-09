@@ -351,6 +351,12 @@ router.get('/', async (req, res) => {
         };
         const canonicalGrade = {
             ...summaries.canonicalGrade,
+            rawEvidence: {
+                basis: 'raw_evidence',
+                status: 'available',
+                submissionCount: Array.isArray(rawSubmissions) ? rawSubmissions.length : 0,
+                source: 'student_submissions',
+            },
             dueWorkProgress,
         };
         const profileSummary = canonicalGradeToProfileSummary(email, canonicalGrade);
