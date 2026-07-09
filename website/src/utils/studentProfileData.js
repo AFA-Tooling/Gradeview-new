@@ -6,6 +6,7 @@ import {
   buildQuestComponentTrendFallback,
   buildQuestComponentTrendFromAssignments,
 } from './studentDataProcessor';
+import { isAssignmentDue } from './assignmentDue';
 
 export function resolveCourseQueryId(courseId, courses = []) {
   if (!courseId) return '';
@@ -22,6 +23,7 @@ export function applyCanonicalSummaryTotals(processedData, summarySectionTotals 
     ...processedData,
     categoriesData: { ...(processedData.categoriesData || {}) },
   };
+  const hasDueScopedAssignments = Array.isArray(next.assignmentsList);
 
   Object.entries(summarySectionTotals || {}).forEach(([rawSectionName, rawScore]) => {
     if (!rawSectionName) return;
@@ -33,7 +35,11 @@ export function applyCanonicalSummaryTotals(processedData, summarySectionTotals 
     const existing = next.categoriesData[sectionName] || {};
     const cap = Number(existing.capPoints ?? existing.maxPoints) || 0;
     if (cap <= 0 && !next.categoriesData[sectionName]) return;
-    const cappedScore = cap > 0 ? Math.min(score, cap) : score;
+    const canonicalScore = cap > 0 ? Math.min(score, cap) : score;
+    const dueScopedScore = Number(existing.total);
+    const cappedScore = hasDueScopedAssignments && Number.isFinite(dueScopedScore)
+      ? Math.min(canonicalScore, Math.max(0, dueScopedScore))
+      : canonicalScore;
 
     next.categoriesData[sectionName] = {
       ...existing,
@@ -98,9 +104,11 @@ function buildRawAssignments(rawSubmissions = []) {
   return rawSubmissions
     .filter((submission) => {
       const category = String(submission?.category || '').trim();
+      const normalizedCategory = category.toLowerCase();
       const name = String(submission?.name || '').trim();
-      if (!name || !category || category.toLowerCase() === 'uncategorized') return false;
+      if (!name || !category || normalizedCategory === 'uncategorized' || normalizedCategory.startsWith('_')) return false;
       if (isRollupSubmission(submission)) return false;
+      if (!isAssignmentDue(submission)) return false;
       return Number(submission?.maxPoints) > 0;
     })
     .map((submission) => {
@@ -115,6 +123,8 @@ function buildRawAssignments(rawSubmissions = []) {
         percentage: maxPoints > 0 ? (score / maxPoints) * 100 : 0,
         submissionTime: submission.submissionTime,
         lateness: submission.lateness,
+        dueAt: submission.dueAt,
+        releaseAt: submission.releaseAt,
       };
     });
 }
@@ -232,6 +242,7 @@ export function buildStudentProfileData(payload, studentEmail, studentName) {
     score: assignment.score,
     maxPoints: assignment.maxPoints,
     submissionTime: assignment.submissionTime,
+    dueAt: assignment.dueAt,
   }));
 
   const examComponentTrendsFromApi = payload?.examPolicy?.examComponentTrends || {};

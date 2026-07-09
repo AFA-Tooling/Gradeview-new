@@ -72,6 +72,8 @@ function getStudentScoresWithMaxPointsAndTime(studentScores, maxScores) {
                 max: maxScore,
                 submissionTime: data.submissionTime,
                 lateness: data.lateness,
+                dueAt: data.dueAt,
+                releaseAt: data.releaseAt,
             };
             return scoresDict;
         }, {});
@@ -97,6 +99,19 @@ function categoryMatches(category = '', name = '', terms = []) {
     return terms.some((term) => includesCategoryTerm(combined, term));
 }
 
+function isHiddenStatsCategory(category = '') {
+    const normalized = normalizeText(category);
+    return !normalized || normalized === 'uncategorized' || normalized.startsWith('_');
+}
+
+function isDueForStats(item = {}, now = Date.now()) {
+    const rawDue = item?.dueAt || item?.due_at || item?.due || item?.dueDate || item?.due_date || item?.deadline;
+    if (!rawDue) return false;
+    const dueTime = new Date(rawDue).getTime();
+    if (!Number.isFinite(dueTime)) return false;
+    return dueTime <= now;
+}
+
 function getSummaryForBlock(summaryByKey = {}, summarySectionTotals = {}, config) {
     const keyed = summaryByKey?.[config.key] || null;
     const rawScore = keyed?.score ?? Object.entries(summarySectionTotals || {}).find(([section]) => (
@@ -115,8 +130,10 @@ function summarizeAssignments(groupedSubmissions = {}, rawSubmissions = [], term
     const items = [];
 
     Object.entries(groupedSubmissions || {}).forEach(([category, assignments]) => {
+        if (isHiddenStatsCategory(category)) return;
         Object.entries(assignments || {}).forEach(([name, data]) => {
             if (!categoryMatches(category, name, terms)) return;
+            if (!isDueForStats(data)) return;
             const maxPoints = Number(data?.max) || 0;
             const score = Number(data?.student) || 0;
             const hasSignal = Boolean(data?.submissionTime) || score > 0;
@@ -134,7 +151,9 @@ function summarizeAssignments(groupedSubmissions = {}, rawSubmissions = [], term
     });
 
     const recentItems = (rawSubmissions || [])
+        .filter((item) => !isHiddenStatsCategory(item?.category))
         .filter((item) => categoryMatches(item?.category, item?.name, terms))
+        .filter((item) => isDueForStats(item))
         .slice(0, 5)
         .map((item) => ({
             category: item.category,
@@ -184,6 +203,30 @@ function getBlockStatus(percentage) {
     return 'attention';
 }
 
+function clampScoreSummaryToDueWork(scoreSummary, assignmentSummary) {
+    if (!assignmentSummary || Number(assignmentSummary.totalItems) <= 0) {
+        return {
+            ...scoreSummary,
+            score: 0,
+            rawScore: 0,
+            percentage: 0,
+        };
+    }
+
+    const rawScore = Number(assignmentSummary.rawScore) || 0;
+    const rawMax = Number(assignmentSummary.rawMax) || 0;
+    const cap = Number(scoreSummary.cap) || 0;
+    if (rawMax <= 0 || cap <= 0) return scoreSummary;
+
+    const dueWorkCeiling = Math.min(cap, rawScore);
+    const score = Math.min(Number(scoreSummary.score) || 0, dueWorkCeiling);
+    return {
+        ...scoreSummary,
+        score,
+        percentage: cap > 0 ? (score / cap) * 100 : 0,
+    };
+}
+
 function buildCategoryBlocks({
     groupedSubmissions,
     rawSubmissions,
@@ -195,8 +238,11 @@ function buildCategoryBlocks({
     const summarySectionTotals = summaries?.summarySectionTotals || {};
 
     return CATEGORY_BLOCK_CONFIGS.map((config) => {
-        const scoreSummary = getSummaryForBlock(summaryByKey, summarySectionTotals, config);
         const assignmentSummary = summarizeAssignments(groupedSubmissions, rawSubmissions, config.terms);
+        const scoreSummary = clampScoreSummaryToDueWork(
+            getSummaryForBlock(summaryByKey, summarySectionTotals, config),
+            assignmentSummary,
+        );
         const examSummary = config.type === 'exam'
             ? summarizeExam(policyRows, config.key)
             : null;

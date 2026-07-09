@@ -1,5 +1,7 @@
 // src/utils/studentDataProcessor.js
 
+import { isAssignmentDue } from './assignmentDue';
+
 /**
  * Process student grades data into structured format for display
  * @param {Object} data - Raw grades data from API
@@ -165,6 +167,10 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
 
   submissions.forEach((submission) => {
+    if (!isAssignmentDue(submission)) {
+      return;
+    }
+
     const category = normalizeCategoryName(submission.category);
     const assignmentName = submission.name;
     const rawScore = roundUpPoints(parseFloat(submission.score) || 0);
@@ -331,6 +337,10 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
     let categoryCount = 0;
 
     Object.entries(assignments).forEach(([assignmentName, assignmentData]) => {
+      if (!isAssignmentDue(assignmentData)) {
+        return;
+      }
+
       const rawScore = roundUpPoints(parseFloat(assignmentData.student) || 0);
       const rawMaxPoints = parseFloat(assignmentData.max) || 0;
       const normalized = normalizeAssignmentScore(category, rawScore, rawMaxPoints);

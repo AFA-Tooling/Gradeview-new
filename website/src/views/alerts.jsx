@@ -33,6 +33,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { cachedApiGet } from '../utils/apiCache';
+import { getDueTimestamp, isAssignmentDue } from '../utils/assignmentDue';
 
 const REASON_COLORS = {
   overall: '#dc2626',
@@ -51,6 +52,15 @@ const RISK_LEVELS = {
 };
 
 const MIN_CLASS_SIGNAL_RATE = 0.08;
+
+const DEFAULT_POLICY_CAPS = {
+  attendance: 15,
+  labs: 80,
+  projects: 155,
+  quest: 25,
+  midterm: 50,
+  postterm: 75,
+};
 
 function normalize(value = '') {
   return String(value || '').trim().toLowerCase();
@@ -115,6 +125,7 @@ function isRequiredRawSignal(assignment, sectionSummaries) {
 }
 
 function formatScore(value, digits = 1) {
+  if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '-';
   return numeric.toFixed(digits);
@@ -152,6 +163,11 @@ function buildCourseQuery(courseId, courses = []) {
   return `?course_id=${encodeURIComponent(resolvedCourseId)}`;
 }
 
+function appendQueryParam(path, key, value) {
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
 function normalizeCourseList(list) {
   const merged = new Map();
   (Array.isArray(list) ? list : []).forEach((course) => {
@@ -164,6 +180,131 @@ function normalizeCourseList(list) {
   return Array.from(merged.values());
 }
 
+function flattenAssignmentsResponse(payload = {}) {
+  const groupedAssignments = payload?.assignments && typeof payload.assignments === 'object'
+    ? payload.assignments
+    : payload;
+  const metadata = payload?.metadata && typeof payload.metadata === 'object'
+    ? payload.metadata
+    : {};
+
+  return Object.entries(groupedAssignments || {})
+    .filter(([, sectionAssignments]) => sectionAssignments && typeof sectionAssignments === 'object')
+    .flatMap(([section, sectionAssignments]) => (
+      Object.entries(sectionAssignments || {}).map(([name, maxPointsValue]) => {
+        const inline = maxPointsValue && typeof maxPointsValue === 'object'
+          ? maxPointsValue
+          : {};
+        const meta = metadata?.[section]?.[name] || {};
+        const maxPoints = Number(inline.maxPoints ?? meta.maxPoints ?? maxPointsValue) || 0;
+        return {
+          section,
+          name,
+          maxPoints,
+          dueAt: inline.dueAt ?? meta.dueAt ?? null,
+          releaseAt: inline.releaseAt ?? meta.releaseAt ?? null,
+        };
+      })
+    ));
+}
+
+function getAssignmentPointsValue(assignmentPoints = {}, name = '') {
+  const exact = Number(assignmentPoints?.[name]) || 0;
+  if (exact > 0) return exact;
+
+  const normalizedName = normalize(name);
+  const matched = Object.entries(assignmentPoints || {}).find(([key]) => normalize(key) === normalizedName);
+  return matched ? Number(matched[1]) || 0 : 0;
+}
+
+function getConfiguredAssignmentCap(assignment, assignmentPoints = {}) {
+  const configuredCap = getAssignmentPointsValue(assignmentPoints, assignment.name);
+  if (configuredCap > 0) return configuredCap;
+  return Number(assignment.maxPoints) || 0;
+}
+
+function getPolicyCategoryCap(category, assignmentPoints = {}, sectionCaps = {}) {
+  const normalizedCategory = normalize(category);
+  const sectionCap = Number(sectionCaps[normalizedCategory]) || 0;
+  if (sectionCap > 0) return sectionCap;
+
+  if (normalizedCategory === 'attendance') {
+    return getAssignmentPointsValue(assignmentPoints, 'Attendance / Participation') || DEFAULT_POLICY_CAPS.attendance;
+  }
+  if (normalizedCategory === 'labs') {
+    return getAssignmentPointsValue(assignmentPoints, 'Labs') || DEFAULT_POLICY_CAPS.labs;
+  }
+  if (normalizedCategory === 'projects') {
+    const projectCap = Object.entries(assignmentPoints || {}).reduce((sum, [name, value]) => (
+      normalize(name).includes('project') ? sum + (Number(value) || 0) : sum
+    ), 0);
+    return projectCap || DEFAULT_POLICY_CAPS.projects;
+  }
+  if (normalizedCategory === 'quest') {
+    return getAssignmentPointsValue(assignmentPoints, 'Quest') || DEFAULT_POLICY_CAPS.quest;
+  }
+  if (normalizedCategory === 'midterm') {
+    return getAssignmentPointsValue(assignmentPoints, 'Midterm') || DEFAULT_POLICY_CAPS.midterm;
+  }
+  if (normalizedCategory === 'postterm') {
+    return getAssignmentPointsValue(assignmentPoints, 'Postterm') || DEFAULT_POLICY_CAPS.postterm;
+  }
+  return 0;
+}
+
+function getPolicyCategoryLabel(category) {
+  if (category === 'attendance') return 'Attendance / Participation';
+  if (category === 'labs') return 'Labs';
+  if (category === 'projects') return 'Projects';
+  if (category === 'quest') return 'Quest';
+  if (category === 'midterm') return 'Midterm';
+  if (category === 'postterm') return 'Postterm';
+  return category || 'Coursework';
+}
+
+function getAssignmentContribution(row) {
+  if (!Number.isFinite(row.score)) return 0;
+  const configuredCap = Number(row.configuredCap) || 0;
+  const maxPoints = Number(row.maxPoints) || 0;
+  if (configuredCap > 0 && maxPoints > 0) {
+    return Math.min(configuredCap, (Math.max(0, row.score) / maxPoints) * configuredCap);
+  }
+  return Math.max(0, row.score);
+}
+
+function buildDueSectionSummaries(assignmentRows, assignmentPoints, sectionCaps) {
+  const byCategory = new Map();
+
+  assignmentRows.forEach((row) => {
+    const category = row.rawSignalCategory || getPolicyCategory(row.section, row.name);
+    if (!category) return;
+    const current = byCategory.get(category) || {
+      section: getPolicyCategoryLabel(category),
+      category,
+      score: 0,
+      rawCap: 0,
+    };
+    current.score += getAssignmentContribution(row);
+    current.rawCap += Number(row.configuredCap) || Number(row.maxPoints) || 0;
+    byCategory.set(category, current);
+  });
+
+  return Array.from(byCategory.values())
+    .map((summary) => {
+      const policyCap = getPolicyCategoryCap(summary.category, assignmentPoints, sectionCaps);
+      const cap = policyCap > 0 ? Math.min(summary.rawCap, policyCap) : summary.rawCap;
+      const score = cap > 0 ? Math.min(summary.score, cap) : summary.score;
+      return {
+        ...summary,
+        score,
+        cap,
+        pct: cap > 0 ? (score / cap) * 100 : null,
+        remaining: cap > 0 ? Math.max(0, cap - score) : null,
+      };
+    })
+    .filter((summary) => summary.cap > 0);
+}
+
 function getPublishedAssignments(students, assignments) {
   const activeStudents = students.filter((student) => student.email !== 'MAX POINTS' && student.name !== 'MAX POINTS');
   const minSignalCount = Math.max(1, Math.ceil(activeStudents.length * MIN_CLASS_SIGNAL_RATE));
@@ -172,6 +313,8 @@ function getPublishedAssignments(students, assignments) {
     .filter((assignment) => {
       if (isHiddenSection(assignment.section)) return false;
       if (isRollupAssignment(assignment.section, assignment.name)) return false;
+      if (!isAssignmentDue(assignment)) return false;
+      if (getDueTimestamp(assignment) !== null) return true;
 
       let observedCount = 0;
       activeStudents.forEach((student) => {
@@ -208,12 +351,11 @@ function buildStudentAlert(student, context) {
   const cleanSummaryEntries = Object.entries(summaryTotals)
     .filter(([section]) => !isHiddenSection(section));
 
-  const totalScore = cleanSummaryEntries.reduce((sum, [, value]) => sum + (Number(value) || 0), 0);
-  const currentGrade = getGradeForScore(totalScore, gradeBins);
-  const overallPct = totalCap > 0 ? (totalScore / totalCap) * 100 : 0;
-
-  const sectionSummaries = cleanSummaryEntries.map(([section, value]) => {
-    const cap = Number(sectionCaps[normalize(section)]) || 0;
+  const policySectionSummaries = cleanSummaryEntries.map(([section, value]) => {
+    const category = getPolicyCategory(section);
+    const cap = Number(sectionCaps[normalize(section)])
+      || getPolicyCategoryCap(category, assignmentPoints, sectionCaps)
+      || 0;
     const score = Number(value) || 0;
     return {
       section,
@@ -224,18 +366,14 @@ function buildStudentAlert(student, context) {
     };
   });
 
-  const weakSections = sectionSummaries
-    .filter((item) => Number.isFinite(item.pct) && item.pct < 70)
-    .sort((a, b) => a.pct - b.pct);
-
   const assignmentRows = assignmentCatalog.map((assignment) => {
     const raw = student?.scores?.[assignment.section]?.[assignment.name];
     const maxFromCatalog = Number(assignment.maxPoints) || 0;
-    const configuredCap = Number(assignmentPoints[assignment.name]) || maxFromCatalog;
+    const configuredCap = getConfiguredAssignmentCap(assignment, assignmentPoints);
     const rawScore = raw === null || raw === undefined || raw === '' ? null : Number(raw);
     const score = Number.isFinite(rawScore) ? rawScore : null;
     const pct = maxFromCatalog > 0 && score !== null ? (score / maxFromCatalog) * 100 : null;
-    const requiredRawSignal = isRequiredRawSignal(assignment, sectionSummaries);
+    const requiredRawSignal = isRequiredRawSignal(assignment, policySectionSummaries);
 
     return {
       ...assignment,
@@ -248,6 +386,22 @@ function buildStudentAlert(student, context) {
       missing: requiredRawSignal && (score === null || score === 0),
     };
   });
+
+  const dueSectionSummaries = buildDueSectionSummaries(assignmentRows, assignmentPoints, sectionCaps);
+  const dynamicTotalCap = dueSectionSummaries.reduce((sum, item) => sum + (Number(item.cap) || 0), 0);
+  const dynamicTotalScore = dueSectionSummaries.reduce((sum, item) => sum + (Number(item.score) || 0), 0);
+  const hasDueWork = dynamicTotalCap > 0;
+  const totalScore = hasDueWork ? dynamicTotalScore : 0;
+  const displayTotalCap = hasDueWork ? dynamicTotalCap : 0;
+  const overallPct = hasDueWork ? (totalScore / displayTotalCap) * 100 : null;
+  const gradeLookupScore = hasDueWork && totalCap > 0
+    ? (overallPct / 100) * totalCap
+    : totalScore;
+  const currentGrade = hasDueWork ? getGradeForScore(gradeLookupScore, gradeBins) : 'N/A';
+
+  const weakSections = dueSectionSummaries
+    .filter((item) => Number.isFinite(item.pct) && item.pct < 70)
+    .sort((a, b) => a.pct - b.pct);
 
   const signalRows = assignmentRows.filter((row) => row.requiredRawSignal);
   const gradedRows = signalRows.filter((row) => Number.isFinite(row.pct));
@@ -269,12 +423,12 @@ function buildStudentAlert(student, context) {
   const recentZeros = recentRows.filter((row) => row.score === 0).length;
   const missingRawPoints = missingRows.reduce((sum, row) => sum + (Number(row.configuredCap) || 0), 0);
   const missingPointsBySection = missingRows.reduce((acc, row) => {
-    const key = normalize(row.section);
+    const key = row.rawSignalCategory || getPolicyCategory(row.section, row.name);
     acc[key] = (acc[key] || 0) + (Number(row.configuredCap) || 0);
     return acc;
   }, {});
-  const missingWeightedPoints = Object.entries(missingPointsBySection).reduce((sum, [section, points]) => {
-    const sectionSummary = sectionSummaries.find((item) => normalize(item.section) === section);
+  const missingWeightedPoints = Object.entries(missingPointsBySection).reduce((sum, [category, points]) => {
+    const sectionSummary = dueSectionSummaries.find((item) => item.category === category);
     if (sectionSummary && Number.isFinite(sectionSummary.remaining)) {
       return sum + Math.min(points, sectionSummary.remaining);
     }
@@ -285,12 +439,12 @@ function buildStudentAlert(student, context) {
   const reasons = [];
   let riskScore = 0;
 
-  if (overallPct < 60) {
+  if (hasDueWork && overallPct < 60) {
     const points = overallPct < 50 ? 34 : 24;
     riskScore += points;
     reasons.push({
       type: 'overall',
-      label: `Current score is ${formatScore(overallPct)}% (${currentGrade})`,
+      label: `Due work score is ${formatScore(overallPct)}% (${currentGrade})`,
       weight: points,
     });
   }
@@ -356,7 +510,7 @@ function buildStudentAlert(student, context) {
     riskLevel,
     currentGrade,
     totalScore,
-    totalCap,
+    totalCap: displayTotalCap,
     overallPct,
     missingCount: missingRows.length,
     missingWeightedPoints,
@@ -430,20 +584,12 @@ export default function Alerts() {
 
     Promise.all([
       cachedApiGet(`/admin/studentScores${query}`, { ttlMs: 30000 }),
-      cachedApiGet(`/admin/assignments${query}`, { ttlMs: 60000 }),
+      cachedApiGet(appendQueryParam(`/admin/assignments${query}`, 'include_metadata', '1'), { ttlMs: 60000 }),
       cachedApiGet(`/bins${query}`, { ttlMs: 60000 }),
     ])
       .then(([studentRes, assignmentRes, binsRes]) => {
         setStudents(studentRes?.data?.students || []);
-        const flattenedAssignments = Object.entries(assignmentRes?.data || {})
-          .flatMap(([section, sectionAssignments]) => (
-            Object.entries(sectionAssignments || {}).map(([name, maxPoints]) => ({
-              section,
-              name,
-              maxPoints: Number(maxPoints) || 0,
-            }))
-          ));
-        setAssignments(flattenedAssignments);
+        setAssignments(flattenAssignmentsResponse(assignmentRes?.data || {}));
         setBins(binsRes?.data || null);
       })
       .catch((err) => {
@@ -529,7 +675,7 @@ export default function Alerts() {
               <Box>
                 <Typography variant="h5" sx={{ fontWeight: 700 }}>Early Alert Dashboard</Typography>
                 <Typography sx={{ color: 'text.secondary', mt: 0.5 }}>
-                  {currentCourse?.name || 'Selected course'} · {analysis.assignmentCatalog.length} published signals · {analysis.alerts.length} students
+                  {currentCourse?.name || 'Selected course'} · {analysis.assignmentCatalog.length} due signals · {analysis.alerts.length} students
                 </Typography>
               </Box>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>

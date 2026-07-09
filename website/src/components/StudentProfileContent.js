@@ -1,5 +1,5 @@
 // src/components/StudentProfileContent.js
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -11,13 +11,9 @@ import {
   TableContainer,
   Paper,
   Grid,
-  ToggleButtonGroup,
-  ToggleButton,
   Chip,
   Stack,
 } from '@mui/material';
-import CategoryIcon from '@mui/icons-material/Category';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import StudentCategoryBlocks from './StudentCategoryBlocks';
 import {
   Chart as ChartJS,
@@ -193,11 +189,6 @@ ChartJS.register(
   weightedSectorDonutPlugin
 );
 
-const NATURAL_COLLATOR = new Intl.Collator(undefined, {
-  numeric: true,
-  sensitivity: 'base',
-});
-
 const DEFAULT_BATTERY_SEGMENTS = Array.from({ length: 10 }, (_, index) => index);
 
 function roundUpPoints(value) {
@@ -235,12 +226,6 @@ function getSubmissionTimestamp(dateString) {
   if (!dateString) return Number.NEGATIVE_INFINITY;
   const timestamp = new Date(dateString).getTime();
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
-}
-
-function compareAssignmentOrder(a, b) {
-  const categoryCmp = NATURAL_COLLATOR.compare(String(a.category || ''), String(b.category || ''));
-  if (categoryCmp !== 0) return categoryCmp;
-  return NATURAL_COLLATOR.compare(String(a.name || ''), String(b.name || ''));
 }
 
 function formatRadarAxisLabel(label) {
@@ -456,52 +441,36 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
     };
   }, [displayCategoriesData]);
 
-  // Local state for sort mode (only affects line chart and detail table)
-  const [sortMode, setSortMode] = useState('assignment');
   const hoveredDonutCategoryRef = useRef(null);
 
-  // Sort the trend data for line chart based on sortMode
+  // Score trend is always chronological by submission time.
   const sortedTrendData = useMemo(() => {
     if (trendData.length === 0) return [];
-    const rows = trendData.map((item, index) => ({
-      item,
-      index,
-      timestamp: getSubmissionTimestamp(item.submissionTime),
-    }));
-    
-    if (sortMode === 'time') {
-      return rows
-        .sort((a, b) => (b.timestamp - a.timestamp) || (a.index - b.index))
-        .map(({ item }) => item);
-    }
-
-    return rows
-      .sort((a, b) => compareAssignmentOrder(a.item, b.item) || (a.index - b.index))
+    return trendData
+      .map((item, index) => ({
+        item,
+        index,
+        timestamp: getSubmissionTimestamp(item.submissionTime),
+      }))
+      .sort((a, b) => (a.timestamp - b.timestamp) || (a.index - b.index))
       .map(({ item }) => item);
-  }, [trendData, sortMode]);
+  }, [trendData]);
 
-  // Sort the assignments list for detail table based on sortMode
+  // Keep the detail table in the same chronological order as the trend.
   const sortedAssignments = useMemo(() => {
     if (rawAssignmentsList.length === 0) return [];
-    const rows = rawAssignmentsList.map((assignment, index) => ({
-      item: {
-        ...assignment,
-        formattedSubmissionTime: formatDate(assignment.submissionTime),
-      },
-      index,
-      timestamp: getSubmissionTimestamp(assignment.submissionTime),
-    }));
-    
-    if (sortMode === 'time') {
-      return rows
-        .sort((a, b) => (b.timestamp - a.timestamp) || (a.index - b.index))
-        .map(({ item }) => item);
-    }
-
-    return rows
-      .sort((a, b) => compareAssignmentOrder(a.item, b.item) || (a.index - b.index))
+    return rawAssignmentsList
+      .map((assignment, index) => ({
+        item: {
+          ...assignment,
+          formattedSubmissionTime: formatDate(assignment.submissionTime),
+        },
+        index,
+        timestamp: getSubmissionTimestamp(assignment.submissionTime),
+      }))
+      .sort((a, b) => (a.timestamp - b.timestamp) || (a.index - b.index))
       .map(({ item }) => item);
-  }, [rawAssignmentsList, sortMode]);
+  }, [rawAssignmentsList]);
 
   const examComponentTrends = useMemo(() => {
     const trends = studentData?.examComponentTrends || {};
@@ -839,7 +808,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
         },
         title: {
           display: true,
-          text: sortMode === 'time' ? 'Submission Order' : 'Assignment Order',
+          text: 'Submission Order',
           color: chartColors.muted,
           font: {
             size: 12,
@@ -879,11 +848,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
       intersect: false,
       axis: 'x',
     },
-  }), [sortMode, sortedTrendData]);
-
-  const handleSortModeChange = useCallback((_event, newMode) => {
-    if (newMode) setSortMode(newMode);
-  }, []);
+  }), [sortedTrendData]);
 
   if (!hasStudentData) return null;
 
@@ -1202,41 +1167,6 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
               <Typography variant="h6" sx={headingSx}>
                 Score Trend
               </Typography>
-              <ToggleButtonGroup
-                value={sortMode}
-                exclusive
-                onChange={handleSortModeChange}
-                size="small"
-                sx={{ 
-                  '& .MuiToggleButton-root': {
-                    px: 2,
-                    py: 0.5,
-                    fontSize: '0.875rem',
-                    textTransform: 'none',
-                    color: chartColors.muted,
-                    border: `1px solid ${chartColors.border}`,
-                    '&.Mui-selected': {
-                      backgroundColor: chartColors.ink,
-                      color: '#fff',
-                      '&:hover': {
-                        backgroundColor: '#030712',
-                      }
-                    },
-                    '&:hover': {
-                      backgroundColor: chartColors.band,
-                    }
-                  }
-                }}
-              >
-                <ToggleButton value="assignment">
-                  <CategoryIcon sx={{ mr: 0.5, fontSize: 16 }} />
-                  By Assignment
-                </ToggleButton>
-                <ToggleButton value="time">
-                  <AccessTimeIcon sx={{ mr: 0.5, fontSize: 16 }} />
-                  By Time
-                </ToggleButton>
-              </ToggleButtonGroup>
             </Box>
             <Box sx={{ height: 300, position: 'relative' }}>
               <ChartLine

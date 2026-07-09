@@ -1,5 +1,9 @@
 import { Router } from 'express';
-import { getPool } from '../../../../lib/dbHelper.mjs';
+import {
+    getPool,
+    resolveAssignmentDueAt,
+    resolveAssignmentReleaseAt,
+} from '../../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -16,6 +20,9 @@ const router = Router({ mergeParams: true });
 router.get('/', async (req, res) => {
     try {
         const { course_id: courseId } = req.query;
+        const includeMetadata = ['1', 'true', 'yes'].includes(
+            String(req.query?.include_metadata || req.query?.includeMetadata || '').trim().toLowerCase(),
+        );
         const pool = getPool();
         const naturalCollator = new Intl.Collator('en', {
             numeric: true,
@@ -27,9 +34,15 @@ router.get('/', async (req, res) => {
                 COALESCE(a.category, 'Uncategorized') as category,
                 a.title as assignment_name,
                 a.max_points,
+                a.assignment_metadata,
+                eam.due_at AS exam_due_at,
+                eam.release_at AS exam_release_at,
                 ac.display_order
             FROM assignments a
             JOIN courses c ON a.course_id = c.id
+            LEFT JOIN exam_attempt_map eam
+              ON eam.assignment_id = a.id
+             AND eam.course_id = c.id
             LEFT JOIN assignment_categories ac
               ON ac.course_id = c.id
              AND LOWER(TRIM(ac.name)) = LOWER(TRIM(COALESCE(a.category, 'Uncategorized')))
@@ -61,6 +74,7 @@ router.get('/', async (req, res) => {
         
         // Group by category
         const grouped = {};
+        const metadata = {};
         sortedRows.forEach(row => {
             const category = row.category.trim();
             const name = row.assignment_name.trim();
@@ -69,11 +83,27 @@ router.get('/', async (req, res) => {
             if (!grouped[category]) {
                 grouped[category] = {};
             }
+            if (!metadata[category]) {
+                metadata[category] = {};
+            }
             grouped[category][name] = maxPoints;
+            metadata[category][name] = {
+                maxPoints,
+                dueAt: resolveAssignmentDueAt(row),
+                releaseAt: resolveAssignmentReleaseAt(row),
+            };
         });
         
         console.log(`[INFO] Fetched ${result.rows.length} assignments from database, ${Object.keys(grouped).length} categories`);
-        
+
+        if (includeMetadata) {
+            res.json({
+                assignments: grouped,
+                metadata,
+            });
+            return;
+        }
+
         res.json(grouped);
     } catch (error) {
         console.error('Error fetching assignments from database:', error);

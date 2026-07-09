@@ -258,6 +258,79 @@ export function getPool() {
     return pool;
 }
 
+function safeJsonObject(value) {
+    if (!value) return {};
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+            return {};
+        }
+    }
+    return {};
+}
+
+function firstPresentValue(...values) {
+    return values.find((value) => value !== undefined && value !== null && value !== '');
+}
+
+function normalizeDateValue(value) {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+export function resolveAssignmentDueAt(row = {}) {
+    const metadata = safeJsonObject(row.assignment_metadata);
+    const submissionWindow = safeJsonObject(metadata.submission_window || metadata.submissionWindow);
+    const dates = safeJsonObject(metadata.dates);
+
+    return normalizeDateValue(firstPresentValue(
+        row.due_at,
+        row.exam_due_at,
+        metadata.due,
+        metadata.due_at,
+        metadata.dueAt,
+        metadata.due_date,
+        metadata.dueDate,
+        metadata.deadline,
+        metadata.deadline_at,
+        metadata.deadlineAt,
+        submissionWindow.due_date,
+        submissionWindow.dueDate,
+        submissionWindow.due_at,
+        submissionWindow.dueAt,
+        dates.due,
+        dates.due_at,
+        dates.dueAt,
+    ));
+}
+
+export function resolveAssignmentReleaseAt(row = {}) {
+    const metadata = safeJsonObject(row.assignment_metadata);
+    const submissionWindow = safeJsonObject(metadata.submission_window || metadata.submissionWindow);
+    const dates = safeJsonObject(metadata.dates);
+
+    return normalizeDateValue(firstPresentValue(
+        row.release_at,
+        row.exam_release_at,
+        metadata.release,
+        metadata.release_at,
+        metadata.releaseAt,
+        metadata.release_date,
+        metadata.releaseDate,
+        submissionWindow.release_date,
+        submissionWindow.releaseDate,
+        submissionWindow.release_at,
+        submissionWindow.releaseAt,
+        dates.release,
+        dates.release_at,
+        dates.releaseAt,
+    ));
+}
+
 /**
  * Gets student submissions sorted by submission time
  * @param {string} email - The student's email
@@ -275,6 +348,9 @@ export async function getStudentSubmissionsByTime(email, courseId = null) {
             a.max_points,
             s.submission_time,
             s.lateness,
+            a.assignment_metadata,
+            eam.due_at AS exam_due_at,
+            eam.release_at AS exam_release_at,
             c.name as course_name,
             c.semester,
             c.year
@@ -282,6 +358,9 @@ export async function getStudentSubmissionsByTime(email, courseId = null) {
         JOIN assignments a ON s.assignment_id = a.id
         JOIN students st ON s.student_id = st.id
         JOIN courses c ON a.course_id = c.id
+        LEFT JOIN exam_attempt_map eam
+          ON eam.assignment_id = a.id
+         AND eam.course_id = c.id
         WHERE st.email = $1
     `;
     
@@ -307,6 +386,8 @@ export async function getStudentSubmissionsByTime(email, courseId = null) {
             percentage: row.max_points > 0 ? (parseFloat(row.score) / parseFloat(row.max_points)) * 100 : 0,
             submissionTime: row.submission_time,
             lateness: row.lateness,
+            dueAt: resolveAssignmentDueAt(row),
+            releaseAt: resolveAssignmentReleaseAt(row),
             courseName: row.course_name,
             semester: row.semester,
             year: row.year,
@@ -337,11 +418,17 @@ export async function getStudentSubmissionsGrouped(email, courseId = null) {
                 COALESCE(s.total_score, 0) as score,
                 a.max_points,
                 s.submission_time,
-                s.lateness
+                s.lateness,
+                a.assignment_metadata,
+                eam.due_at AS exam_due_at,
+                eam.release_at AS exam_release_at
             FROM assignments a
             JOIN courses c ON a.course_id = c.id
             LEFT JOIN students st ON st.email = $1 AND st.course_id = c.id
             LEFT JOIN submissions s ON s.assignment_id = a.id AND s.student_id = st.id
+            LEFT JOIN exam_attempt_map eam
+              ON eam.assignment_id = a.id
+             AND eam.course_id = c.id
             WHERE (c.gradescope_course_id::text = $2 OR c.id::text = $2)
             ORDER BY a.category, a.title
         `;
@@ -354,11 +441,17 @@ export async function getStudentSubmissionsGrouped(email, courseId = null) {
                 s.total_score as score,
                 a.max_points,
                 s.submission_time,
-                s.lateness
+                s.lateness,
+                a.assignment_metadata,
+                eam.due_at AS exam_due_at,
+                eam.release_at AS exam_release_at
             FROM submissions s
             JOIN assignments a ON s.assignment_id = a.id
             JOIN students st ON s.student_id = st.id
             JOIN courses c ON a.course_id = c.id
+            LEFT JOIN exam_attempt_map eam
+              ON eam.assignment_id = a.id
+             AND eam.course_id = c.id
             WHERE st.email = $1
         `;
         params = [email];
@@ -383,6 +476,8 @@ export async function getStudentSubmissionsGrouped(email, courseId = null) {
                 max: parseFloat(row.max_points) || 0,
                 submissionTime: row.submission_time,
                 lateness: row.lateness,
+                dueAt: resolveAssignmentDueAt(row),
+                releaseAt: resolveAssignmentReleaseAt(row),
             };
         });
         

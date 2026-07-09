@@ -93,6 +93,8 @@ function getStudentScoresWithMaxPointsAndTime(studentScores, maxScores) {
                 max: maxScore,
                 submissionTime: data.submissionTime,
                 lateness: data.lateness,
+                dueAt: data.dueAt,
+                releaseAt: data.releaseAt,
             };
             return scoresDict;
         }, {});
