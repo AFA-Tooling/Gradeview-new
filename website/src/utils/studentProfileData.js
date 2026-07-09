@@ -2,7 +2,6 @@ import apiv2 from './apiv2';
 import { cachedApiGet } from './apiCache';
 import {
   processStudentData,
-  applyExamPolicyToProcessedData,
   buildQuestComponentTrendFallback,
   buildQuestComponentTrendFromAssignments,
 } from './studentDataProcessor';
@@ -14,15 +13,49 @@ export function resolveCourseQueryId(courseId, courses = []) {
   return matchedCourse?.gradescope_course_id || courseId;
 }
 
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 export function applyCanonicalGrade(processedData, canonicalGrade) {
   if (!processedData || typeof processedData !== 'object') {
     return processedData;
   }
   if (!canonicalGrade || canonicalGrade.basis !== 'policy_final') {
+    const rawEvidenceCategoriesData = processedData.categoriesData || {};
+    const hasRawEvidence = Object.keys(rawEvidenceCategoriesData).length > 0
+      || (Array.isArray(processedData.assignmentsList) && processedData.assignmentsList.length > 0);
     return {
       ...processedData,
+      categoriesData: Object.fromEntries(Object.entries(rawEvidenceCategoriesData).map(([label, category]) => [
+        label,
+        { ...category, basis: 'raw_evidence' },
+      ])),
+      rawEvidenceCategoriesData,
+      rawEvidenceStanding: {
+        basis: 'raw_evidence',
+        status: hasRawEvidence ? 'available' : 'unavailable',
+        exactScore: optionalNumber(processedData.totalScore),
+        cap: optionalNumber(processedData.totalCapPoints),
+        percentage: optionalNumber(processedData.overallPercentage),
+      },
       canonicalGrade: null,
       policyStandingStatus: 'unavailable',
+      policyStandingError: 'canonical_grade_missing',
+      policyFinalExactScore: null,
+      policyFinalDisplayScore: null,
+      policyFinalCap: null,
+      policyFinalPercentage: null,
+      policyFinalLetter: null,
+      policyFinalBin: null,
+      examPolicySubtotal: null,
+      totalScore: null,
+      displayScore: null,
+      totalCapPoints: null,
+      overallPercentage: null,
+      gradeLetter: null,
     };
   }
 
@@ -268,9 +301,7 @@ export function buildStudentProfileData(payload, studentEmail, studentName) {
     radarData: [],
     trendData: [],
   };
-  const processedWithPolicy = canonicalGrade
-    ? processedBase
-    : applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+  const processedWithPolicy = processedBase;
   const processed = applyCanonicalGrade(processedWithPolicy, canonicalGrade);
   if (!processed) return null;
 

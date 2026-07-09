@@ -165,8 +165,9 @@ function formatPercentage(value, digits = 1) {
 }
 
 function formatPolicyPoints(value) {
+  if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return '0';
+  if (!Number.isFinite(numeric)) return '-';
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
 }
 

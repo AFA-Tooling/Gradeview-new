@@ -192,8 +192,9 @@ ChartJS.register(
 const DEFAULT_BATTERY_SEGMENTS = Array.from({ length: 10 }, (_, index) => index);
 
 function formatPolicyPoints(value) {
+  if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return '0';
+  if (!Number.isFinite(numeric)) return '-';
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
 }
 

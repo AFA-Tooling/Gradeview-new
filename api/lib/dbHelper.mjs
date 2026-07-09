@@ -16,7 +16,11 @@ import {
     buildPolicySummary,
     canonicalGradeToGradeFlowTotal,
     canonicalGradeToLegacySummary,
+    resolveQuestPolicyScore,
 } from './canonicalGrade.mjs';
+import { buildPolicySummaryFromComponentMaps } from './policySummaryBuilder.mjs';
+
+export { buildPolicySummaryFromComponentMaps } from './policySummaryBuilder.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Relative to api/lib/ is ../../
@@ -1095,8 +1099,8 @@ async function getExamSummaryDistribution(examType, capPoints, courseId = null, 
 
     const result = await pool.query(query, params);
     const hasEffectiveData = result.rows.some((row) => (
-        Number.isFinite(Number(row.primary_best_percentage))
-        || (includePosttermClobber && Number.isFinite(Number(row.postterm_best_percentage)))
+        toOptionalNumber(row.primary_best_percentage) != null
+        || (includePosttermClobber && toOptionalNumber(row.postterm_best_percentage) != null)
     ));
 
     if (!hasEffectiveData && rawCategory) {
@@ -1104,17 +1108,17 @@ async function getExamSummaryDistribution(examType, capPoints, courseId = null, 
     }
 
     return result.rows.map((row) => {
-        const primaryBestPct = Number(row.primary_best_percentage);
-        const posttermBestPct = Number(row.postterm_best_percentage);
+        const primaryBestPct = toOptionalNumber(row.primary_best_percentage);
+        const posttermBestPct = toOptionalNumber(row.postterm_best_percentage);
 
-        let effectivePct = Number.isFinite(primaryBestPct) ? primaryBestPct : 0;
-        if (includePosttermClobber && Number.isFinite(posttermBestPct)) {
+        let effectivePct = primaryBestPct ?? 0;
+        if (includePosttermClobber && posttermBestPct != null) {
             effectivePct = Math.max(effectivePct, posttermBestPct);
         }
 
         const rawScore = (effectivePct / 100) * capPoints;
-        const hasPolicyEvidence = Number.isFinite(primaryBestPct)
-            || (includePosttermClobber && Number.isFinite(posttermBestPct));
+        const hasPolicyEvidence = primaryBestPct != null
+            || (includePosttermClobber && posttermBestPct != null);
         return {
             studentName: row.student_name,
             studentEmail: row.student_email,
@@ -1148,6 +1152,12 @@ function toExactNumber(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return 0;
     return numeric;
+}
+
+function toOptionalNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
 }
 
 function buildQuestComponentCapMap(assignmentMetadata = {}, scoresByQuestion = {}) {
@@ -1497,7 +1507,8 @@ async function getQuestSummaryDistribution(courseId = null, questCap = QUEST_SUM
             st.id AS student_id,
             st.legal_name AS student_name,
             st.email AS student_email,
-            MAX(COALESCE(e.final_percentage, e.question_best_percentage)) AS best_percentage
+            MAX(e.final_percentage) AS final_percentage,
+            MAX(e.question_best_percentage) AS question_best_percentage
         FROM students st
         JOIN courses c ON st.course_id = c.id
         LEFT JOIN student_exam_effective_scores e
@@ -1519,7 +1530,10 @@ async function getQuestSummaryDistribution(courseId = null, questCap = QUEST_SUM
 
     try {
         const policyResult = await pool.query(policyQuery, params);
-        const hasPolicyData = policyResult.rows.some((row) => Number.isFinite(Number(row.best_percentage)));
+        const hasPolicyData = policyResult.rows.some((row) => (
+            toOptionalNumber(row.final_percentage) != null
+            || toOptionalNumber(row.question_best_percentage) != null
+        ));
 
         if (hasPolicyData) {
             const componentFallbackRows = await getQuestSummaryDistributionFromComponents(courseId, questCap);
@@ -1531,34 +1545,27 @@ async function getQuestSummaryDistribution(courseId = null, questCap = QUEST_SUM
             );
 
             return policyResult.rows.map((row) => {
-                const bestPct = Number(row.best_percentage);
+                const finalPct = toOptionalNumber(row.final_percentage);
+                const questionBestPct = toOptionalNumber(row.question_best_percentage);
                 const fallbackRow = componentFallbackByEmail.get(
                     String(row.student_email || '').trim().toLowerCase(),
                 );
-                const policyRawScore = Number.isFinite(bestPct)
-                    ? (bestPct / 100) * questCap
-                    : null;
-                const policyScore = Number.isFinite(policyRawScore)
-                    ? Math.min(questCap, toExactNumber(policyRawScore))
-                    : null;
                 const fallbackScore = Number(fallbackRow?.score);
-                // The effective policy score is authoritative when available.
-                // Component reconstruction is evidence fallback, never a
-                // competing "best" total that can override the final value.
-                const effectiveScore = Number.isFinite(policyScore)
-                    ? policyScore
-                    : (Number.isFinite(fallbackScore) ? fallbackScore : 0);
+                const resolution = resolveQuestPolicyScore({
+                    policyFinalScore: finalPct == null ? null : (finalPct / 100) * questCap,
+                    questionBestScore: questionBestPct == null ? null : (questionBestPct / 100) * questCap,
+                    reconstructedScore: Number.isFinite(fallbackScore) ? fallbackScore : null,
+                    cap: questCap,
+                });
 
                 return {
                     studentName: row.student_name,
                     studentEmail: row.student_email,
-                    score: Math.min(questCap, effectiveScore),
-                    status: Number.isFinite(bestPct) || Boolean(fallbackRow) ? 'available' : 'unavailable',
-                    source: Number.isFinite(bestPct) ? 'student_exam_effective_scores:quest' : 'quest_component_best',
+                    score: resolution.exactScore,
+                    status: resolution.status,
+                    source: resolution.source,
                 };
-            }).filter((row) => row.score > 0 || componentFallbackByEmail.has(
-                String(row.studentEmail || '').trim().toLowerCase(),
-            ));
+            }).filter((row) => row.status === 'available');
         }
     } catch (err) {
         console.warn('Quest policy summary query failed, falling back to component summary:', err?.message || err);
@@ -2023,45 +2030,6 @@ export async function getCategorySummaryDistribution(category, courseId = null, 
         console.error('Error fetching category summary distribution:', err);
         throw err;
     }
-}
-
-export function buildPolicySummaryFromComponentMaps({
-    policy,
-    components,
-    byComponent,
-    email,
-    asOf = null,
-    rawEvidence = null,
-    dueWorkProgress = null,
-} = {}) {
-    const targetEmail = String(email || '').trim().toLowerCase();
-    const categoryScores = {};
-
-    (byComponent || []).forEach(({ component, rowMap }) => {
-        const hasScore = rowMap instanceof Map && rowMap.has(targetEmail);
-        const storedScore = hasScore ? rowMap.get(targetEmail) : null;
-        categoryScores[component.key] = hasScore
-            ? storedScore
-            : {
-                exactScore: 0,
-                status: 'unavailable',
-                source: component.summary_source || component.label,
-            };
-    });
-
-    const canonicalGrade = buildCanonicalGrade({
-        components,
-        categoryScores,
-        totalCap: policy.total_points_cap,
-        gradeBins: policy.grade_bins,
-        roundingPolicy: policy.rounding || policy.rounding_policy,
-        source: policy.source || 'course_policy_summary',
-        asOf,
-        rawEvidence,
-        dueWorkProgress,
-    });
-
-    return buildPolicySummary(canonicalGrade);
 }
 
 export async function getAllStudentPolicySummaries(courseId = null) {

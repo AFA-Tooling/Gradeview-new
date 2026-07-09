@@ -45,6 +45,48 @@ function firstFinite(...values) {
     return null;
 }
 
+function optionalFiniteNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+export function resolveQuestPolicyScore({
+    policyFinalScore,
+    questionBestScore,
+    reconstructedScore,
+    cap = Number.POSITIVE_INFINITY,
+} = {}) {
+    const maximum = optionalFiniteNumber(cap);
+    const bounded = (value) => {
+        const numeric = optionalFiniteNumber(value);
+        if (numeric == null) return null;
+        return cleanNumber(clamp(numeric, 0, maximum != null && maximum > 0 ? maximum : numeric));
+    };
+    const candidates = [
+        ['policy_final', bounded(policyFinalScore), false],
+        ['question_best_fallback', bounded(questionBestScore), true],
+        ['component_reconstruction_fallback', bounded(reconstructedScore), true],
+    ];
+    const selected = candidates.find(([, score]) => score != null);
+
+    if (!selected) {
+        return {
+            exactScore: 0,
+            status: 'unavailable',
+            source: 'quest_policy_unavailable',
+            usedFallback: false,
+        };
+    }
+
+    return {
+        exactScore: selected[1],
+        status: 'available',
+        source: selected[0],
+        usedFallback: selected[2],
+    };
+}
+
 export function normalizeRoundingPolicy(rawPolicy) {
     if (rawPolicy && typeof rawPolicy === 'object' && rawPolicy.mode) {
         const mode = String(rawPolicy.mode).trim().toLowerCase();
