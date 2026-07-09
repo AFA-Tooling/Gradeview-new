@@ -39,7 +39,7 @@ export default function AIAgentSettings({ open, onClose }) {
 
   const handleSave = () => {
     if (apiKey.trim()) {
-      aiAgent.initialize(apiKey);
+      aiAgent.initialize({ apiKey });
       setSaved(true);
       setTimeout(() => {
         setSaved(false);
@@ -50,7 +50,7 @@ export default function AIAgentSettings({ open, onClose }) {
 
   const handleClear = () => {
     setApiKey('');
-    aiAgent.initialize('');
+    aiAgent.initialize({ apiKey: '' });
   };
 
   return (
