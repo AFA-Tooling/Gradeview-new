@@ -1,4 +1,10 @@
 // src/services/aiAgent.js
+import {
+  buildCourseScopedAIPath,
+  createLiveCourseSource,
+  normalizeAIAnalyticsCourseId,
+} from '../utils/aiAnalytics';
+
 /**
  * AI Agent Service - Universal Version
  * Agent capabilities:
@@ -8,7 +14,16 @@
  * 4. Use AI to explain results
  */
 
-class AIAgent {
+export class AIQueryRequestError extends Error {
+  constructor(message, { status = 0, code = 'QUERY_FAILED' } = {}) {
+    super(message);
+    this.name = 'AIQueryRequestError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export class AIAgent {
   constructor() {
     this.apiKey = ''; // API key (read from environment variables)
     this.conversationHistory = [];
@@ -20,15 +35,16 @@ class AIAgent {
    * Initialize AI Agent
    * @param {string} apiKey - AI service API key (optional, environment variable takes priority)
    */
-  async initialize(apiKey = '') {
+  async initialize({ apiKey = '', courseId = '', signal } = {}) {
     this.apiKey = apiKey || process.env.REACT_APP_OPENAI_API_KEY || '';
     this.initialized = true;
     
     // Fetch database schema
     try {
-      await this.fetchDatabaseSchema();
+      await this.fetchDatabaseSchema(courseId, signal);
       console.log('AI Agent initialized with database schema');
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.warn('Failed to fetch database schema:', error);
       console.log('AI Agent initialized in basic mode');
     }
@@ -37,19 +53,23 @@ class AIAgent {
   /**
    * Fetch Database Schema Information
    */
-  async fetchDatabaseSchema() {
+  async fetchDatabaseSchema(courseId, signal) {
     const token = localStorage.getItem('token');
     if (!token) {
       console.warn('No auth token, skipping schema fetch');
       return;
     }
 
+    const normalizedCourseId = normalizeAIAnalyticsCourseId(courseId);
+    if (!normalizedCourseId) return;
+
     try {
-      const response = await fetch('/api/v2/admin/ai-query/schema', {
+      const response = await fetch(buildCourseScopedAIPath('/api/v2/admin/ai-query/schema', normalizedCourseId), {
         method: 'GET',
         headers: {
           'Authorization': token
-        }
+        },
+        signal,
       });
 
       if (response.ok) {
@@ -58,6 +78,7 @@ class AIAgent {
         console.log('Database schema loaded:', this.databaseSchema);
       }
     } catch (error) {
+      if (error?.name === 'AbortError') throw error;
       console.error('Failed to fetch schema:', error);
     }
   }
@@ -67,7 +88,7 @@ class AIAgent {
    * @param {string} query - User's natural language query
    * @returns {Promise<object>} - Query results
    */
-  async processQuery(query) {
+  async processQuery(query, { courseId, signal } = {}) {
     console.log(`[AI Agent] Processing query: "${query}"`);
 
     // Add to conversation history
@@ -77,23 +98,9 @@ class AIAgent {
       timestamp: new Date().toISOString()
     });
 
-    let response;
-    
-    try {
-      // Call backend API (AI will dynamically generate SQL)
-      response = await this.queryBackend(query);
-      console.log('[AI Agent] Query successful:', response);
-    } catch (error) {
-      console.error('[AI Agent] Query failed:', error);
-      // Return error response
-      response = {
-        type: 'error',
-        answer: `Query failed: ${error.message}`,
-        data: null,
-        suggestions: ['Please check the query content', 'Ensure you are logged in', 'Try a simpler query'],
-        visualizationType: 'text'
-      };
-    }
+    // Call backend API (AI will dynamically generate SQL)
+    const response = await this.queryBackend(query, { courseId, signal });
+    console.log('[AI Agent] Query successful:', response);
 
     // Add to conversation history
     this.conversationHistory.push({
@@ -112,14 +119,25 @@ class AIAgent {
    * @param {string} query - User query
    * @returns {Promise<object>} - API response
    */
-  async queryBackend(query) {
+  async queryBackend(query, { courseId, signal } = {}) {
     // Get authentication token from localStorage
     const token = localStorage.getItem('token');
     if (!token) {
-      throw new Error('Please login to admin account first');
+      throw new AIQueryRequestError('Your session is no longer available.', {
+        status: 401,
+        code: 'SESSION_REQUIRED',
+      });
     }
 
-    const response = await fetch('/api/v2/admin/ai-query', {
+    const normalizedCourseId = normalizeAIAnalyticsCourseId(courseId);
+    if (!normalizedCourseId) {
+      throw new AIQueryRequestError('Select a course before running AI Analytics.', {
+        status: 400,
+        code: 'COURSE_REQUIRED',
+      });
+    }
+
+    const response = await fetch(buildCourseScopedAIPath('/api/v2/admin/ai-query', normalizedCourseId), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -128,16 +146,40 @@ class AIAgent {
       body: JSON.stringify({
         query: query,
         useAI: !!this.apiKey  // Use AI if API key exists, otherwise use rules
-      })
+      }),
+      signal,
     });
 
+    const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(`API error ${response.status}: ${errorText}`);
+      const message = payload?.message || payload?.error || `Request failed with status ${response.status}.`;
+      throw new AIQueryRequestError(message, { status: response.status });
+    }
+    if (payload?.type === 'error' || payload?.error) {
+      throw new AIQueryRequestError(
+        payload?.answer || payload?.message || payload?.error || 'The query did not complete.',
+        { status: 500 },
+      );
     }
 
-    const data = await response.json();
-    return data;
+    const responseCourseId = normalizeAIAnalyticsCourseId(payload?.source?.course_id);
+    if (payload?.source?.type && payload.source.type !== 'live_course') {
+      throw new AIQueryRequestError('The response was not identified as live course data.', {
+        status: 409,
+        code: 'SOURCE_MISMATCH',
+      });
+    }
+    if (responseCourseId && responseCourseId !== normalizedCourseId) {
+      throw new AIQueryRequestError('The response belongs to a different course.', {
+        status: 409,
+        code: 'SOURCE_MISMATCH',
+      });
+    }
+
+    return {
+      ...payload,
+      source: payload?.source || createLiveCourseSource(normalizedCourseId),
+    };
   }
 
   /**

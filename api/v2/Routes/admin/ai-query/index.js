@@ -1,5 +1,11 @@
 import { Router } from 'express';
 import { getPool } from '../../../../lib/dbHelper.mjs';
+import {
+    COURSE_SCOPE_PREDICATE,
+    addLiveCourseSource,
+    assertCourseScopedSql,
+    normalizeCourseId,
+} from './courseScope.js';
 
 const router = Router({ mergeParams: true });
 
@@ -74,11 +80,17 @@ const DATABASE_SCHEMA = {
  */
 router.post('/', async (req, res) => {
     try {
-        const { query, useAI = true } = req.body;
+        const { query, useAI = true } = req.body || {};
+        const courseId = normalizeCourseId(req.query?.course_id);
         
-        if (!query) {
+        if (!String(query || '').trim()) {
             return res.status(400).json({ 
                 error: 'Missing required field: query' 
+            });
+        }
+        if (!courseId) {
+            return res.status(400).json({
+                error: 'Select exactly one course before running AI Analytics',
             });
         }
 
@@ -88,13 +100,13 @@ router.post('/', async (req, res) => {
         
         if (useAI && process.env.OPENAI_API_KEY) {
             // 使用AI生成SQL并执行
-            result = await processWithAI(query);
+            result = await processWithAI(query, courseId);
         } else {
             // Fall back to rule-based queries
-            result = await processWithRules(query);
+            result = await processWithRules(query, courseId);
         }
 
-        res.json(result);
+        res.json(addLiveCourseSource(result, courseId));
 
     } catch (error) {
         console.error('[AI Agent Error]', error);
@@ -108,7 +120,7 @@ router.post('/', async (req, res) => {
 /**
  * Generate SQL with AI and execute
  */
-async function processWithAI(userQuery) {
+async function processWithAI(userQuery, courseId) {
     const apiKey = process.env.OPENAI_API_KEY;
     
     if (!apiKey) {
@@ -124,7 +136,7 @@ async function processWithAI(userQuery) {
     validateSQL(sqlQuery);
 
     // 3. Execute SQL
-    const queryResult = await getDbPool().query(sqlQuery);
+    const queryResult = await executeCourseScopedQuery(sqlQuery, courseId);
 
     // 4. Explain results using AI
     const explanation = await explainResultsWithAI(userQuery, queryResult.rows, apiKey);
@@ -158,6 +170,8 @@ Requirements:
 5. Use ROUND() to keep 2 decimal places for numeric values
 6. Handle NULL values (use NULLIF, COALESCE, etc.)
 7. For percentage calculations, ensure denominator is not zero
+8. The selected course is supplied as PostgreSQL parameter $1. Join the courses table with alias c and require both supported identifiers using exactly: WHERE (c.id::text = $1 OR c.gradescope_course_id::text = $1)
+9. Every assignments/submissions/student result must be reachable through that selected-course join; never query data from other courses
 
 SQL Query:`;
 
@@ -272,32 +286,39 @@ function validateSQL(sql) {
         throw new Error('Multiple SQL statements not allowed');
     }
 
+    assertCourseScopedSql(sql);
+
     return true;
+}
+
+async function executeCourseScopedQuery(sql, courseId) {
+    assertCourseScopedSql(sql);
+    return getDbPool().query(sql, [courseId]);
 }
 
 /**
  * Rule-based query processing (fallback mode)
  */
-async function processWithRules(userQuery) {
+async function processWithRules(userQuery, courseId) {
     const queryLower = userQuery.toLowerCase();
     
     // Simple keyword matching
     if (queryLower.includes('学生') || queryLower.includes('student') || queryLower.includes('波动') || queryLower.includes('variance')) {
-        return await getStudentAnalysis();
+        return await getStudentAnalysis(courseId);
     } else if (queryLower.includes('作业') || queryLower.includes('assignment') || queryLower.includes('题目')) {
-        return await getAssignmentAnalysis();
+        return await getAssignmentAnalysis(courseId);
     } else if (queryLower.includes('统计') || queryLower.includes('平均') || queryLower.includes('average') || queryLower.includes('statistics')) {
-        return await getStatistics();
+        return await getStatistics(courseId);
     } else {
-        return await getGeneralOverview();
+        return await getGeneralOverview(courseId);
     }
 }
 
 /**
  * Student analysis (fallback mode)
  */
-async function getStudentAnalysis() {
-    const result = await getDbPool().query(`
+async function getStudentAnalysis(courseId) {
+    const result = await executeCourseScopedQuery(`
         WITH student_stats AS (
             SELECT 
                 s.id,
@@ -307,7 +328,10 @@ async function getStudentAnalysis() {
                 AVG(sub.total_score / NULLIF(sub.max_points, 0) * 100) as avg_score,
                 STDDEV(sub.total_score / NULLIF(sub.max_points, 0) * 100) as score_stddev
             FROM students s
-            LEFT JOIN submissions sub ON s.id = sub.student_id
+            JOIN submissions sub ON s.id = sub.student_id
+            JOIN assignments a ON a.id = sub.assignment_id
+            JOIN courses c ON c.id = a.course_id
+            WHERE ${COURSE_SCOPE_PREDICATE}
             GROUP BY s.id, s.legal_name, s.sid
             HAVING COUNT(sub.id) > 0
         )
@@ -321,7 +345,7 @@ async function getStudentAnalysis() {
         WHERE score_stddev IS NOT NULL
         ORDER BY score_stddev DESC
         LIMIT 10
-    `);
+    `, courseId);
 
     return {
         type: 'rule_based',
@@ -335,8 +359,8 @@ async function getStudentAnalysis() {
 /**
  * Assignment analysis (fallback mode)
  */
-async function getAssignmentAnalysis() {
-    const result = await getDbPool().query(`
+async function getAssignmentAnalysis(courseId) {
+    const result = await executeCourseScopedQuery(`
         SELECT 
             a.title,
             a.category,
@@ -344,13 +368,15 @@ async function getAssignmentAnalysis() {
             COUNT(sub.id) as submission_count,
             ROUND(AVG(sub.total_score / NULLIF(a.max_points, 0) * 100)::numeric, 2) as avg_score_pct
         FROM assignments a
+        JOIN courses c ON c.id = a.course_id
         LEFT JOIN submissions sub ON a.id = sub.assignment_id
-        WHERE a.title IS NOT NULL
+        WHERE ${COURSE_SCOPE_PREDICATE}
+          AND a.title IS NOT NULL
         GROUP BY a.id, a.title, a.category, a.max_points
         HAVING COUNT(sub.id) > 0
         ORDER BY avg_score_pct ASC
         LIMIT 10
-    `);
+    `, courseId);
 
     return {
         type: 'rule_based',
@@ -364,13 +390,16 @@ async function getAssignmentAnalysis() {
 /**
  * Statistical analysis (fallback mode)
  */
-async function getStatistics() {
-    const result = await getDbPool().query(`
+async function getStatistics(courseId) {
+    const result = await executeCourseScopedQuery(`
         WITH score_stats AS (
             SELECT 
                 (sub.total_score / NULLIF(sub.max_points, 0) * 100) as score_pct
             FROM submissions sub
-            WHERE sub.total_score IS NOT NULL 
+            JOIN assignments a ON a.id = sub.assignment_id
+            JOIN courses c ON c.id = a.course_id
+            WHERE ${COURSE_SCOPE_PREDICATE}
+              AND sub.total_score IS NOT NULL
               AND sub.max_points IS NOT NULL
               AND sub.max_points > 0
         )
@@ -382,7 +411,7 @@ async function getStatistics() {
             ROUND(MAX(score_pct)::numeric, 2) as max,
             COUNT(*) as total_records
         FROM score_stats
-    `);
+    `, courseId);
 
     return {
         type: 'rule_based',
@@ -396,18 +425,19 @@ async function getStatistics() {
 /**
  * General overview (fallback mode)
  */
-async function getGeneralOverview() {
-    const result = await getDbPool().query(`
+async function getGeneralOverview(courseId) {
+    const result = await executeCourseScopedQuery(`
         SELECT 
             COUNT(DISTINCT s.id) as total_students,
             COUNT(DISTINCT a.id) as total_assignments,
             COUNT(sub.id) as total_submissions,
             ROUND(AVG(sub.total_score / NULLIF(sub.max_points, 0) * 100)::numeric, 2) as overall_avg
-        FROM students s
-        CROSS JOIN assignments a
-        LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.assignment_id = a.id
-        WHERE sub.id IS NOT NULL
-    `);
+        FROM assignments a
+        JOIN courses c ON c.id = a.course_id
+        JOIN submissions sub ON sub.assignment_id = a.id
+        JOIN students s ON s.id = sub.student_id
+        WHERE ${COURSE_SCOPE_PREDICATE}
+    `, courseId);
 
     return {
         type: 'rule_based',
@@ -476,9 +506,17 @@ function inferVisualizationType(results) {
  * 返回数据库schema信息
  */
 router.get('/schema', async (req, res) => {
+    const courseId = normalizeCourseId(req.query?.course_id);
+    if (!courseId) {
+        return res.status(400).json({ error: 'Select exactly one course before loading AI Analytics schema' });
+    }
     res.json({
         schema: DATABASE_SCHEMA,
-        note: 'Use this schema to understand the database structure'
+        note: 'Use this schema to understand the database structure',
+        source: {
+            type: 'live_course',
+            course_id: courseId,
+        },
     });
 });
 

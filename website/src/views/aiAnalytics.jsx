@@ -1,5 +1,5 @@
 // src/views/aiAnalytics.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -12,6 +12,7 @@ import {
   CardActions,
   Chip,
   Alert,
+  AlertTitle,
   List,
   ListItem,
   ListItemText,
@@ -41,6 +42,84 @@ import {
 } from '@mui/icons-material';
 import aiAgent from '../services/aiAgent';
 import AIAgentSettings from '../components/AIAgentSettings';
+import {
+  AI_QUERY_STATUS,
+  SAMPLE_ANALYTICS_SOURCE,
+  aiQueryReducer,
+  createInitialAIQueryState,
+  createLiveCourseSource,
+  getAIQueryFailurePresentation,
+  getAnalyticsSourceLabel,
+  resolveAIAnalyticsCourse,
+} from '../utils/aiAnalytics';
+
+const SAMPLE_KNOWLEDGE_GAPS = [
+  {
+    topic: 'Recursive Functions',
+    errorRate: 65,
+    affectedStudents: 28,
+    commonMistakes: ['Base condition undefined', 'Recursion depth too large', 'Return value error'],
+    severity: 'high',
+  },
+  {
+    topic: 'Memory Management',
+    errorRate: 48,
+    affectedStudents: 21,
+    commonMistakes: ['Memory leak', 'Pointer usage error'],
+    severity: 'medium',
+  },
+  {
+    topic: 'Algorithm Complexity',
+    errorRate: 32,
+    affectedStudents: 14,
+    commonMistakes: ['Time complexity calculation error'],
+    severity: 'low',
+  },
+];
+
+const SAMPLE_RISK_STUDENTS = [
+  {
+    name: 'Zhang San',
+    email: 'zhang@example.com',
+    riskLevel: 'high',
+    reasons: ['3 consecutive late submissions', 'Score continuously dropped 15%', 'Did not attend recent Office Hours'],
+    currentGrade: 72,
+    trend: -8,
+  },
+  {
+    name: 'Li Si',
+    email: 'li@example.com',
+    riskLevel: 'medium',
+    reasons: ['Submission time concentrated 2 hours before deadline', 'Abnormally high code modification frequency'],
+    currentGrade: 85,
+    trend: -3,
+  },
+];
+
+const SAMPLE_EXAM_ANALYSIS = [
+  {
+    questionNumber: 8,
+    title: 'Binary Tree Traversal',
+    avgTime: 40,
+    points: 5,
+    discrimination: 0.28,
+    difficulty: 0.72,
+    issue: 'Time allocation unreasonable',
+    recommendation: 'Suggest increasing points to 10 or reducing difficulty',
+  },
+  {
+    questionNumber: 3,
+    title: 'Basic Syntax',
+    avgTime: 5,
+    points: 10,
+    discrimination: 0.12,
+    difficulty: 0.95,
+    issue: 'Discrimination too low',
+    recommendation: 'Question too easy, cannot distinguish student abilities',
+  },
+];
+
+const SUGGESTED_QUERIES = aiAgent.getSuggestions();
 
 /**
  * AI Analytics - 4 Intelligent Analysis Modules
@@ -49,43 +128,77 @@ import AIAgentSettings from '../components/AIAgentSettings';
  * 3. Student Success Alert
  * 4. Question Quality Analysis
  */
-export default function AIAnalytics() {
-  const [queryInput, setQueryInput] = useState('');
-  const [queryLoading, setQueryLoading] = useState(false);
-  const [queryResult, setQueryResult] = useState(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+export default function AIAnalytics({ selectedCourseId = '', courses = [] }) {
+  const courseContext = resolveAIAnalyticsCourse(selectedCourseId, courses);
+  const instanceKey = courseContext.courseId || 'no-course';
 
-  // Initialize AI Agent
+  return <AIAnalyticsCourse key={instanceKey} courseContext={courseContext} />;
+}
+
+function AIAnalyticsCourse({ courseContext }) {
+  const { courseId, courseLabel } = courseContext;
+  const [queryInput, setQueryInput] = useState('');
+  const [queryState, dispatchQuery] = useReducer(
+    aiQueryReducer,
+    undefined,
+    createInitialAIQueryState,
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const requestControllerRef = useRef(null);
+  const requestIdRef = useRef(0);
+  const queryLoading = queryState.status === AI_QUERY_STATUS.LOADING;
+  const queryResult = queryState.status === AI_QUERY_STATUS.SUCCESS ? queryState.result : null;
+
   useEffect(() => {
-    aiAgent.initialize(); // API key empty, use demo mode
+    if (!courseId) return undefined;
+
+    const schemaController = new AbortController();
+    aiAgent.initialize({ courseId, signal: schemaController.signal });
+    return () => schemaController.abort();
+  }, [courseId]);
+
+  useEffect(() => () => {
+    requestIdRef.current += 1;
+    requestControllerRef.current?.abort();
   }, []);
 
-  // Example query suggestions
-  const suggestedQueries = aiAgent.getSuggestions();
+  const handleQuery = useCallback(async () => {
+    const query = queryInput.trim();
+    if (!query || !courseId) return;
 
-  // Handle natural language queries
-  const handleQuery = async () => {
-    if (!queryInput.trim()) return;
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    requestControllerRef.current = controller;
+    dispatchQuery({ type: 'query-started', requestId, query });
 
-    setQueryLoading(true);
-    
     try {
-      // Call AI Agent to process query (auto-generate SQL)
-      const result = await aiAgent.processQuery(queryInput);
-      
-      setQueryResult(result);
-    } catch (error) {
-      console.error('Query processing error:', error);
-      setQueryResult({
-        type: 'error',
-        answer: 'Sorry, an error occurred while processing the query. Please try again later.',
-        data: null,
-        suggestions: ['Check network connection', 'Ensure you are logged in', 'Try a simpler query']
+      const result = await aiAgent.processQuery(query, {
+        courseId,
+        signal: controller.signal,
       });
-    } finally {
-      setQueryLoading(false);
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+
+      dispatchQuery({
+        type: 'query-succeeded',
+        requestId,
+        result,
+        source: {
+          ...createLiveCourseSource(courseId, courseLabel),
+          ...result.source,
+          label: courseLabel,
+        },
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError' || controller.signal.aborted) return;
+      dispatchQuery({
+        type: 'query-failed',
+        requestId,
+        error: getAIQueryFailurePresentation(error),
+      });
     }
-  };
+  }, [courseId, courseLabel, queryInput]);
 
   // Render data table
   const renderDataTable = (data) => {
@@ -129,75 +242,6 @@ export default function AIAnalytics() {
     );
   };
 
-  // Sample knowledge gap data
-  const knowledgeGaps = [
-    {
-      topic: 'Recursive Functions',
-      errorRate: 65,
-      affectedStudents: 28,
-      commonMistakes: ['Base condition undefined', 'Recursion depth too large', 'Return value error'],
-      severity: 'high'
-    },
-    {
-      topic: 'Memory Management',
-      errorRate: 48,
-      affectedStudents: 21,
-      commonMistakes: ['Memory leak', 'Pointer usage error'],
-      severity: 'medium'
-    },
-    {
-      topic: 'Algorithm Complexity',
-      errorRate: 32,
-      affectedStudents: 14,
-      commonMistakes: ['Time complexity calculation error'],
-      severity: 'low'
-    },
-  ];
-
-  // Sample risk student data
-  const riskStudents = [
-    {
-      name: 'Zhang San',
-      email: 'zhang@example.com',
-      riskLevel: 'high',
-      reasons: ['3 consecutive late submissions', 'Score continuously dropped 15%', 'Did not attend recent Office Hours'],
-      currentGrade: 72,
-      trend: -8,
-    },
-    {
-      name: 'Li Si',
-      email: 'li@example.com',
-      riskLevel: 'medium',
-      reasons: ['Submission time concentrated 2 hours before deadline', 'Abnormally high code modification frequency'],
-      currentGrade: 85,
-      trend: -3,
-    },
-  ];
-
-  // Sample exam analysis data
-  const examAnalysis = [
-    {
-      questionNumber: 8,
-      title: 'Binary Tree Traversal',
-      avgTime: 40,
-      points: 5,
-      discrimination: 0.28,
-      difficulty: 0.72,
-      issue: 'Time allocation unreasonable',
-      recommendation: 'Suggest increasing points to 10 or reducing difficulty'
-    },
-    {
-      questionNumber: 3,
-      title: 'Basic Syntax',
-      avgTime: 5,
-      points: 10,
-      discrimination: 0.12,
-      difficulty: 0.95,
-      issue: 'Discrimination too low',
-      recommendation: 'Question too easy, cannot distinguish student abilities'
-    },
-  ];
-
   return (
     <Box sx={{ minHeight: '100vh', p: 4 }}>
       {/* AI Agent Settings Dialog */}
@@ -231,6 +275,7 @@ export default function AIAnalytics() {
           </Box>
           <Tooltip title="AI Agent Settings">
             <IconButton 
+              aria-label="Open AI Agent settings"
               onClick={() => setSettingsOpen(true)}
               sx={{ 
                 bgcolor: 'rgba(104, 145, 255, 0.16)',
@@ -242,15 +287,30 @@ export default function AIAnalytics() {
           </Tooltip>
         </Box>
 
+        {courseId ? (
+          <Alert severity="info" sx={{ mb: 3 }}>
+            <AlertTitle>Live course query</AlertTitle>
+            Results below come from a new query scoped to <strong>{courseLabel}</strong>. Sample
+            analytics are hidden while a course is selected.
+          </Alert>
+        ) : (
+          <Alert severity="warning" role="status" aria-live="polite" sx={{ mb: 3 }}>
+            <AlertTitle>Select a course to query live data</AlertTitle>
+            The query controls are unavailable until a course is selected. Any content in the
+            sample section below is demonstration data and is not a course result.
+          </Alert>
+        )}
+
         {/* Query input */}
         <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
           <TextField
             fullWidth
+            label="Ask about the selected course"
             placeholder="Enter your question, e.g., Find students with the highest grade fluctuation..."
             value={queryInput}
             onChange={(e) => setQueryInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleQuery()}
-            disabled={queryLoading}
+            onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
+            disabled={queryLoading || !courseId}
             sx={{
               '& .MuiOutlinedInput-root': {
                 borderRadius: 2,
@@ -260,7 +320,7 @@ export default function AIAnalytics() {
           <Button
             variant="contained"
             onClick={handleQuery}
-            disabled={queryLoading || !queryInput}
+            disabled={queryLoading || !courseId || !queryInput.trim()}
             startIcon={<Send />}
             sx={{
               bgcolor: '#4f46e5',
@@ -276,14 +336,15 @@ export default function AIAnalytics() {
         {/* Suggested queries */}
         <Box sx={{ mb: 2 }}>
           <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-            Try these questions:
+            Live course query examples:
           </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {suggestedQueries.map((query, idx) => (
+            {SUGGESTED_QUERIES.map((query) => (
               <Chip
-                key={idx}
+                key={query}
                 label={query}
-                onClick={() => setQueryInput(query)}
+                disabled={!courseId || queryLoading}
+                onClick={courseId ? () => setQueryInput(query) : undefined}
                 sx={{
                   cursor: 'pointer',
                   '&:hover': { bgcolor: 'rgba(103, 148, 255, 0.24)' }
@@ -294,7 +355,34 @@ export default function AIAnalytics() {
         </Box>
 
         {/* Loading */}
-        {queryLoading && <LinearProgress sx={{ mb: 2 }} />}
+        {queryLoading && (
+          <Box role="status" aria-live="polite" sx={{ mb: 2 }}>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Querying live data for {courseLabel}…
+            </Typography>
+            <LinearProgress aria-label={`Querying ${courseLabel}`} />
+          </Box>
+        )}
+
+        {queryState.status === AI_QUERY_STATUS.ERROR && (
+          <Alert
+            severity="error"
+            role="alert"
+            aria-live="assertive"
+            sx={{ mb: 2 }}
+            action={(
+              <Button color="inherit" size="small" onClick={handleQuery} disabled={!courseId}>
+                Retry
+              </Button>
+            )}
+          >
+            <AlertTitle>{queryState.error.title}</AlertTitle>
+            {queryState.error.message}
+            <Typography component="div" variant="body2" sx={{ mt: 1 }}>
+              Recovery: {queryState.error.recovery}
+            </Typography>
+          </Alert>
+        )}
 
         {/* Query results */}
         {queryResult && (
@@ -310,9 +398,17 @@ export default function AIAnalytics() {
             <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 2 }}>
               <AutoAwesome sx={{ color: '#0ea5e9', mr: 1, mt: 0.5 }} />
               <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 1 }}>
-                  AI Analysis Result:
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+                  <Typography variant="subtitle2" color="textSecondary">
+                    AI Analysis Result
+                  </Typography>
+                  <Chip
+                    size="small"
+                    color="success"
+                    variant="outlined"
+                    label={getAnalyticsSourceLabel(queryState.source)}
+                  />
+                </Box>
                 <Typography variant="body1" sx={{ mb: 2, fontWeight: 500 }}>
                   {queryResult.answer}
                 </Typography>
@@ -374,7 +470,7 @@ export default function AIAnalytics() {
                     <Grid item xs={4}>
                       <Paper className='glass-section' sx={{ p: 2, textAlign: 'center' }}>
                         <Typography variant="body2" color="textSecondary">Std Dev</Typography>
-                        <Typography variant="h5">{queryResult.data.stdDev}</Typography>
+                        <Typography variant="h5">{queryResult.data.stdDev ?? queryResult.data.std_dev}</Typography>
                       </Paper>
                     </Grid>
                   </Grid>
@@ -411,7 +507,30 @@ export default function AIAnalytics() {
         )}
       </Paper>
 
-      {/* Module 2: Knowledge Gap Diagnosis */}
+      {!courseId && (
+      <Box component="section" aria-labelledby="sample-data-heading">
+      <Paper
+        elevation={0}
+        className="glass-section"
+        sx={{ p: 3, mb: 3, border: '2px dashed rgba(245, 158, 11, 0.55)', borderRadius: 3 }}
+      >
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1 }}>
+          <Typography id="sample-data-heading" variant="h5" sx={{ fontWeight: 700 }}>
+            Sample data
+          </Typography>
+          <Chip
+            color="warning"
+            variant="outlined"
+            label={getAnalyticsSourceLabel(SAMPLE_ANALYTICS_SOURCE)}
+          />
+        </Box>
+        <Typography variant="body2">
+          The demonstrations in this section are static examples. They are not generated from a
+          selected course and never appear alongside live course results.
+        </Typography>
+      </Paper>
+
+      {/* Module 2: Sample Knowledge Gap Diagnosis */}
       <Paper
         elevation={0}
         className='glass-section'
@@ -435,8 +554,8 @@ export default function AIAnalytics() {
         </Box>
 
         <Grid container spacing={3}>
-          {knowledgeGaps.map((gap, idx) => (
-            <Grid item xs={12} md={4} key={idx}>
+          {SAMPLE_KNOWLEDGE_GAPS.map((gap) => (
+            <Grid item xs={12} md={4} key={gap.topic}>
               <Card
                 elevation={0}
                 sx={{
@@ -486,10 +605,10 @@ export default function AIAnalytics() {
                   </List>
                 </CardContent>
                 <CardActions>
-                  <Button size="small" sx={{ textTransform: 'none' }}>
+                  <Button size="small" disabled sx={{ textTransform: 'none' }}>
                     View Details
                   </Button>
-                  <Button size="small" sx={{ textTransform: 'none' }}>
+                  <Button size="small" disabled sx={{ textTransform: 'none' }}>
                     Generate Teaching Recommendations
                   </Button>
                 </CardActions>
@@ -524,9 +643,9 @@ export default function AIAnalytics() {
               </Box>
             </Box>
 
-            {riskStudents.map((student, idx) => (
+            {SAMPLE_RISK_STUDENTS.map((student) => (
               <Paper
-                key={idx}
+                key={student.email}
                 sx={{
                   p: 3,
                   mb: 2,
@@ -587,6 +706,7 @@ export default function AIAnalytics() {
                   <Button
                     size="small"
                     variant="contained"
+                    disabled
                     startIcon={<AutoAwesome />}
                     sx={{
                       bgcolor: '#4f46e5',
@@ -596,7 +716,7 @@ export default function AIAnalytics() {
                   >
                     Generate Intervention Email
                   </Button>
-                  <Button size="small" variant="outlined" sx={{ textTransform: 'none' }}>
+                  <Button size="small" variant="outlined" disabled sx={{ textTransform: 'none' }}>
                     View Details
                   </Button>
                 </Box>
@@ -604,7 +724,7 @@ export default function AIAnalytics() {
             ))}
 
             <Alert severity="info" sx={{ mt: 2 }}>
-              Found {riskStudents.length} students who need attention
+              Sample includes {SAMPLE_RISK_STUDENTS.length} fictional students
             </Alert>
           </Paper>
         </Grid>
@@ -633,9 +753,9 @@ export default function AIAnalytics() {
               </Box>
             </Box>
 
-            {examAnalysis.map((item, idx) => (
+            {SAMPLE_EXAM_ANALYSIS.map((item) => (
               <Paper
-                key={idx}
+                key={item.questionNumber}
                 sx={{
                   p: 3,
                   mb: 2,
@@ -701,6 +821,7 @@ export default function AIAnalytics() {
             <Button
               fullWidth
               variant="outlined"
+              disabled
               sx={{
                 mt: 2,
                 textTransform: 'none',
@@ -717,6 +838,8 @@ export default function AIAnalytics() {
           </Paper>
         </Grid>
       </Grid>
+      </Box>
+      )}
     </Box>
   );
 }
