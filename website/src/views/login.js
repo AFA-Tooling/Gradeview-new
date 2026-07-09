@@ -12,6 +12,9 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
+import {
+    persistShellLoginSession,
+} from '../utils/personaNavigation';
 
 export default function Login() {
     const [error, setError] = useState(false);
@@ -50,12 +53,15 @@ export default function Login() {
                     );
                     return;
                 } else {
-                    localStorage.setItem('token', loginRes?.data?.token || '');
-                    localStorage.setItem('permissions', JSON.stringify(loginRes?.data?.permissions || {}));
                     const credData = decodedCredential;
-                    // TODO: this is pretty awful.  We should have this in a context or something.
-                    localStorage.setItem('email', credData?.email);
-                    localStorage.setItem('profilepicture', credData?.picture);
+                    persistShellLoginSession(localStorage, {
+                        loginData: loginRes?.data,
+                        identity: {
+                            email: credData?.email,
+                            name: credData?.name,
+                            profilepicture: credData?.picture,
+                        },
+                    });
                     window.location.reload(false);
                 }
             })
@@ -80,16 +86,15 @@ export default function Login() {
                 return;
             }
 
-            localStorage.setItem('token', data.token || '');
-            localStorage.setItem('permissions', JSON.stringify(data.permissions || {}));
-            localStorage.setItem('email', data.email || 'public-demo@gradeview.local');
-            localStorage.setItem('name', data.name || 'GradeView Demo');
-            localStorage.setItem('profilepicture', '');
-
-            if (data.demo_course?.id) {
-                localStorage.setItem('selectedCourseId', String(data.demo_course.id));
-            }
-            localStorage.removeItem('selectedStudentEmail');
+            persistShellLoginSession(localStorage, {
+                loginData: data,
+                identity: {
+                    email: data.email || 'public-demo@gradeview.local',
+                    name: data.name || 'GradeView Demo',
+                    profilepicture: '',
+                },
+                selectedCourseId: data.demo_course?.id,
+            });
 
             window.location.href = '/';
         } catch (err) {
@@ -101,12 +106,14 @@ export default function Login() {
 
     return (
         <Box
+            className="login-shell"
             sx={{
-                minHeight: 'calc(100vh - 130px)',
+                minHeight: '100%',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 px: { xs: 2, sm: 3 },
+                py: { xs: 2, sm: 3 },
             }}
         >
             <Paper
@@ -124,7 +131,7 @@ export default function Login() {
                     }}
                 >
                     <Box>
-                        <Typography variant='h4' sx={{ fontWeight: 700, mb: 0.75 }}>
+                        <Typography component="h1" variant='h4' sx={{ fontWeight: 700, mb: 0.75 }}>
                             Sign in to GradeView
                         </Typography>
                         <Typography variant='body2' color='text.secondary'>
@@ -132,7 +139,7 @@ export default function Login() {
                         </Typography>
                     </Box>
 
-                    {error && <Alert severity='error' sx={{ width: '100%' }}>{error}</Alert>}
+                    {error && <Alert severity='error' role="alert" sx={{ width: '100%' }}>{error}</Alert>}
 
                     <Box
                         sx={{
@@ -160,7 +167,7 @@ export default function Login() {
                         disabled={demoLoading}
                         sx={{ width: '100%' }}
                     >
-                        {demoLoading ? 'Opening demo...' : 'Explore Demo Course'}
+                        {demoLoading ? 'Opening demo...' : 'Explore Read-only Demo'}
                     </Button>
                 </Stack>
             </Paper>

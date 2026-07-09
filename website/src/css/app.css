@@ -4,8 +4,8 @@
     --founders-rock: #4788B8;
     --accent: var(--berkeley-blue);
     --tertiary: var(--founders-rock);
-    --app-sidebar-width: 244px;
-    --app-topbar-height: 42px;
+    --app-sidebar-width: 260px;
+    --app-topbar-height: 56px;
     --app-border: #E5E7EB;
     --app-bg: #FAFAFB;
 }
@@ -14,8 +14,9 @@
     display: flex;
     flex-flow: column;
     align-items: stretch;
-    height: 100vh;
+    height: 100dvh;
     min-height: 100vh;
+    min-width: 0;
     position: relative;
     overflow-x: hidden;
     overflow-y: hidden;
@@ -23,7 +24,8 @@
 }
 
 .nav {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+    min-width: 0;
     position: relative;
     z-index: 4;
 }
@@ -37,8 +39,15 @@
     position: relative;
     z-index: 2;
     padding: calc(var(--app-topbar-height) + 20px) 28px 24px;
-    margin-left: var(--app-sidebar-width);
+    margin-left: 0;
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
     background-color: #FFFFFF;
+}
+
+#root:has(.app-shell-sidebar) .content {
+    margin-left: var(--app-sidebar-width);
 }
 
 .glass-panel,
@@ -50,18 +59,59 @@
 }
 
 .app footer {
+    flex-shrink: 0;
+    margin-left: 0;
+    width: 100%;
+    max-width: 100%;
+}
+
+#root:has(.app-shell-sidebar) .app footer {
     margin-left: var(--app-sidebar-width);
     width: calc(100% - var(--app-sidebar-width));
 }
 
+.login-shell {
+    min-height: calc(100dvh - var(--app-topbar-height) - 96px) !important;
+}
+
+.app a,
+.app button,
+.app [role='button'] {
+    touch-action: manipulation;
+}
+
 @media (max-width: 900px) {
     .content {
-        margin-left: 0;
+        margin-left: 0 !important;
         padding: 16px;
+        width: 100%;
+        max-width: 100%;
+        scrollbar-gutter: auto;
     }
 
     .app footer {
-        margin-left: 0;
-        width: 100%;
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+
+    .login-shell {
+        min-height: 100% !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .content {
+        padding: 12px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .app *,
+    .app *::before,
+    .app *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
     }
 }
