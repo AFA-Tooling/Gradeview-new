@@ -1669,7 +1669,7 @@ export default function Admin() {
 
         {/* AI ANALYTICS TAB */}
         {tab === 2 && (
-          <AIAnalytics />
+          <AIAnalytics selectedCourseId={selectedCourse} courses={courses} />
         )}
 
     </Box>
