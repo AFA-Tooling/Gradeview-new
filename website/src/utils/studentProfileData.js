@@ -14,59 +14,74 @@ export function resolveCourseQueryId(courseId, courses = []) {
   return matchedCourse?.gradescope_course_id || courseId;
 }
 
-export function applyCanonicalSummaryTotals(processedData, summarySectionTotals = {}) {
+export function applyCanonicalGrade(processedData, canonicalGrade) {
   if (!processedData || typeof processedData !== 'object') {
     return processedData;
   }
+  if (!canonicalGrade || canonicalGrade.basis !== 'policy_final') {
+    return {
+      ...processedData,
+      canonicalGrade: null,
+      policyStandingStatus: 'unavailable',
+    };
+  }
 
+  const evidenceCategoriesData = processedData.categoriesData || {};
+  const canonicalCategories = Object.values(canonicalGrade.categories || {});
   const next = {
     ...processedData,
-    categoriesData: { ...(processedData.categoriesData || {}) },
+    canonicalGrade,
+    rawEvidenceCategoriesData: evidenceCategoriesData,
+    categoriesData: {},
   };
-  const hasDueScopedAssignments = Array.isArray(next.assignmentsList);
 
-  Object.entries(summarySectionTotals || {}).forEach(([rawSectionName, rawScore]) => {
-    if (!rawSectionName) return;
-    const sectionName = String(rawSectionName).replace(/\s*\([^)]*\)\s*$/, '').trim() || rawSectionName;
-    if (sectionName.startsWith('_')) return;
-    const score = Number(rawScore);
-    if (!Number.isFinite(score)) return;
-
-    const existing = next.categoriesData[sectionName] || {};
-    const cap = Number(existing.capPoints ?? existing.maxPoints) || 0;
-    if (cap <= 0 && !next.categoriesData[sectionName]) return;
-    const canonicalScore = cap > 0 ? Math.min(score, cap) : score;
-    const dueScopedScore = Number(existing.total);
-    const cappedScore = hasDueScopedAssignments && Number.isFinite(dueScopedScore)
-      ? Math.min(canonicalScore, Math.max(0, dueScopedScore))
-      : canonicalScore;
-
+  canonicalCategories.forEach((category) => {
+    const sectionName = String(category.label || category.key || '').trim();
+    if (!sectionName) return;
+    const existing = evidenceCategoriesData[sectionName] || {};
     next.categoriesData[sectionName] = {
       ...existing,
-      total: cappedScore,
-      rawTotal: score,
-      percentage: cap > 0 ? (cappedScore / cap) * 100 : 0,
+      key: category.key,
+      basis: category.basis,
+      exactScore: Number(category.exactScore) || 0,
+      total: Number(category.exactScore) || 0,
+      capPoints: Number(category.cap) || 0,
+      maxPoints: Number(category.cap) || 0,
+      percentage: Number(category.percentage) || 0,
+      status: category.status,
+      source: category.source,
+      deprecated: {
+        total: 'Use exactScore',
+      },
     };
   });
 
-  const categoryEntries = Object.entries(next.categoriesData);
-  const totalScore = categoryEntries.reduce((sum, [, category]) => sum + (Number(category.total) || 0), 0);
+  next.policyStandingStatus = canonicalGrade.status;
+  next.policyFinalExactScore = canonicalGrade.exactScore;
+  next.policyFinalDisplayScore = canonicalGrade.displayScore;
+  next.policyFinalCap = canonicalGrade.cap;
+  next.policyFinalPercentage = canonicalGrade.percentage;
+  next.policyFinalLetter = canonicalGrade.letter;
+  next.policyFinalBin = canonicalGrade.bin;
+  next.examPolicySubtotal = canonicalGrade.subtotals?.exams || null;
+  next.totalScore = canonicalGrade.exactScore;
+  next.displayScore = canonicalGrade.displayScore;
+  next.totalCapPoints = canonicalGrade.cap;
+  next.overallPercentage = canonicalGrade.percentage;
+  next.gradeLetter = canonicalGrade.letter;
+  next.legacyGradeFieldsDeprecated = {
+    totalScore: 'Use policyFinalExactScore',
+    displayScore: 'Use policyFinalDisplayScore',
+    totalCapPoints: 'Use policyFinalCap',
+    overallPercentage: 'Use policyFinalPercentage',
+  };
 
-  next.totalScore = totalScore;
-  if (!(Number(next.totalCapPoints) > 0)) {
-    next.totalCapPoints = categoryEntries.reduce((sum, [, category]) => {
-      const cap = Number(category.capPoints ?? category.maxPoints) || 0;
-      return sum + cap;
-    }, 0);
-  }
-  next.overallPercentage = next.totalCapPoints > 0 ? (next.totalScore / next.totalCapPoints) * 100 : 0;
-
-  next.radarData = categoryEntries.map(([category, categoryData]) => {
-    const categoryScore = Number(categoryData.total) || 0;
-    const cap = Number(categoryData.capPoints ?? categoryData.maxPoints) || 0;
+  next.radarData = canonicalCategories.map((categoryData) => {
+    const categoryScore = Number(categoryData.exactScore) || 0;
+    const cap = Number(categoryData.cap) || 0;
     return {
-      category,
-      percentage: cap > 0 ? Number(((categoryScore / cap) * 100).toFixed(2)) : 0,
+      category: categoryData.label,
+      percentage: Number((Number(categoryData.percentage) || 0).toFixed(2)),
       score: Number(categoryScore.toFixed(2)),
       maxPoints: Number(cap.toFixed(2)),
       average: 0,
@@ -75,6 +90,13 @@ export function applyCanonicalSummaryTotals(processedData, summarySectionTotals 
   });
 
   return next;
+}
+
+// Compatibility export for callers that used the old helper name. It now
+// accepts only the backend canonical contract; legacy section totals are not
+// promoted into a second, frontend-computed course standing.
+export function applyCanonicalSummaryTotals(processedData, canonicalGrade = null) {
+  return applyCanonicalGrade(processedData, canonicalGrade?.canonicalGrade || canonicalGrade);
 }
 
 function buildCourseQuery(courseId) {
@@ -146,20 +168,24 @@ function inferCategoryBlockType(key = '', label = '') {
 function normalizeCategoryBlocks(payloadBlocks = [], processedData = null) {
   if (Array.isArray(payloadBlocks) && payloadBlocks.length > 0) {
     return payloadBlocks.map((block) => {
-      const score = normalizeNumber(block?.score);
+      const exactScore = normalizeNumber(block?.exactScore, normalizeNumber(block?.score));
       const cap = normalizeNumber(block?.cap);
       const percentage = cap > 0
-        ? normalizeNumber(block?.percentage, (score / cap) * 100)
+        ? normalizeNumber(block?.percentage, (exactScore / cap) * 100)
         : normalizeNumber(block?.percentage);
 
       return {
         key: String(block?.key || block?.label || '').trim(),
         type: block?.type || inferCategoryBlockType(block?.key, block?.label),
         label: String(block?.label || block?.key || 'Category').trim(),
-        score,
+        basis: block?.basis || 'policy_final',
+        exactScore,
+        score: exactScore,
         cap,
-        rawScore: normalizeNumber(block?.rawScore, score),
+        rawScore: normalizeNumber(block?.rawScore, exactScore),
         percentage,
+        canonicalStatus: block?.canonicalStatus || 'legacy',
+        source: block?.source || null,
         status: block?.status || 'default',
         summary: {
           totalItems: normalizeNumber(block?.summary?.totalItems),
@@ -188,6 +214,8 @@ function normalizeCategoryBlocks(payloadBlocks = [], processedData = null) {
         key: category.toLowerCase().replace(/\s+/g, '-'),
         type: inferCategoryBlockType(category, category),
         label: category,
+        basis: 'raw_evidence',
+        exactScore: score,
         score,
         cap,
         rawScore: score,
@@ -215,7 +243,7 @@ export function buildStudentProfileData(payload, studentEmail, studentName) {
     : [];
   const classAverages = payload?.categoryStats || {};
   const policyRows = Array.isArray(payload?.examPolicy?.rows) ? payload.examPolicy.rows : [];
-  const summarySectionTotals = payload?.summary?.summarySectionTotals || {};
+  const canonicalGrade = payload?.canonicalGrade || payload?.summary?.canonicalGrade || null;
   const binsData = payload?.bins || {};
   const gradingConfig = {
     assignmentPoints: binsData.assignment_points || {},
@@ -228,9 +256,22 @@ export function buildStudentProfileData(payload, studentEmail, studentName) {
     roundingPolicy: binsData.rounding_policy || '',
   };
 
-  const processedBase = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig);
-  const processedWithPolicy = applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
-  const processed = applyCanonicalSummaryTotals(processedWithPolicy, summarySectionTotals);
+  const processedBase = processStudentData(data, studentEmail, studentName, undefined, classAverages, gradingConfig) || {
+    email: studentEmail,
+    name: studentName,
+    totalScore: 0,
+    totalMaxPoints: 0,
+    totalCapPoints: gradingConfig.totalCoursePoints,
+    overallPercentage: 0,
+    categoriesData: {},
+    assignmentsList: [],
+    radarData: [],
+    trendData: [],
+  };
+  const processedWithPolicy = canonicalGrade
+    ? processedBase
+    : applyExamPolicyToProcessedData(processedBase, policyRows, gradingConfig);
+  const processed = applyCanonicalGrade(processedWithPolicy, canonicalGrade);
   if (!processed) return null;
 
   const rawAssignmentsList = buildRawAssignments(rawSubmissions);
@@ -260,6 +301,8 @@ export function buildStudentProfileData(payload, studentEmail, studentName) {
     rawTrendData,
     gradeBins: gradingConfig.gradeBins,
     roundingPolicy: gradingConfig.roundingPolicy,
+    canonicalGrade: processed.canonicalGrade,
+    dueWorkProgress: payload?.dueWorkProgress || processed.canonicalGrade?.dueWorkProgress || null,
     examPolicyRows: policyRows,
     questComponentTrend,
     examComponentTrends: {
@@ -289,9 +332,7 @@ async function fetchLegacyStudentProfilePayload(studentEmail, selectedCourse, co
     apiv2.get(`/students/category-stats${courseQuery}`, { signal }).catch(() => ({ data: {} })),
     apiv2.get(`/bins${courseQuery}`, { signal }),
     apiv2.get(`/students/${encodeURIComponent(studentEmail)}/exam-policy${courseQuery}`, { signal }),
-    apiv2.get(`/admin/studentScores/summary/${encodeURIComponent(studentEmail)}${courseQuery}`, { signal }).catch(() => ({
-      data: { summarySectionTotals: {} },
-    })),
+    apiv2.get(`/admin/studentScores/summary/${encodeURIComponent(studentEmail)}${courseQuery}`, { signal }),
   ]);
 
   return {

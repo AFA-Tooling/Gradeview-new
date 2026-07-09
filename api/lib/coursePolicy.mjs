@@ -1,3 +1,9 @@
+import {
+    GradePolicyValidationError,
+    normalizeGradeBins,
+    normalizeRoundingPolicy,
+} from './canonicalGrade.mjs';
+
 const DEFAULT_ROUNDING_POLICY = 'Total points are rounded to nearest integer before letter-grade bin lookup (0.5 rounds up). No curve/bin shifting.';
 
 const DEFAULT_GRADE_BINS = [
@@ -192,16 +198,32 @@ function normalizePolicy(rawPolicy = {}, source = 'default_policy') {
     const totalPointsCap = Number.isFinite(totalCapCandidate) && totalCapCandidate > 0
         ? totalCapCandidate
         : components.reduce((sum, component) => sum + (Number(component.cap) || 0), 0) || fallback.total_points_cap;
+    const componentCapTotal = components.reduce((sum, component) => sum + (Number(component.cap) || 0), 0);
+    if (Math.abs(componentCapTotal - totalPointsCap) > 1e-9) {
+        throw new GradePolicyValidationError('Component caps must add up to the course cap', {
+            componentCap: componentCapTotal,
+            totalCap: totalPointsCap,
+        });
+    }
+    const roundingPolicy = rawPolicy.rounding_policy || rawPolicy.rounding || fallback.rounding_policy;
+    const rounding = normalizeRoundingPolicy(roundingPolicy);
+    const parsedGradeBins = safeParseJson(rawPolicy.grade_bins, null);
+    const gradeBins = normalizeGradeBins(
+        Array.isArray(parsedGradeBins) && parsedGradeBins.length > 0
+            ? parsedGradeBins
+            : fallback.grade_bins,
+        totalPointsCap,
+        rounding,
+    );
 
     return {
         ...fallback,
         ...rawPolicy,
         source,
         total_points_cap: totalPointsCap,
-        rounding_policy: rawPolicy.rounding_policy || fallback.rounding_policy,
-        grade_bins: Array.isArray(safeParseJson(rawPolicy.grade_bins, null)) && safeParseJson(rawPolicy.grade_bins, []).length > 0
-            ? safeParseJson(rawPolicy.grade_bins, [])
-            : fallback.grade_bins,
+        rounding_policy: rounding.description,
+        rounding,
+        grade_bins: gradeBins,
         component_percentages: Array.isArray(safeParseJson(rawPolicy.component_percentages, null)) && safeParseJson(rawPolicy.component_percentages, []).length > 0
             ? safeParseJson(rawPolicy.component_percentages, [])
             : fallback.component_percentages,
@@ -322,6 +344,7 @@ export function policyToBinsResponse(policy, courseId = null, source = null) {
         overall_cap_points: normalized.total_points_cap,
         component_percentages: normalized.component_percentages,
         rounding_policy: normalized.rounding_policy,
+        rounding: normalized.rounding,
         course_id: courseId || null,
         source: source || normalized.source || 'configured_policy',
     };

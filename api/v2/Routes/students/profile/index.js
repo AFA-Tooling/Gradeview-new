@@ -13,6 +13,10 @@ import {
     studentEnrolledInCourse,
 } from '../../../../lib/dbHelper.mjs';
 import { getBinsResponse } from '../../bins/index.js';
+import {
+    canonicalCategoryToProfileBlock,
+    canonicalGradeToProfileSummary,
+} from '../../../../lib/canonicalGrade.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -112,17 +116,27 @@ function isDueForStats(item = {}, now = Date.now()) {
     return dueTime <= now;
 }
 
-function getSummaryForBlock(summaryByKey = {}, summarySectionTotals = {}, config) {
+function getSummaryForBlock(canonicalGrade = null, summaryByKey = {}, summarySectionTotals = {}, config) {
+    const canonicalCategory = canonicalGrade?.categories?.[config.key] || null;
+    if (canonicalCategory) {
+        return canonicalCategoryToProfileBlock(canonicalCategory);
+    }
     const keyed = summaryByKey?.[config.key] || null;
     const rawScore = keyed?.score ?? Object.entries(summarySectionTotals || {}).find(([section]) => (
         categoryMatches(section, '', config.terms)
     ))?.[1];
-    const score = Math.min(config.cap, Math.max(0, Number(rawScore) || 0));
+    const cap = Number(canonicalCategory?.cap ?? keyed?.cap ?? config.cap) || config.cap;
+    const exactScore = canonicalCategory
+        ? Number(canonicalCategory.exactScore) || 0
+        : Math.min(cap, Math.max(0, Number(rawScore) || 0));
     return {
-        score,
-        cap: config.cap,
-        rawScore: Number(keyed?.rawScore ?? rawScore ?? 0) || 0,
-        percentage: config.cap > 0 ? (score / config.cap) * 100 : 0,
+        exactScore,
+        score: exactScore,
+        cap,
+        rawScore: exactScore,
+        percentage: canonicalCategory?.percentage ?? (cap > 0 ? (exactScore / cap) * 100 : 0),
+        canonicalStatus: canonicalCategory?.status || 'legacy',
+        source: canonicalCategory?.source || keyed?.source || config.label,
     };
 }
 
@@ -203,30 +217,6 @@ function getBlockStatus(percentage) {
     return 'attention';
 }
 
-function clampScoreSummaryToDueWork(scoreSummary, assignmentSummary) {
-    if (!assignmentSummary || Number(assignmentSummary.totalItems) <= 0) {
-        return {
-            ...scoreSummary,
-            score: 0,
-            rawScore: 0,
-            percentage: 0,
-        };
-    }
-
-    const rawScore = Number(assignmentSummary.rawScore) || 0;
-    const rawMax = Number(assignmentSummary.rawMax) || 0;
-    const cap = Number(scoreSummary.cap) || 0;
-    if (rawMax <= 0 || cap <= 0) return scoreSummary;
-
-    const dueWorkCeiling = Math.min(cap, rawScore);
-    const score = Math.min(Number(scoreSummary.score) || 0, dueWorkCeiling);
-    return {
-        ...scoreSummary,
-        score,
-        percentage: cap > 0 ? (score / cap) * 100 : 0,
-    };
-}
-
 function buildCategoryBlocks({
     groupedSubmissions,
     rawSubmissions,
@@ -236,12 +226,15 @@ function buildCategoryBlocks({
 }) {
     const summaryByKey = summaries?.summaryByKey || {};
     const summarySectionTotals = summaries?.summarySectionTotals || {};
+    const canonicalGrade = summaries?.canonicalGrade || null;
 
     return CATEGORY_BLOCK_CONFIGS.map((config) => {
         const assignmentSummary = summarizeAssignments(groupedSubmissions, rawSubmissions, config.terms);
-        const scoreSummary = clampScoreSummaryToDueWork(
-            getSummaryForBlock(summaryByKey, summarySectionTotals, config),
-            assignmentSummary,
+        const scoreSummary = getSummaryForBlock(
+            canonicalGrade,
+            summaryByKey,
+            summarySectionTotals,
+            config,
         );
         const examSummary = config.type === 'exam'
             ? summarizeExam(policyRows, config.key)
@@ -254,11 +247,19 @@ function buildCategoryBlocks({
             key: config.key,
             type: config.type,
             label: config.label,
+            basis: 'policy_final',
+            exactScore: scoreSummary.exactScore,
             score: scoreSummary.score,
             cap: scoreSummary.cap,
             rawScore: scoreSummary.rawScore,
             percentage: scoreSummary.percentage,
+            canonicalStatus: scoreSummary.canonicalStatus,
+            source: scoreSummary.source,
             status: getBlockStatus(scoreSummary.percentage),
+            deprecated: {
+                score: 'Use exactScore',
+                rawScore: 'Raw evidence is in summary; use exactScore for policy standing',
+            },
             summary: assignmentSummary,
             exam: examSummary,
             componentTrendAvailable: Boolean(
@@ -314,14 +315,7 @@ router.get('/', async (req, res) => {
         const binsPromise = getBinsResponse(effectiveCourseId);
         const policyRowsPromise = getStudentExamPolicyScores(email, effectiveCourseId);
         const examComponentTrendsPromise = getStudentExamComponentTrends(email, effectiveCourseId);
-        const summariesPromise = getStudentPolicySummaries(email, effectiveCourseId).catch((err) => {
-            console.warn('Profile summary totals unavailable:', err?.message || err);
-            return {
-                summaryByKey: null,
-                summarySectionTotals: {},
-                summaryTotal: 0,
-            };
-        });
+        const summariesPromise = getStudentPolicySummaries(email, effectiveCourseId);
 
         const [
             groupedSubmissions,
@@ -343,9 +337,27 @@ router.get('/', async (req, res) => {
             summariesPromise,
         ]);
 
+        const categoryBlocks = buildCategoryBlocks({
+            groupedSubmissions,
+            rawSubmissions,
+            policyRows,
+            summaries,
+            examComponentTrends,
+        });
+        const dueWorkProgress = {
+            basis: 'due_work_progress',
+            status: 'available',
+            categories: Object.fromEntries(categoryBlocks.map((block) => [block.key, block.summary])),
+        };
+        const canonicalGrade = {
+            ...summaries.canonicalGrade,
+            dueWorkProgress,
+        };
+        const profileSummary = canonicalGradeToProfileSummary(email, canonicalGrade);
+
         const gradeFlow = includeGradeFlow
             ? await getStudentGradeFlow(email, effectiveCourseId, {
-                summaryByKey: summaries.summaryByKey,
+                canonicalGrade,
             }).catch((err) => {
                 console.warn('Profile grade flow unavailable:', err?.message || err);
                 return null;
@@ -354,6 +366,7 @@ router.get('/', async (req, res) => {
 
         return res.status(200).json({
             courseId: effectiveCourseId,
+            canonicalGrade,
             grades: getStudentScoresWithMaxPointsAndTime(groupedSubmissions, assignmentMatrix),
             rawGrades: {
                 sortBy: 'time',
@@ -367,25 +380,18 @@ router.get('/', async (req, res) => {
                 questComponentTrend: examComponentTrends?.quest,
                 examComponentTrends: examComponentTrends || {},
             },
-            summary: {
-                email,
-                summarySectionTotals: summaries.summarySectionTotals || {},
-                summaryTotal: summaries.summaryTotal || 0,
-            },
-            categoryBlocks: buildCategoryBlocks({
-                groupedSubmissions,
-                rawSubmissions,
-                policyRows,
-                summaries,
-                examComponentTrends,
-            }),
+            summary: profileSummary,
+            dueWorkProgress,
+            categoryBlocks,
             gradeFlow,
         });
     } catch (err) {
         const status = Number(err?.status) || 500;
         console.error('Error building student profile payload:', err);
         return res.status(status).json({
-            message: status === 403 ? err.message : 'Internal server error.',
+            message: status < 500 ? err.message : 'Internal server error.',
+            code: err?.code || 'PROFILE_BUILD_FAILED',
+            details: err?.details || null,
             error: err?.message || 'Failed to build student profile payload',
         });
     }
