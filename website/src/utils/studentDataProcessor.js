@@ -23,10 +23,10 @@ export function processStudentData(data, email, name, sortMode = 'assignment', c
   return processAssignmentSortedData(data, email, name, classAverages, gradingConfig);
 }
 
-function roundUpPoints(value) {
+function exactPoints(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 0;
-  return Math.ceil(numeric);
+  return numeric;
 }
 
 function normalizePointsMap(assignmentPoints = {}) {
@@ -173,7 +173,7 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
 
     const category = normalizeCategoryName(submission.category);
     const assignmentName = submission.name;
-    const rawScore = roundUpPoints(parseFloat(submission.score) || 0);
+    const rawScore = exactPoints(parseFloat(submission.score) || 0);
     const rawMaxPoints = parseFloat(submission.maxPoints) || 0;
     const normalized = normalizeAssignmentScore(category, rawScore, rawMaxPoints);
     const score = normalized.score;
@@ -341,7 +341,7 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
         return;
       }
 
-      const rawScore = roundUpPoints(parseFloat(assignmentData.student) || 0);
+      const rawScore = exactPoints(parseFloat(assignmentData.student) || 0);
       const rawMaxPoints = parseFloat(assignmentData.max) || 0;
       const normalized = normalizeAssignmentScore(category, rawScore, rawMaxPoints);
       const score = normalized.score;
@@ -536,7 +536,7 @@ export function applyExamPolicyToProcessedData(processedData, examPolicyRows = [
 
     const existing = processedData.categoriesData[categoryName] || {};
     const rawScore = (bestPct / 100) * cap;
-    const score = Math.min(cap, roundUpPoints(rawScore));
+    const score = Math.min(cap, exactPoints(rawScore));
 
     processedData.categoriesData[categoryName] = {
       ...existing,
@@ -567,7 +567,7 @@ export function applyExamPolicyToProcessedData(processedData, examPolicyRows = [
     ? Number(processedData.totalCapPoints)
     : totalMaxPoints;
 
-  processedData.totalScore = roundUpPoints(totalScore);
+  processedData.totalScore = exactPoints(totalScore);
   processedData.totalMaxPoints = totalMaxPoints;
   processedData.totalCapPoints = totalCapPoints;
   processedData.overallPercentage = totalCapPoints > 0 ? (processedData.totalScore / totalCapPoints) * 100 : 0;
