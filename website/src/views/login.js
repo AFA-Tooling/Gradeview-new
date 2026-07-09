@@ -101,8 +101,10 @@ export default function Login() {
 
     return (
         <Box
+            data-testid="login-viewport"
+            data-layout="viewport-centered"
             sx={{
-                minHeight: 'calc(100vh - 130px)',
+                minHeight: '100vh',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -124,7 +126,7 @@ export default function Login() {
                     }}
                 >
                     <Box>
-                        <Typography variant='h4' sx={{ fontWeight: 700, mb: 0.75 }}>
+                        <Typography variant='h4' component='h1' sx={{ fontWeight: 700, mb: 0.75 }}>
                             Sign in to GradeView
                         </Typography>
                         <Typography variant='body2' color='text.secondary'>
