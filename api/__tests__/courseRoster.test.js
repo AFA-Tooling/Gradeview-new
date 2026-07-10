@@ -36,18 +36,21 @@ describe('enrolled roster authority', () => {
     });
 
     test('Demo roster keeps all 32 enrolled students, including 27 with zero submission rows', async () => {
-        const rosterRows = demoRosterRows();
-        const scoreRows = Array.from({ length: 5 }, (_unused, index) => ({
-            student_id: String(index + 1),
-            course_id: '10',
-            category: index % 2 === 0 ? '_labs_raw' : '_projects_raw',
-            assignment_name: `Assignment ${index + 1}`,
-            total_score: index === 0 ? 0 : index + 5,
+        const joinedRows = demoRosterRows().map((student, index) => ({
+            ...student,
+            assignment_pk: 'assignment-1',
+            external_assignment_id: 'demo:assignment:1',
+            assignment_name: 'Assignment 1',
+            category: '_labs_raw',
+            assignment_max_points: 10,
+            assignment_metadata: {},
+            assignment_last_synced_at: '2026-07-08T12:00:00.000Z',
+            submission_pk: index < 5 ? `submission-${index + 1}` : null,
+            submission_status: index < 5 ? 'submitted' : null,
+            total_score: index < 5 ? index : null,
         }));
         const pool = {
-            query: jest.fn()
-                .mockResolvedValueOnce({ rows: rosterRows })
-                .mockResolvedValueOnce({ rows: scoreRows }),
+            query: jest.fn().mockResolvedValue({ rows: joinedRows }),
         };
 
         const students = await queryRosterBackedStudentScores(pool, 'demo-cs10');
@@ -62,10 +65,10 @@ describe('enrolled roster authority', () => {
             rosterSource: 'enrolled_students',
             scores: {},
         });
-        const rosterQuery = pool.query.mock.calls[0][0];
-        const scoresQuery = pool.query.mock.calls[1][0];
-        expect(rosterQuery).not.toMatch(/submissions/i);
-        expect(scoresQuery).toMatch(/FROM\s+submissions\s+s/i);
+        expect(pool.query).toHaveBeenCalledTimes(1);
+        const [queryText, params] = pool.query.mock.calls[0];
+        expect(queryText).toMatch(/JOIN\s+students\s+st[\s\S]+LEFT\s+JOIN\s+assignments\s+a[\s\S]+LEFT\s+JOIN\s+submissions\s+s/i);
+        expect(params).toEqual(['demo-cs10']);
     });
 
     test('roster endpoint, score matrix, and legacy dropdown have identical Demo membership', () => {
