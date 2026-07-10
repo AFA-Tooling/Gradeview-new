@@ -107,6 +107,8 @@ export default function Login() {
     return (
         <Box
             className="login-shell"
+            data-testid="login-viewport"
+            data-layout="viewport-centered"
             sx={{
                 minHeight: '100%',
                 display: 'flex',

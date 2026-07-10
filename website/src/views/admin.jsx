@@ -27,7 +27,7 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import Grid from '@mui/material/Grid';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import AIAnalytics from './aiAnalytics';
 import GradeSyncControl from './GradeSyncControl';
@@ -60,7 +60,14 @@ ChartJS.register(
 
 const STUDENT_SCORE_ROW_HEIGHT = 58;
 const STUDENT_SCORE_OVERSCAN_ROWS = 8;
+const ADMIN_TAB_QUERY_VALUES = ['assignments', 'students', 'analytics'];
 const sectionOrderCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function getAdminTabIndex(search = '') {
+  const requestedTab = new URLSearchParams(search).get('tab');
+  const requestedIndex = ADMIN_TAB_QUERY_VALUES.indexOf(requestedTab);
+  return requestedIndex === -1 ? 0 : requestedIndex;
+}
 
 function getTrailingSectionRank(section = '') {
   const normalized = String(section || '').trim().toLowerCase();
@@ -210,6 +217,7 @@ const RowSectionCells = memo(function RowSectionCells({
 
 export default function Admin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const isLight = true;
 
   // Adaptive palette — use once, ref everywhere
@@ -223,8 +231,7 @@ export default function Admin() {
   const chartTick     = 'rgba(0, 0, 0, 0.75)';
   const chartTitle    = 'rgba(0, 0, 0, 0.85)';
   const chartGrid     = 'rgba(0, 0, 0, 0.08)';
-  // TAB STATE
-  const [tab, setTab] = useState(0);
+  const tab = getAdminTabIndex(location.search);
   const [courses, setCourses] = useState([]);
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState(localStorage.getItem('selectedCourseId') || '');
@@ -524,8 +531,19 @@ export default function Admin() {
         (sum, [section, value]) => sum + (isRawOnlySection(section) ? 0 : (Number(value) || 0)),
         0
       );
-      const total = hasPolicySummaryTotals(stu.summarySectionTotals) ? policyTotal : fallbackTotal;
-      return { ...stu, scores: flatScores, sectionTotals, total };
+      const canonicalExactScore = Number(stu?.canonicalGrade?.exactScore);
+      const total = Number.isFinite(canonicalExactScore)
+        ? canonicalExactScore
+        : (hasPolicySummaryTotals(stu.summarySectionTotals) ? policyTotal : fallbackTotal);
+      return {
+        ...stu,
+        scores: flatScores,
+        sectionTotals,
+        total,
+        displayTotal: stu?.canonicalGrade?.displayScore ?? total,
+        totalPercentage: stu?.canonicalGrade?.percentage ?? null,
+        gradeLetter: stu?.canonicalGrade?.letter ?? null,
+      };
     });
   }, [studentScores, assignmentNamesBySection, normalizedSectionCaps]);
 
@@ -631,7 +649,13 @@ export default function Admin() {
 
   // Handlers
   const handleTabChange = (_, newTab) => {
-    setTab(newTab);
+    const nextSearchParams = new URLSearchParams(location.search);
+    nextSearchParams.set('tab', ADMIN_TAB_QUERY_VALUES[newTab] || ADMIN_TAB_QUERY_VALUES[0]);
+    navigate({
+      pathname: location.pathname,
+      search: `?${nextSearchParams.toString()}`,
+      hash: location.hash,
+    });
     if (newTab !== 0) {
       setSelected(null);
       setStats(null);

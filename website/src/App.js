@@ -22,6 +22,7 @@ import Admin from './views/admin';
 import Alerts from './views/alerts';
 import Settings from './views/settings';
 import GradeSyncControl from './views/GradeSyncControl';
+import AppShell from './components/AppShell';
 
 const INK = '#111827';
 const INK_HOVER = '#030712';
@@ -224,12 +225,8 @@ export default function App() {
 		<ThemeProvider theme={theme}>
 			<CssBaseline />
 			<StudentSelectionWrapper>
-				<div className="app">
-					<BrowserRouter>
-						<div className="nav">
-							<NavBar />
-						</div>
-						<div className="content">
+				<BrowserRouter>
+					<AppShell navigation={<NavBar />} footer={<Footer />}>
 							<Routes>
 								<Route exact path='/login' element={localStorage.getItem('token') ? <Navigate to='/' /> : <Login />} />
 								<Route element={<PrivateRoutes />}>
@@ -241,17 +238,16 @@ export default function App() {
 										<Route exact path='/gradesync' element={<GradeSyncControl />} />
 										<Route exact path='/alerts' element={<Alerts />} />
 										<Route exact path='/settings' element={<Settings />} />
-										<Route path='/students/:email/report' element={<StudentProfile />} />
+										<Route path='/students/:studentId' element={<StudentProfile />} />
+										<Route path='/students/:studentId/*' element={<StudentProfile />} />
 									</Route>
 								</Route>
 								<Route exact path='/serverError' element={<HTTPError errorCode={500} />} />
 								<Route exact path='/clientError' element={<HTTPError errorCode={400} />} />
 								<Route exact path='*' element={<HTTPError errorCode={404} />} />
 							</Routes>
-						</div>
-						<Footer />
-					</BrowserRouter>
-				</div>
+					</AppShell>
+				</BrowserRouter>
 			</StudentSelectionWrapper>
 		</ThemeProvider>
 	);

@@ -71,7 +71,7 @@
 }
 
 .login-shell {
-    min-height: calc(100dvh - var(--app-topbar-height) - 96px) !important;
+    min-height: 100% !important;
 }
 
 .app a,

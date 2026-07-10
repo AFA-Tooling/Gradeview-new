@@ -164,9 +164,11 @@ function formatPercentage(value, digits = 1) {
   return `${safeNumber(value).toFixed(digits)}%`;
 }
 
-function roundUpPoints(value) {
+function formatPolicyPoints(value) {
+  if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.ceil(numeric) : 0;
+  if (!Number.isFinite(numeric)) return '-';
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
 }
 
 function normalizeText(value = '') {
@@ -216,16 +218,26 @@ function parseGradeBins(rawBins = []) {
 }
 
 function getGradeSnapshot(studentData) {
-  const total = safeNumber(studentData?.totalScore);
-  const roundedTotal = Math.round(total);
+  const canonicalGrade = studentData?.canonicalGrade;
+  const displayScore = safeNumber(canonicalGrade?.displayScore, Number.NaN);
   const bins = parseGradeBins(studentData?.gradeBins);
-  const current = bins.find((bin) => roundedTotal >= bin.low && roundedTotal <= bin.high) || null;
-  const next = bins.find((bin) => bin.low > roundedTotal) || null;
+  if (!canonicalGrade?.letter || !Number.isFinite(displayScore)) {
+    return {
+      currentGrade: 'N/A',
+      currentRange: '',
+      nextGrade: '',
+      pointsToNext: 0,
+      nextThreshold: null,
+      bins,
+    };
+  }
+  const current = canonicalGrade.bin || null;
+  const next = bins.find((bin) => bin.low > displayScore) || null;
   return {
-    currentGrade: current?.grade || 'N/A',
+    currentGrade: canonicalGrade.letter,
     currentRange: current?.range || '',
     nextGrade: next?.grade || '',
-    pointsToNext: next ? Math.max(0, Math.ceil(next.low - roundedTotal)) : 0,
+    pointsToNext: next ? Math.max(0, next.low - displayScore) : 0,
     nextThreshold: next?.low || null,
     bins,
   };
@@ -687,7 +699,7 @@ export function StudentWorkspaceHome({ studentData }) {
         <Grid item xs={12} md={4}>
           <MetricTile
             label="Final standing"
-            value={`${roundUpPoints(studentData?.totalScore)} / ${roundUpPoints(totalCap)}`}
+            value={`${formatPolicyPoints(studentData?.policyFinalDisplayScore ?? studentData?.displayScore)} / ${formatPolicyPoints(studentData?.policyFinalCap ?? totalCap)}`}
             caption={`Current grade: ${gradeSnapshot.currentGrade}${gradeSnapshot.currentRange ? ` (${gradeSnapshot.currentRange})` : ''}`}
             to="/profile/explain"
             icon={<TrendingUp fontSize="small" />}
@@ -796,7 +808,7 @@ function buildReportSummary(studentData, studentEmail, currentCourse) {
   return [
     `Student: ${studentData?.studentName || studentData?.name || studentEmail || 'Unknown'}`,
     currentCourse ? `Course: ${currentCourse}` : '',
-    `Current standing: ${roundUpPoints(studentData?.totalScore)} / ${roundUpPoints(cap)} (${grade.currentGrade})`,
+    `Current standing: ${formatPolicyPoints(studentData?.policyFinalDisplayScore ?? studentData?.displayScore)} / ${formatPolicyPoints(studentData?.policyFinalCap ?? cap)} (${grade.currentGrade})`,
     grade.nextGrade ? `Next grade gap: ${grade.pointsToNext} pts to ${grade.nextGrade}` : 'Next grade gap: top configured bin',
     weak ? `Highest-impact area: ${weak.label}` : '',
   ].filter(Boolean).join('\n');
@@ -855,7 +867,7 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
               Final Policy Snapshot
             </Typography>
             <Typography sx={{ color: colors.ink, fontWeight: 850, fontSize: { xs: 28, md: 34 }, lineHeight: 1.05 }}>
-              {roundUpPoints(studentData?.totalScore)} / {roundUpPoints(totalCap)} · {gradeSnapshot.currentGrade}
+              {formatPolicyPoints(studentData?.policyFinalDisplayScore ?? studentData?.displayScore)} / {formatPolicyPoints(studentData?.policyFinalCap ?? totalCap)} · {gradeSnapshot.currentGrade}
             </Typography>
             <Typography sx={{ color: colors.muted, fontSize: 13, mt: 1 }}>
               {studentData?.studentName || studentData?.name || studentEmail || 'Student'}

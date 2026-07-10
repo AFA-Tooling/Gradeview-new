@@ -62,12 +62,18 @@ import {
     decodePermissionToken,
     formatCourseLabel,
     getCourseControlModel,
+    getStudentReviewContext,
     isNavigationItemActive,
     normalizeCourseList,
     parseStoredPermissions,
     permissionStateReducer,
     resolveCourseQueryId,
 } from '../utils/personaNavigation';
+import {
+    getClassHealthStudentsPath,
+    getStudentRouteCourseId,
+    resolveCourseSelection,
+} from '../utils/studentRoutes';
 import NavMenuItem from './NavMenuItem';
 import { StudentSelectionContext } from './StudentSelectionWrapper';
 
@@ -268,7 +274,7 @@ function ReviewContext({ context, compact = false }) {
             </Typography>
             <Button
                 component={NavLink}
-                to="/admin"
+                to={getClassHealthStudentsPath()}
                 fullWidth
                 startIcon={<ArrowBack aria-hidden="true" />}
                 sx={{
@@ -380,6 +386,14 @@ export default function ButtonAppBar() {
     const mobileView = useMediaQuery('(max-width:900px)');
     const location = useLocation();
     const navigate = useNavigate();
+    const reviewRouteContext = useMemo(
+        () => getStudentReviewContext(location.pathname),
+        [location.pathname],
+    );
+    const reviewRouteStudentIdentifier = reviewRouteContext?.identifier || '';
+    const reviewRouteCourseId = reviewRouteContext
+        ? getStudentRouteCourseId(location.search)
+        : '';
     const { setSelectedStudent } = useContext(StudentSelectionContext);
     const [loggedIn, setLoginStatus] = useState(() => Boolean(localStorage.getItem('token')));
     const [permissionState, dispatchPermissions] = useReducer(
@@ -431,7 +445,7 @@ export default function ButtonAppBar() {
 
     const isStaff = permissionState.capabilities.isStaff;
     const selectFirstStudentForCourse = useCallback(async (courseId, courseList) => {
-        if (!isStaff || !courseId) return;
+        if (!isStaff || !courseId || reviewRouteStudentIdentifier) return;
         const queryCourseId = resolveCourseQueryId(courseId, courseList);
         if (!queryCourseId) return;
         const response = await cachedApiGet(
@@ -442,7 +456,7 @@ export default function ButtonAppBar() {
             .filter((student) => Array.isArray(student) && student[1])
             .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || '')))[0];
         if (firstStudent) setSelectedStudent(firstStudent[1]);
-    }, [isStaff, setSelectedStudent]);
+    }, [isStaff, reviewRouteStudentIdentifier, setSelectedStudent]);
 
     useEffect(() => {
         if (!loggedIn || !permissionState.capabilities.hasKnownRole) return undefined;
@@ -460,12 +474,22 @@ export default function ButtonAppBar() {
                 }
 
                 const rememberedCourse = localStorage.getItem('selectedCourseId') || '';
+                const routeCourse = reviewRouteCourseId
+                    ? resolveCourseSelection(reviewRouteCourseId, fetchedCourses)
+                    : '';
                 const hasRemembered = fetchedCourses.some(
                     (course) => String(course.id) === String(rememberedCourse),
                 );
-                const nextCourse = hasRemembered
-                    ? String(rememberedCourse)
-                    : String(fetchedCourses[0].id);
+                const nextCourse = reviewRouteCourseId
+                    ? routeCourse
+                    : hasRemembered
+                        ? String(rememberedCourse)
+                        : String(fetchedCourses[0].id);
+                if (!nextCourse) {
+                    setSelectedCourse('');
+                    localStorage.removeItem('selectedCourseId');
+                    return;
+                }
                 setSelectedCourse(nextCourse);
                 localStorage.setItem('selectedCourseId', nextCourse);
                 window.dispatchEvent(new CustomEvent('selectedCourseChanged', { detail: { courseId: nextCourse } }));
@@ -483,6 +507,7 @@ export default function ButtonAppBar() {
         isStaff,
         loggedIn,
         permissionState.capabilities.hasKnownRole,
+        reviewRouteCourseId,
         refreshPermissions,
         selectFirstStudentForCourse,
     ]);
@@ -549,7 +574,7 @@ export default function ButtonAppBar() {
                 <NavMenuItem
                     icon={<ArrowBack />}
                     text="Return to Class Health"
-                    onClick={() => navigateFromMenu('/admin')}
+                    onClick={() => navigateFromMenu(getClassHealthStudentsPath())}
                 />
             )}
             {mobileView && navigationItems.map((item) => (
