@@ -279,7 +279,7 @@ function LoadingStudentPage({ title }) {
   );
 }
 
-function MetricTile({ label, value, caption, to, icon }) {
+function MetricTile({ label, value, caption, to, icon, emphasized = false }) {
   const content = (
     <Paper
       elevation={0}
@@ -288,6 +288,8 @@ function MetricTile({ label, value, caption, to, icon }) {
         p: 2,
         height: '100%',
         color: colors.ink,
+        borderColor: emphasized ? colors.borderStrong : colors.border,
+        backgroundColor: emphasized ? colors.band : colors.surface,
         textDecoration: 'none',
         transition: 'border-color 140ms ease, background-color 140ms ease',
         '&:hover': to ? { borderColor: colors.borderStrong, backgroundColor: colors.band } : undefined,
@@ -296,7 +298,7 @@ function MetricTile({ label, value, caption, to, icon }) {
       <Stack direction="row" spacing={1.2} justifyContent="space-between" alignItems="flex-start">
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>{label}</Typography>
-          <Typography sx={{ color: colors.ink, fontSize: 24, fontWeight: 800, lineHeight: 1.15, mt: 0.5 }}>
+          <Typography sx={{ color: colors.ink, fontSize: emphasized ? 30 : 24, fontWeight: 800, lineHeight: 1.15, mt: 0.5 }}>
             {value}
           </Typography>
           {caption && <Typography sx={{ color: colors.muted, fontSize: 12.5, mt: 0.75 }}>{caption}</Typography>}
@@ -417,8 +419,9 @@ export function StudentWorkspaceHome({ studentData }) {
       subtitle="Current standing, the grading area with the highest impact, and the next few things to do."
     >
       <Grid container spacing={2}>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={5}>
           <MetricTile
+            emphasized
             label="Final standing"
             value={gradeSnapshot.displayScore == null || gradeSnapshot.cap == null
               ? 'Unavailable'
@@ -430,7 +433,7 @@ export function StudentWorkspaceHome({ studentData }) {
             icon={<TrendingUp fontSize="small" />}
           />
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={3}>
           <MetricTile
             label="Next grade gap"
             value={gradeSnapshot.pointsToNext == null ? 'Unavailable' : (gradeSnapshot.nextGrade ? `${formatContractPoints(gradeSnapshot.pointsToNext)} pts` : 'Top bin')}
@@ -561,7 +564,6 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
   const [reviewed, setReviewed] = useState(false);
   const [notes, setNotes] = useState('');
   const [copied, setCopied] = useState(false);
-  const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
   const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
   const summary = useMemo(() => buildReportSummary(studentData, studentEmail, currentCourse), [studentData, studentEmail, currentCourse]);
 
@@ -607,7 +609,7 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
       )}
     >
       <SectionPanel>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
+        <Stack spacing={1.25}>
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="overline" sx={{ color: colors.muted, fontWeight: 800, letterSpacing: 0 }}>
               Final Policy Snapshot
@@ -623,24 +625,6 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
               {currentCourse ? ` · ${currentCourse}` : ''}
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="flex-start">
-            {EXAM_DEFS.map((def) => {
-              const block = blocks.find((item) => item.key === def.key);
-              return (
-                <Chip
-                  key={def.key}
-                  label={`${def.shortLabel}: ${block?.exactScore == null || block?.cap == null
-                    ? 'Unavailable'
-                    : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}`}
-                  sx={{ fontWeight: 750, backgroundColor: colors.band, color: colors.ink }}
-                />
-              );
-            })}
-            <Chip
-              label={gradeSnapshot.nextGrade ? `${gradeSnapshot.pointsToNext} pts to ${gradeSnapshot.nextGrade}` : 'Top grade bin'}
-              sx={{ fontWeight: 750, backgroundColor: colors.greenBg, color: colors.green }}
-            />
-          </Stack>
         </Stack>
         {staffMode && (
           <TextField
