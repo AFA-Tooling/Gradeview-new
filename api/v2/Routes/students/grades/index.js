@@ -7,10 +7,8 @@ import {
 import { IAM_ROLE } from '../../../../lib/iam.mjs';
 import {
     assignmentEvidenceRequestError,
-    buildAssignmentEvidenceResponse,
-    groupAssignmentEvidence,
-    sortAssignmentEvidenceByTime,
 } from '../../../../lib/assignmentEvidence.mjs';
+import { buildStudentGradesRouteResponse } from './gradesResponse.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -45,14 +43,7 @@ router.get('/', async (req, res) => {
         const effectiveCourseId = req.query.course_id || courseId || null;
         const evidence = await getStudentAssignmentEvidence(email, effectiveCourseId);
 
-        if (sort === 'time') {
-            const response = buildAssignmentEvidenceResponse(sortAssignmentEvidenceByTime(evidence));
-            return res.status(200).json({
-                ...response,
-                sortBy: 'time',
-            });
-        }
-        return res.status(200).json(groupAssignmentEvidence(evidence));
+        return res.status(200).json(buildStudentGradesRouteResponse(evidence, sort));
     } catch (err) {
         console.error("Internal service error for student with email %s", email, err);
         return res.status(Number(err?.status) || 500).json(assignmentEvidenceRequestError(err));

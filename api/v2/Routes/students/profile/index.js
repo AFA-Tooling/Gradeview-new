@@ -23,6 +23,7 @@ import {
     sortAssignmentEvidenceByTime,
     summarizeAssignmentEvidence,
 } from '../../../../lib/assignmentEvidence.mjs';
+import { buildStudentProfileRouteResponse } from './profileResponse.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -274,27 +275,19 @@ router.get('/', async (req, res) => {
             })
             : null;
 
-        return res.status(200).json({
+        return res.status(200).json(buildStudentProfileRouteResponse({
             courseId: effectiveCourseId,
             canonicalGrade,
-            grades: groupedSubmissions,
-            rawGrades: {
-                ...rawGrades,
-                sortBy: 'time',
-            },
-            categoryStats: categoryAverages || {},
+            groupedSubmissions,
+            rawGrades,
+            categoryAverages,
             bins,
-            examPolicy: {
-                rows: policyRows || [],
-                total: Array.isArray(policyRows) ? policyRows.length : 0,
-                questComponentTrend: examComponentTrends?.quest,
-                examComponentTrends: examComponentTrends || {},
-            },
-            summary: profileSummary,
-            dueWorkProgress,
+            policyRows,
+            examComponentTrends,
+            profileSummary,
             categoryBlocks,
             gradeFlow,
-        });
+        }));
     } catch (err) {
         const status = Number(err?.status) || 500;
         const evidenceError = err?.code === 'ASSIGNMENT_EVIDENCE_REQUEST_ERROR'
