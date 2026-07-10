@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Accordion,
   AccordionDetails,
@@ -40,7 +40,6 @@ import {
   InsightsOutlined,
   OpenInNew,
   Print,
-  ReportOutlined,
   Search,
   TimelineOutlined,
   TrendingUp,
@@ -58,6 +57,41 @@ import { Radar as ChartRadar } from 'react-chartjs-2';
 import GradeDataFlow from './GradeDataFlow';
 import StudentProfileContent from './StudentProfileContent';
 import ConceptMap from '../views/conceptMap';
+import {
+  CATEGORY_DEFINITIONS,
+  EVIDENCE_STATUSES,
+  buildCategoryPresentation,
+  buildCategoryPresentations,
+  buildLedgerCsv,
+  buildLedgerHref,
+  buildRecentSignals,
+  buildTopActions,
+  filterLedgerRows,
+  formatAttemptCount,
+  formatCourseDateTime,
+  formatEvidenceScore,
+  formatPoints as formatContractPoints,
+  formatPercentage as formatContractPercentage,
+  getActualClobberRows,
+  getAssignmentEvidence,
+  getBestExamRow as getContractBestExamRow,
+  getCanonicalStanding,
+  getEvidenceStatusMeta,
+  getExamDiagnosticPercentage,
+  getExamRows as getContractExamRows,
+  getExamTrend as getContractExamTrend,
+  getGradeSnapshot as getCanonicalGradeSnapshot,
+  getLedgerGroupLabel,
+  getMostImportantCategory,
+  mergeExperienceQuery,
+  optionalNumber,
+  parseCategoryPageQuery,
+  parseExamMode,
+  parseExamSelection,
+  parseLedgerQuery,
+  percentageToPoints as contractPercentageToPoints,
+  sortLedgerRows,
+} from './studentExperienceModel';
 
 ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, ChartTooltip, Legend);
 
@@ -95,56 +129,7 @@ const sectionTitleSx = {
   lineHeight: 1.2,
 };
 
-const CATEGORY_DEFS = [
-  {
-    key: 'attendance',
-    label: 'Attendance / Participation',
-    shortLabel: 'Attendance',
-    route: '/profile/attendance',
-    type: 'attendance',
-    match: /(attendance|participation|lecture|discussion|make-?up)/i,
-  },
-  {
-    key: 'labs',
-    label: 'Labs',
-    shortLabel: 'Labs',
-    route: '/profile/labs',
-    type: 'labs',
-    match: /\blab\b|labs/i,
-  },
-  {
-    key: 'projects',
-    label: 'Projects',
-    shortLabel: 'Projects',
-    route: '/profile/projects',
-    type: 'projects',
-    match: /project/i,
-  },
-  {
-    key: 'quest',
-    label: 'Quest',
-    shortLabel: 'Quest',
-    route: '/profile/exams/quest',
-    type: 'exam',
-    match: /quest/i,
-  },
-  {
-    key: 'midterm',
-    label: 'Midterm',
-    shortLabel: 'Midterm',
-    route: '/profile/exams/midterm',
-    type: 'exam',
-    match: /midterm/i,
-  },
-  {
-    key: 'postterm',
-    label: 'Postterm',
-    shortLabel: 'Postterm',
-    route: '/profile/exams/postterm',
-    type: 'exam',
-    match: /postterm|posterm|final/i,
-  },
-];
+const CATEGORY_DEFS = CATEGORY_DEFINITIONS;
 
 const EXAM_DEFS = CATEGORY_DEFS.filter((item) => item.type === 'exam');
 const CATEGORY_BY_KEY = new Map(CATEGORY_DEFS.map((item) => [item.key, item]));
@@ -155,104 +140,22 @@ function safeNumber(value, fallback = 0) {
 }
 
 function formatPoints(value, digits = 1) {
+  if (value === null || value === undefined || value === '') return 'Unavailable';
   const numeric = safeNumber(value);
   if (Number.isInteger(numeric)) return String(numeric);
   return numeric.toFixed(digits);
 }
 
 function formatPercentage(value, digits = 1) {
+  if (value === null || value === undefined || value === '') return 'Unavailable';
   return `${safeNumber(value).toFixed(digits)}%`;
 }
 
-function formatPolicyPoints(value) {
-  if (value === null || value === undefined || value === '') return '-';
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return '-';
-  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
-}
-
-function normalizeText(value = '') {
-  return String(value || '').trim().toLowerCase();
-}
-
-function formatDate(dateString) {
-  if (!dateString) return '-';
-  const date = new Date(dateString);
-  if (!Number.isFinite(date.getTime())) return '-';
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function getTimestamp(dateString) {
-  if (!dateString) return Number.NEGATIVE_INFINITY;
-  const timestamp = new Date(dateString).getTime();
-  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
-}
-
-function isLate(lateness) {
-  const value = normalizeText(lateness);
-  return Boolean(value && value !== '00:00:00' && value !== '0' && value !== 'none');
-}
-
-function parseGradeBins(rawBins = []) {
-  return (Array.isArray(rawBins) ? rawBins : [])
-    .map((bin) => {
-      const match = String(bin?.range || '').match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
-      if (!match) return null;
-      const low = Number(match[1]);
-      const high = Number(match[2]);
-      if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
-      return {
-        grade: String(bin?.grade || bin?.letter || '').trim(),
-        low: Math.min(low, high),
-        high: Math.max(low, high),
-        range: String(bin?.range || ''),
-      };
-    })
-    .filter((bin) => bin && bin.grade)
-    .sort((a, b) => a.low - b.low);
-}
-
 function getGradeSnapshot(studentData) {
-  const canonicalGrade = studentData?.canonicalGrade;
-  const displayScore = safeNumber(canonicalGrade?.displayScore, Number.NaN);
-  const bins = parseGradeBins(studentData?.gradeBins);
-  if (!canonicalGrade?.letter || !Number.isFinite(displayScore)) {
-    return {
-      currentGrade: 'N/A',
-      currentRange: '',
-      nextGrade: '',
-      pointsToNext: 0,
-      nextThreshold: null,
-      bins,
-    };
-  }
-  const current = canonicalGrade.bin || null;
-  const next = bins.find((bin) => bin.low > displayScore) || null;
   return {
-    currentGrade: canonicalGrade.letter,
-    currentRange: current?.range || '',
-    nextGrade: next?.grade || '',
-    pointsToNext: next ? Math.max(0, next.low - displayScore) : 0,
-    nextThreshold: next?.low || null,
-    bins,
+    ...getCanonicalGradeSnapshot(studentData),
+    bins: Array.isArray(studentData?.gradeBins) ? studentData.gradeBins : [],
   };
-}
-
-function getTotalCap(studentData, blocks = []) {
-  const blockCap = blocks.reduce((sum, block) => sum + safeNumber(block.cap), 0);
-  if (blockCap > 0) return blockCap;
-  return safeNumber(studentData?.totalCapPoints || studentData?.totalMaxPoints);
-}
-
-function getRawAssignments(studentData) {
-  const raw = Array.isArray(studentData?.rawAssignmentsList) ? studentData.rawAssignmentsList : [];
-  if (raw.length > 0) return raw;
-  return Array.isArray(studentData?.assignmentsList) ? studentData.assignmentsList : [];
 }
 
 function findCategoryDefForAssignment(assignment) {
@@ -261,254 +164,58 @@ function findCategoryDefForAssignment(assignment) {
 }
 
 function getCategoryBlock(studentData, key) {
-  const def = CATEGORY_BY_KEY.get(key);
-  if (!def) return null;
-
-  const blocks = Array.isArray(studentData?.categoryBlocks) ? studentData.categoryBlocks : [];
-  const direct = blocks.find((block) => normalizeText(block?.key) === key)
-    || blocks.find((block) => def.match.test(`${block?.label || ''} ${block?.key || ''}`));
-  if (direct) {
-    return {
-      ...direct,
-      key: def.key,
-      label: direct.label || def.label,
-      route: def.route,
-      type: direct.type || def.type,
-      score: safeNumber(direct.score),
-      cap: safeNumber(direct.cap),
-      percentage: safeNumber(direct.percentage),
-    };
-  }
-
-  const categoryEntry = Object.entries(studentData?.categoriesData || {}).find(([category]) => (
-    def.match.test(category)
-  ));
-  if (!categoryEntry) {
-    return {
-      key: def.key,
-      label: def.label,
-      shortLabel: def.shortLabel,
-      route: def.route,
-      type: def.type,
-      score: 0,
-      cap: 0,
-      percentage: 0,
-      summary: {},
-      exam: null,
-    };
-  }
-
-  const [, data] = categoryEntry;
-  const score = safeNumber(data?.total);
-  const cap = safeNumber(data?.capPoints ?? data?.maxPoints);
-  return {
-    key: def.key,
-    label: def.label,
-    shortLabel: def.shortLabel,
-    route: def.route,
-    type: def.type,
-    score,
-    cap,
-    percentage: cap > 0 ? (score / cap) * 100 : 0,
-    summary: {},
-    exam: null,
-  };
+  return buildCategoryPresentation(studentData, key);
 }
 
 function getWorkspaceBlocks(studentData) {
-  return CATEGORY_DEFS.map((def) => getCategoryBlock(studentData, def.key)).filter(Boolean);
+  return buildCategoryPresentations(studentData);
 }
 
 function getCategoryAssignments(studentData, key) {
-  const def = CATEGORY_BY_KEY.get(key);
-  if (!def) return [];
-  return getRawAssignments(studentData)
-    .filter((assignment) => def.match.test(`${assignment?.category || ''} ${assignment?.name || ''}`))
-    .map((assignment) => decorateAssignment(assignment));
-}
-
-function getAssignmentPolicyStatus(assignment) {
-  const score = safeNumber(assignment?.score, NaN);
-  const maxPoints = safeNumber(assignment?.maxPoints, NaN);
-  const name = normalizeText(assignment?.name);
-  const category = normalizeText(assignment?.category);
-  if (name.includes('dropped') || category.includes('dropped')) return 'dropped';
-  if (category.includes('clobber') || name.includes('clobber')) return 'clobbered';
-  if (Number.isFinite(score) && Number.isFinite(maxPoints) && maxPoints > 0 && score <= 0 && !assignment?.submissionTime) {
-    return 'missing';
-  }
-  if (isLate(assignment?.lateness)) return 'late';
-  if (Number.isFinite(score) && Number.isFinite(maxPoints) && maxPoints > 0 && score <= 0) return 'zero';
-  return 'used';
-}
-
-function decorateAssignment(assignment) {
-  const score = safeNumber(assignment?.score);
-  const maxPoints = safeNumber(assignment?.maxPoints);
-  const percentage = maxPoints > 0 ? (score / maxPoints) * 100 : safeNumber(assignment?.percentage);
-  const def = findCategoryDefForAssignment(assignment);
-  return {
-    ...assignment,
-    score,
-    maxPoints,
-    percentage,
-    route: def?.route || '/profile/assignments',
-    policyStatus: getAssignmentPolicyStatus(assignment),
-    categoryKey: def?.key || normalizeText(assignment?.category || 'other'),
-    formattedSubmissionTime: formatDate(assignment?.submissionTime),
-    timestamp: getTimestamp(assignment?.submissionTime),
-  };
+  return buildCategoryPresentation(studentData, key)?.evidenceRows || [];
 }
 
 function getRecentSignals(studentData) {
-  const assignmentSignals = getRawAssignments(studentData)
-    .map((assignment) => decorateAssignment(assignment))
-    .filter((assignment) => ['missing', 'late', 'zero', 'dropped', 'clobbered'].includes(assignment.policyStatus))
-    .map((assignment) => ({
-      id: `${assignment.category}-${assignment.name}-${assignment.policyStatus}`,
-      type: assignment.policyStatus,
-      label: assignment.name || 'Assignment',
-      detail: `${assignment.category || 'Coursework'} · ${formatPoints(assignment.score)} / ${formatPoints(assignment.maxPoints)}`,
-      route: assignment.route,
-      timestamp: assignment.timestamp,
-      assignment,
-    }));
-
-  const examSignals = (Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [])
-    .filter((row) => row?.clobberSourceTitle)
-    .map((row) => ({
-      id: `clobber-${row.examType}-${row.attemptNo}`,
-      type: 'clobber',
-      label: `${String(row.examType || 'Exam').replace(/^\w/, (char) => char.toUpperCase())} clobber applied`,
-      detail: `Source: ${row.clobberSourceTitle}`,
-      route: `/profile/exams/${normalizeText(row.examType) || 'quest'}`,
-      timestamp: getTimestamp(row.computedAt),
-      row,
-    }));
-
-  return [...assignmentSignals, ...examSignals]
-    .sort((a, b) => (b.timestamp - a.timestamp) || String(a.label).localeCompare(String(b.label)))
-    .slice(0, 8);
+  return buildRecentSignals(studentData);
 }
 
 function getImportantCategory(blocks = []) {
-  return [...blocks]
-    .filter((block) => safeNumber(block.cap) > 0)
-    .map((block) => {
-      const remaining = Math.max(0, safeNumber(block.cap) - safeNumber(block.score));
-      const weakness = Math.max(0, 100 - safeNumber(block.percentage));
-      return {
-        ...block,
-        remaining,
-        impactScore: remaining + (weakness / 100) * safeNumber(block.cap),
-      };
-    })
-    .sort((a, b) => b.impactScore - a.impactScore)[0] || null;
+  return getMostImportantCategory(blocks);
 }
 
-function getTopActions(studentData, blocks, gradeSnapshot) {
-  const actions = [];
-  const signals = getRecentSignals(studentData);
-  const missingLike = signals.find((signal) => ['missing', 'zero'].includes(signal.type));
-  if (missingLike) {
-    actions.push({
-      key: 'missing',
-      title: `Review ${missingLike.label}`,
-      detail: missingLike.detail,
-      to: missingLike.route || '/profile/assignments',
-      tone: 'attention',
-    });
-  }
-
-  const late = signals.find((signal) => signal.type === 'late');
-  if (late) {
-    actions.push({
-      key: 'late',
-      title: `Check lateness on ${late.label}`,
-      detail: late.detail,
-      to: late.route || '/profile/assignments',
-      tone: 'watch',
-    });
-  }
-
-  const important = getImportantCategory(blocks);
-  if (important) {
-    actions.push({
-      key: `category-${important.key}`,
-      title: `Focus on ${important.label}`,
-      detail: `${formatPoints(important.remaining)} points remain before the category cap.`,
-      to: important.route,
-      tone: 'default',
-    });
-  }
-
-  if (gradeSnapshot.nextGrade && gradeSnapshot.pointsToNext > 0) {
-    actions.push({
-      key: 'next-grade',
-      title: `Close ${gradeSnapshot.pointsToNext} pt gap to ${gradeSnapshot.nextGrade}`,
-      detail: 'Open the score explanation to see where those points can come from.',
-      to: '/profile/explain',
-      tone: 'default',
-    });
-  }
-
-  const seen = new Set();
-  return actions
-    .filter((action) => {
-      const key = `${action.title}-${action.to}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 3);
+function getTopActions(studentData) {
+  return buildTopActions(studentData);
 }
 
 function getExamRows(studentData, examKey) {
-  return (Array.isArray(studentData?.examPolicyRows) ? studentData.examPolicyRows : [])
-    .filter((row) => normalizeText(row?.examType) === examKey)
-    .sort((a, b) => safeNumber(a?.attemptNo) - safeNumber(b?.attemptNo));
+  return getContractExamRows(studentData, examKey);
 }
 
 function getExamTrend(studentData, examKey) {
-  const trends = studentData?.examComponentTrends || {};
-  const trend = trends[examKey] || (examKey === 'quest' ? studentData?.questComponentTrend : null) || {};
-  return {
-    components: Array.isArray(trend.components) ? trend.components : [],
-    componentCaps: Array.isArray(trend.componentCaps) ? trend.componentCaps : [],
-    series: Array.isArray(trend.series) ? trend.series : [],
-  };
+  return getContractExamTrend(studentData, examKey);
 }
 
 function getBestExamRow(rows = []) {
-  if (rows.length === 0) return null;
-  return [...rows].sort((a, b) => safeNumber(b?.finalPercentage, -1) - safeNumber(a?.finalPercentage, -1))[0];
-}
-
-function getExamPercent(row, mode = 'final') {
-  if (!row) return null;
-  if (mode === 'raw') return row.rawPercentage ?? null;
-  if (mode === 'questionBest') return row.questionBestPercentage ?? row.rawPercentage ?? null;
-  if (mode === 'clobber') return row.clobberedPercentage ?? row.finalPercentage ?? row.questionBestPercentage ?? row.rawPercentage ?? null;
-  return row.finalPercentage ?? row.clobberedPercentage ?? row.questionBestPercentage ?? row.rawPercentage ?? null;
+  return getContractBestExamRow(rows);
 }
 
 function percentageToPoints(percentage, cap) {
-  const pct = Number(percentage);
-  const numericCap = Number(cap);
-  if (!Number.isFinite(pct) || !Number.isFinite(numericCap) || numericCap <= 0) return null;
-  return (Math.max(0, Math.min(100, pct)) / 100) * numericCap;
+  return contractPercentageToPoints(percentage, cap);
 }
 
 function StatusChip({ status }) {
-  const tone = {
-    missing: { bg: colors.redBg, color: colors.red, label: 'Missing' },
-    zero: { bg: colors.redBg, color: colors.red, label: 'Zero' },
-    late: { bg: colors.amberBg, color: colors.amber, label: 'Late' },
-    dropped: { bg: colors.band, color: colors.muted, label: 'Dropped' },
-    clobbered: { bg: '#EEF2FF', color: '#4338CA', label: 'Clobbered' },
-    used: { bg: colors.greenBg, color: colors.green, label: 'Used' },
-  }[status] || { bg: colors.band, color: colors.muted, label: status || 'Raw only' };
-  return <Chip size="small" label={tone.label} sx={{ backgroundColor: tone.bg, color: tone.color, fontWeight: 700 }} />;
+  if (status === 'clobbered') {
+    return <Chip size="small" label="Clobbered" sx={{ backgroundColor: '#EEF2FF', color: '#4338CA', fontWeight: 700 }} />;
+  }
+  const meta = getEvidenceStatusMeta(status);
+  const tone = meta.tone === 'error'
+    ? { bg: colors.redBg, color: colors.red }
+    : meta.tone === 'warning'
+      ? { bg: colors.amberBg, color: colors.amber }
+      : meta.tone === 'success'
+        ? { bg: colors.greenBg, color: colors.green }
+        : { bg: colors.band, color: colors.muted };
+  return <Chip size="small" label={meta.label} sx={{ backgroundColor: tone.bg, color: tone.color, fontWeight: 700 }} />;
 }
 
 function PageFrame({ title, subtitle, actions, children }) {
@@ -564,6 +271,14 @@ function SectionPanel({ title, subtitle, action, children, sx }) {
   );
 }
 
+function LoadingStudentPage({ title }) {
+  return (
+    <PageFrame title={title} subtitle="Waiting for the selected student's canonical grade and assignment evidence.">
+      <Alert severity="info">Loading student data…</Alert>
+    </PageFrame>
+  );
+}
+
 function MetricTile({ label, value, caption, to, icon }) {
   const content = (
     <Paper
@@ -604,12 +319,16 @@ function MetricTile({ label, value, caption, to, icon }) {
 }
 
 function CategoryNavigationCard({ block }) {
-  const score = safeNumber(block.score);
-  const cap = safeNumber(block.cap);
-  const percentage = cap > 0 ? (score / cap) * 100 : safeNumber(block.percentage);
-  const missingItems = safeNumber(block.summary?.missingItems);
-  const submittedItems = safeNumber(block.summary?.submittedItems);
-  const totalItems = safeNumber(block.summary?.totalItems);
+  const score = block.exactScore;
+  const cap = block.cap;
+  const percentage = block.percentage;
+  const statusCounts = block.summary?.statusCounts || {};
+  const missingItems = statusCounts.missing || 0;
+  const submittedItems = (statusCounts.submitted || 0) + (statusCounts.earned_zero || 0);
+  const totalItems = block.summary?.totalItems || 0;
+  const incompleteItems = (statusCounts.due_unknown || 0)
+    + (statusCounts.not_synced || 0)
+    + (statusCounts.request_error || 0);
   const route = block.route || CATEGORY_BY_KEY.get(block.key)?.route || '/profile/assignments';
   return (
     <Paper
@@ -636,15 +355,15 @@ function CategoryNavigationCard({ block }) {
               {block.label}
             </Typography>
             <Typography sx={{ color: colors.muted, fontSize: 12.5, mt: 0.35 }}>
-              {formatPercentage(percentage)} final policy
+              {percentage == null ? 'Final policy unavailable' : `${formatContractPercentage(percentage)} final policy`}
             </Typography>
           </Box>
           <ArrowForward sx={{ color: colors.soft, fontSize: 18, mt: 0.25 }} />
         </Stack>
         <Box>
           <LinearProgress
-            variant="determinate"
-            value={Math.max(0, Math.min(100, percentage))}
+            variant={percentage == null ? 'indeterminate' : 'determinate'}
+            value={percentage == null ? undefined : Math.max(0, Math.min(100, percentage))}
             sx={{
               height: 6,
               borderRadius: 1,
@@ -657,18 +376,23 @@ function CategoryNavigationCard({ block }) {
           />
           <Stack direction="row" justifyContent="space-between" sx={{ mt: 0.8 }}>
             <Typography sx={{ color: colors.ink, fontSize: 13, fontWeight: 750 }}>
-              {formatPoints(score)} / {formatPoints(cap)}
+              {score == null || cap == null
+                ? 'Unavailable'
+                : `${formatContractPoints(score)} / ${formatContractPoints(cap)}`}
             </Typography>
             <Typography sx={{ color: colors.muted, fontSize: 12.5 }}>
-              {totalItems > 0 ? `${submittedItems}/${totalItems} submitted` : 'Policy score'}
+              {totalItems > 0 ? `${submittedItems}/${totalItems} with submissions` : 'Evidence unavailable'}
             </Typography>
           </Stack>
         </Box>
         <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 'auto' }}>
           {missingItems > 0 && <Chip size="small" label={`${missingItems} missing`} sx={{ backgroundColor: colors.redBg, color: colors.red, fontWeight: 700 }} />}
-          {block.exam?.clobberedAttempts > 0 && <Chip size="small" label={`${block.exam.clobberedAttempts} clobbered`} sx={{ fontWeight: 700 }} />}
-          {missingItems === 0 && block.exam?.clobberedAttempts <= 0 && (
-            <Chip size="small" label="Current" sx={{ backgroundColor: colors.band, color: colors.muted, fontWeight: 700 }} />
+          {incompleteItems > 0 && <Chip size="small" label={`${incompleteItems} incomplete metadata`} sx={{ backgroundColor: colors.amberBg, color: colors.amber, fontWeight: 700 }} />}
+          {totalItems > 0 && missingItems === 0 && incompleteItems === 0 && (
+            <Chip size="small" label="Evidence complete" sx={{ backgroundColor: colors.band, color: colors.muted, fontWeight: 700 }} />
+          )}
+          {totalItems === 0 && (
+            <Chip size="small" label="No catalog evidence" sx={{ backgroundColor: colors.band, color: colors.muted, fontWeight: 700 }} />
           )}
         </Stack>
       </Stack>
@@ -679,28 +403,29 @@ function CategoryNavigationCard({ block }) {
 export function StudentWorkspaceHome({ studentData }) {
   const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
   const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
-  const totalCap = useMemo(() => getTotalCap(studentData, blocks), [studentData, blocks]);
   const importantCategory = useMemo(() => getImportantCategory(blocks), [blocks]);
-  const actions = useMemo(() => getTopActions(studentData, blocks, gradeSnapshot), [studentData, blocks, gradeSnapshot]);
+  const actions = useMemo(() => getTopActions(studentData), [studentData]);
   const signals = useMemo(() => getRecentSignals(studentData), [studentData]);
+  const evidenceRows = useMemo(() => getAssignmentEvidence(studentData), [studentData]);
+
+  if (!studentData) return <LoadingStudentPage title="Student Workspace" />;
 
   return (
     <PageFrame
       active="workspace"
       title="Student Workspace"
       subtitle="Current standing, the grading area with the highest impact, and the next few things to do."
-      actions={(
-        <Button component={RouterLink} to="/profile/report" variant="outlined" size="small" startIcon={<ReportOutlined />}>
-          Open report
-        </Button>
-      )}
     >
       <Grid container spacing={2}>
         <Grid item xs={12} md={4}>
           <MetricTile
             label="Final standing"
-            value={`${formatPolicyPoints(studentData?.policyFinalDisplayScore ?? studentData?.displayScore)} / ${formatPolicyPoints(studentData?.policyFinalCap ?? totalCap)}`}
-            caption={`Current grade: ${gradeSnapshot.currentGrade}${gradeSnapshot.currentRange ? ` (${gradeSnapshot.currentRange})` : ''}`}
+            value={gradeSnapshot.displayScore == null || gradeSnapshot.cap == null
+              ? 'Unavailable'
+              : `${formatContractPoints(gradeSnapshot.displayScore)} / ${formatContractPoints(gradeSnapshot.cap)}`}
+            caption={gradeSnapshot.currentGrade
+              ? `Current grade: ${gradeSnapshot.currentGrade}${gradeSnapshot.currentRange ? ` (${gradeSnapshot.currentRange})` : ''}`
+              : 'Canonical policy-final standing is unavailable.'}
             to="/profile/explain"
             icon={<TrendingUp fontSize="small" />}
           />
@@ -708,8 +433,12 @@ export function StudentWorkspaceHome({ studentData }) {
         <Grid item xs={12} md={4}>
           <MetricTile
             label="Next grade gap"
-            value={gradeSnapshot.nextGrade ? `${gradeSnapshot.pointsToNext} pts` : 'Top bin'}
-            caption={gradeSnapshot.nextGrade ? `Needed for ${gradeSnapshot.nextGrade} at ${formatPoints(gradeSnapshot.nextThreshold, 0)} pts` : 'No higher grade bin is currently configured.'}
+            value={gradeSnapshot.pointsToNext == null ? 'Unavailable' : (gradeSnapshot.nextGrade ? `${formatContractPoints(gradeSnapshot.pointsToNext)} pts` : 'Top bin')}
+            caption={gradeSnapshot.pointsToNext == null
+              ? 'A canonical display score is required before calculating a gap.'
+              : gradeSnapshot.nextGrade
+                ? `Needed for ${gradeSnapshot.nextGrade} at ${formatContractPoints(gradeSnapshot.nextThreshold)} pts`
+                : 'No higher grade bin is currently configured.'}
             to="/profile/explain"
             icon={<TimelineOutlined fontSize="small" />}
           />
@@ -718,7 +447,7 @@ export function StudentWorkspaceHome({ studentData }) {
           <MetricTile
             label="Most important area"
             value={importantCategory?.label || 'No category data'}
-            caption={importantCategory ? `${formatPoints(importantCategory.remaining)} pts remain in this cap.` : 'Category summaries will appear after sync.'}
+            caption={importantCategory?.importanceReason || 'Canonical category summaries are unavailable.'}
             to={importantCategory?.route || '/profile/assignments'}
             icon={<InsightsOutlined fontSize="small" />}
           />
@@ -740,7 +469,11 @@ export function StudentWorkspaceHome({ studentData }) {
           <SectionPanel title="Top Actions" subtitle="Highest-signal next steps from the current data.">
             <Stack spacing={1}>
               {actions.length === 0 ? (
-                <Typography sx={{ color: colors.muted, fontSize: 14 }}>No immediate actions are visible in the current profile data.</Typography>
+                <Alert severity={evidenceRows.length === 0 ? 'warning' : 'info'}>
+                  {evidenceRows.length === 0
+                    ? 'No assignment catalog evidence is available, so actionable work cannot be ranked yet.'
+                    : 'No concrete missing, zero, late, sync, or timing action is present in the catalog evidence.'}
+                </Alert>
               ) : actions.map((action) => (
                 <Paper
                   key={action.key}
@@ -770,13 +503,19 @@ export function StudentWorkspaceHome({ studentData }) {
           </SectionPanel>
         </Grid>
         <Grid item xs={12} md={6}>
-          <SectionPanel title="Recent Signals" subtitle="Missing, late, zero, dropped, and clobber events.">
+          <SectionPanel title="Recent Signals" subtitle="Missing, earned-zero, timing, sync, and request-error evidence.">
             <Stack spacing={1}>
               {signals.length === 0 ? (
-                <Typography sx={{ color: colors.muted, fontSize: 14 }}>No recent risk signals found.</Typography>
-              ) : signals.slice(0, 5).map((signal) => (
+                <Alert severity={evidenceRows.length === 0 ? 'warning' : 'info'}>
+                  {evidenceRows.length === 0
+                    ? 'Risk signals are unavailable because no assignment catalog evidence was returned.'
+                    : 'No missing, earned-zero, late, sync, timing, or request-error signals are present.'}
+                </Alert>
+              ) : signals.slice(0, 5).map((signal) => {
+                const meta = getEvidenceStatusMeta(signal.evidenceStatus, signal);
+                return (
                 <Stack
-                  key={signal.id}
+                  key={`${signal.assignmentId}-${signal.evidenceStatus}`}
                   direction="row"
                   spacing={1}
                   alignItems="center"
@@ -785,13 +524,16 @@ export function StudentWorkspaceHome({ studentData }) {
                 >
                   <Box sx={{ minWidth: 0 }}>
                     <Typography sx={{ color: colors.ink, fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {signal.label}
+                      {signal.name}
                     </Typography>
-                    <Typography sx={{ color: colors.muted, fontSize: 12.5 }}>{signal.detail}</Typography>
+                    <Typography sx={{ color: colors.muted, fontSize: 12.5 }}>
+                      {signal.category} · {meta.reason} · {formatEvidenceScore(signal)}
+                    </Typography>
                   </Box>
-                  <StatusChip status={signal.type === 'clobber' ? 'clobbered' : signal.type} />
+                  <StatusChip status={signal.evidenceStatus} />
                 </Stack>
-              ))}
+                );
+              })}
             </Stack>
           </SectionPanel>
         </Grid>
@@ -803,12 +545,13 @@ export function StudentWorkspaceHome({ studentData }) {
 function buildReportSummary(studentData, studentEmail, currentCourse) {
   const blocks = getWorkspaceBlocks(studentData);
   const grade = getGradeSnapshot(studentData);
-  const cap = getTotalCap(studentData, blocks);
   const weak = getImportantCategory(blocks);
   return [
     `Student: ${studentData?.studentName || studentData?.name || studentEmail || 'Unknown'}`,
     currentCourse ? `Course: ${currentCourse}` : '',
-    `Current standing: ${formatPolicyPoints(studentData?.policyFinalDisplayScore ?? studentData?.displayScore)} / ${formatPolicyPoints(studentData?.policyFinalCap ?? cap)} (${grade.currentGrade})`,
+    grade.displayScore == null || grade.cap == null
+      ? 'Current standing: unavailable'
+      : `Current standing: ${formatContractPoints(grade.displayScore)} / ${formatContractPoints(grade.cap)} (${grade.currentGrade || 'letter unavailable'})`,
     grade.nextGrade ? `Next grade gap: ${grade.pointsToNext} pts to ${grade.nextGrade}` : 'Next grade gap: top configured bin',
     weak ? `Highest-impact area: ${weak.label}` : '',
   ].filter(Boolean).join('\n');
@@ -820,7 +563,6 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
   const [copied, setCopied] = useState(false);
   const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
   const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
-  const totalCap = useMemo(() => getTotalCap(studentData, blocks), [studentData, blocks]);
   const summary = useMemo(() => buildReportSummary(studentData, studentEmail, currentCourse), [studentData, studentEmail, currentCourse]);
 
   const copySummary = useCallback(async () => {
@@ -833,11 +575,15 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
     }
   }, [summary]);
 
+  if (!studentData) return <LoadingStudentPage title="Student Report" />;
+
   return (
     <PageFrame
       active="report"
       title="Student Report"
-      subtitle="One-page staff review with final policy snapshot, category evidence, exam policy, trends, assignment ledger, and diagnosis."
+      subtitle={staffMode
+        ? 'One-page staff review of the canonical policy-final standing and assignment evidence.'
+        : 'Your canonical policy-final standing, category evidence, exam diagnostics, and assignment catalog.'}
       staffMode={staffMode}
       actions={(
         <>
@@ -867,7 +613,9 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
               Final Policy Snapshot
             </Typography>
             <Typography sx={{ color: colors.ink, fontWeight: 850, fontSize: { xs: 28, md: 34 }, lineHeight: 1.05 }}>
-              {formatPolicyPoints(studentData?.policyFinalDisplayScore ?? studentData?.displayScore)} / {formatPolicyPoints(studentData?.policyFinalCap ?? totalCap)} · {gradeSnapshot.currentGrade}
+              {gradeSnapshot.displayScore == null || gradeSnapshot.cap == null
+                ? 'Canonical standing unavailable'
+                : `${formatContractPoints(gradeSnapshot.displayScore)} / ${formatContractPoints(gradeSnapshot.cap)} · ${gradeSnapshot.currentGrade || 'Letter unavailable'}`}
             </Typography>
             <Typography sx={{ color: colors.muted, fontSize: 13, mt: 1 }}>
               {studentData?.studentName || studentData?.name || studentEmail || 'Student'}
@@ -881,7 +629,9 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
               return (
                 <Chip
                   key={def.key}
-                  label={`${def.shortLabel}: ${block ? `${formatPoints(block.score)} / ${formatPoints(block.cap)}` : '-'}`}
+                  label={`${def.shortLabel}: ${block?.exactScore == null || block?.cap == null
+                    ? 'Unavailable'
+                    : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}`}
                   sx={{ fontWeight: 750, backgroundColor: colors.band, color: colors.ink }}
                 />
               );
@@ -910,49 +660,40 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
   );
 }
 
-function CategoryFilterControls({ pageKey, filter, setFilter, tab, setTab }) {
+function CategoryFilterControls({ pageKey, status, onStatusChange, tab, onTabChange, disabled }) {
   if (pageKey === 'labs') {
     return (
       <Stack spacing={1.5}>
-        <ToggleButtonGroup size="small" exclusive value={tab} onChange={(_event, value) => value && setTab(value)}>
+        <ToggleButtonGroup size="small" exclusive value={tab} onChange={(_event, value) => value && onTabChange(value)}>
           <ToggleButton value="overview">Overview</ToggleButton>
           <ToggleButton value="list">Lab List</ToggleButton>
           <ToggleButton value="policy">Policy</ToggleButton>
         </ToggleButtonGroup>
-        <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_event, value) => value && setFilter(value)}>
-          {['all', 'missing', 'dropped', 'kept'].map((item) => <ToggleButton key={item} value={item}>{item.replace(/^\w/, (c) => c.toUpperCase())}</ToggleButton>)}
-        </ToggleButtonGroup>
+        {tab === 'list' && (
+          <ToggleButtonGroup disabled={disabled} size="small" exclusive value={status} onChange={(_event, value) => value && onStatusChange(value)} sx={{ flexWrap: 'wrap' }}>
+            <ToggleButton value="all">All</ToggleButton>
+            {EVIDENCE_STATUSES.map((item) => <ToggleButton key={item} value={item}>{getEvidenceStatusMeta(item).label}</ToggleButton>)}
+          </ToggleButtonGroup>
+        )}
       </Stack>
     );
   }
 
-  const filters = pageKey === 'attendance'
-    ? ['all', 'lecture', 'discussion', 'lab', 'missing', 'make-up']
-    : ['all', 'submitted', 'missing', 'resubmission', 'late'];
-
   return (
-    <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_event, value) => value && setFilter(value)}>
-      {filters.map((item) => <ToggleButton key={item} value={item}>{item.replace(/^\w/, (c) => c.toUpperCase())}</ToggleButton>)}
+    <ToggleButtonGroup disabled={disabled} size="small" exclusive value={status} onChange={(_event, value) => value && onStatusChange(value)} sx={{ flexWrap: 'wrap' }}>
+      <ToggleButton value="all">All</ToggleButton>
+      {EVIDENCE_STATUSES.map((item) => <ToggleButton key={item} value={item}>{getEvidenceStatusMeta(item).label}</ToggleButton>)}
     </ToggleButtonGroup>
   );
 }
 
-function assignmentMatchesFilter(assignment, filter) {
-  const text = normalizeText(`${assignment.category || ''} ${assignment.name || ''}`);
-  if (filter === 'all' || !filter) return true;
-  if (filter === 'submitted') return assignment.policyStatus !== 'missing';
-  if (filter === 'missing') return assignment.policyStatus === 'missing' || assignment.policyStatus === 'zero';
-  if (filter === 'late') return assignment.policyStatus === 'late';
-  if (filter === 'dropped') return assignment.policyStatus === 'dropped' || text.includes('drop');
-  if (filter === 'kept') return assignment.policyStatus !== 'dropped';
-  if (filter === 'make-up') return /make-?up/.test(text);
-  if (filter === 'resubmission') return /resubmission|revision|retry/.test(text);
-  return text.includes(filter);
+function assignmentMatchesFilter(assignment, status) {
+  return status === 'all' || !status || assignment.evidenceStatus === status;
 }
 
-function AssignmentEvidenceTable({ assignments, onOpenAssignment }) {
+function AssignmentEvidenceTable({ assignments, onOpenAssignment, emptyMessage = 'No catalog rows match the current filter.' }) {
   if (assignments.length === 0) {
-    return <Typography sx={{ color: colors.muted, fontSize: 14 }}>No raw evidence rows match the current filter.</Typography>;
+    return <Alert severity="info">{emptyMessage}</Alert>;
   }
 
   return (
@@ -962,24 +703,27 @@ function AssignmentEvidenceTable({ assignments, onOpenAssignment }) {
           <TableRow>
             <TableCell>Assignment</TableCell>
             <TableCell>Category</TableCell>
-            <TableCell align="center">Score</TableCell>
+            <TableCell>Evidence</TableCell>
             <TableCell align="center">Status</TableCell>
-            <TableCell align="right">Submitted</TableCell>
+            <TableCell>Due</TableCell>
+            <TableCell>Submitted</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {assignments.map((assignment, index) => (
+          {assignments.map((assignment) => (
             <TableRow
-              key={`${assignment.category}-${assignment.name}-${index}`}
+              key={assignment.assignmentId}
+              data-assignment-id={assignment.assignmentId}
               hover
               onClick={() => onOpenAssignment(assignment)}
               sx={{ cursor: 'pointer' }}
             >
               <TableCell sx={{ fontWeight: 700 }}>{assignment.name}</TableCell>
               <TableCell>{assignment.category}</TableCell>
-              <TableCell align="center">{formatPoints(assignment.score)} / {formatPoints(assignment.maxPoints)}</TableCell>
-              <TableCell align="center"><StatusChip status={assignment.policyStatus} /></TableCell>
-              <TableCell align="right">{assignment.formattedSubmissionTime}</TableCell>
+              <TableCell>{formatEvidenceScore(assignment)}</TableCell>
+              <TableCell align="center"><StatusChip status={assignment.evidenceStatus} /></TableCell>
+              <TableCell>{formatCourseDateTime(assignment.dueAt)}</TableCell>
+              <TableCell>{formatCourseDateTime(assignment.submissionTime)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -990,27 +734,30 @@ function AssignmentEvidenceTable({ assignments, onOpenAssignment }) {
 
 function ProjectsEvidence({ assignments, onOpenAssignment }) {
   if (assignments.length === 0) {
-    return <Typography sx={{ color: colors.muted, fontSize: 14 }}>No project evidence rows match the current filter.</Typography>;
+    return <Alert severity="info">No project catalog rows match the current filter.</Alert>;
   }
 
   return (
     <Stack spacing={1}>
-      {assignments.map((assignment, index) => (
-        <Accordion key={`${assignment.name}-${index}`} disableGutters elevation={0} sx={{ border: `1px solid ${colors.border}`, borderRadius: 1.5, '&:before': { display: 'none' } }}>
+      {assignments.map((assignment) => (
+        <Accordion key={assignment.assignmentId} disableGutters elevation={0} sx={{ border: `1px solid ${colors.border}`, borderRadius: 1.5, '&:before': { display: 'none' } }}>
           <AccordionSummary expandIcon={<ExpandMore />}>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between" sx={{ width: '100%', pr: 1 }}>
               <Typography sx={{ fontWeight: 750 }}>{assignment.name}</Typography>
               <Stack direction="row" spacing={1} alignItems="center">
-                <Typography sx={{ color: colors.muted, fontSize: 13 }}>{formatPoints(assignment.score)} / {formatPoints(assignment.maxPoints)}</Typography>
-                <StatusChip status={assignment.policyStatus} />
+                <Typography sx={{ color: colors.muted, fontSize: 13 }}>{formatEvidenceScore(assignment)}</Typography>
+                <StatusChip status={assignment.evidenceStatus} />
               </Stack>
             </Stack>
           </AccordionSummary>
           <AccordionDetails>
             <Grid container spacing={1.5}>
-              <Grid item xs={12} md={4}><MetricTile label="Raw score" value={`${formatPoints(assignment.score)} / ${formatPoints(assignment.maxPoints)}`} caption={formatPercentage(assignment.percentage)} /></Grid>
-              <Grid item xs={12} md={4}><MetricTile label="Submitted" value={assignment.formattedSubmissionTime} caption={isLate(assignment.lateness) ? `Late: ${assignment.lateness}` : 'No late flag'} /></Grid>
-              <Grid item xs={12} md={4}><MetricTile label="Policy status" value={assignment.policyStatus} caption="Click through for full row details." /></Grid>
+              <Grid item xs={12} md={4}><MetricTile label="Assignment evidence" value={formatEvidenceScore(assignment)} caption={assignment.percentage == null ? 'No scored percentage' : formatContractPercentage(assignment.percentage)} /></Grid>
+              <Grid item xs={12} md={4}><MetricTile label="Due" value={formatCourseDateTime(assignment.dueAt)} caption={assignment.releaseAt ? `Released ${formatCourseDateTime(assignment.releaseAt)}` : 'Release time unavailable'} /></Grid>
+              <Grid item xs={12} md={4}><MetricTile label="Evidence status" value={getEvidenceStatusMeta(assignment.evidenceStatus, assignment).label} caption={getEvidenceStatusMeta(assignment.evidenceStatus, assignment).reason} /></Grid>
+              <Grid item xs={12} md={4}><MetricTile label="Submission record" value={assignment.submissionStatus || 'Unavailable'} caption="Upstream submission/extension state when supplied." /></Grid>
+              <Grid item xs={12} md={4}><MetricTile label="Submission attempts" value={assignment.submissionCount == null ? 'Unavailable' : formatAttemptCount(assignment.submissionCount)} caption="Resubmission count from assignment evidence." /></Grid>
+              <Grid item xs={12} md={4}><MetricTile label="Lateness" value={assignment.isLate ? assignment.lateness : 'No recorded lateness'} caption="Final category value remains canonical policy-final." /></Grid>
             </Grid>
             <Button sx={{ mt: 1.5 }} size="small" variant="outlined" onClick={() => onOpenAssignment(assignment)} endIcon={<OpenInNew />}>
               Open evidence
@@ -1022,18 +769,57 @@ function ProjectsEvidence({ assignments, onOpenAssignment }) {
   );
 }
 
+function CategoryDomainOverview({ pageKey, block }) {
+  const counts = block.summary?.statusCounts || {};
+  const domainMessage = pageKey === 'attendance'
+    ? 'Attendance evidence represents cataloged lecture, discussion, lab, and make-up participation items; unavailable timing or sync states remain explicit.'
+    : pageKey === 'labs'
+      ? 'Lab Overview summarizes the catalog. Lab List shows row evidence, while Policy explains the separate scoring path.'
+      : 'Project evidence keeps submission, resubmission/lateness metadata, missing work, and sync states attached to each catalog row.';
+  return (
+    <Stack spacing={2}>
+      <Alert severity={block.summary?.status === 'partial' ? 'warning' : 'info'}>{domainMessage}</Alert>
+      <Grid container spacing={1.5}>
+        {EVIDENCE_STATUSES.map((status) => (
+          <Grid key={status} item xs={6} sm={4} md={3}>
+            <MetricTile
+              label={getEvidenceStatusMeta(status).label}
+              value={String(counts[status] || 0)}
+              caption={getEvidenceStatusMeta(status).reason}
+            />
+          </Grid>
+        ))}
+      </Grid>
+    </Stack>
+  );
+}
+
 export function CategoryDetailPage({ studentData, pageKey }) {
-  const [filter, setFilter] = useState('all');
-  const [tab, setTab] = useState('overview');
+  const location = useLocation();
+  const navigate = useNavigate();
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const block = useMemo(() => getCategoryBlock(studentData, pageKey), [studentData, pageKey]);
   const allAssignments = useMemo(() => getCategoryAssignments(studentData, pageKey), [studentData, pageKey]);
-  const assignments = useMemo(() => allAssignments.filter((assignment) => assignmentMatchesFilter(assignment, filter)), [allAssignments, filter]);
-  const missingCount = allAssignments.filter((assignment) => ['missing', 'zero'].includes(assignment.policyStatus)).length;
-  const lateCount = allAssignments.filter((assignment) => assignment.policyStatus === 'late').length;
-  const remaining = Math.max(0, safeNumber(block?.cap) - safeNumber(block?.score));
+  const queryState = useMemo(() => parseCategoryPageQuery(location.search, pageKey), [location.search, pageKey]);
+  const assignments = useMemo(() => allAssignments.filter((assignment) => assignmentMatchesFilter(assignment, queryState.status)), [allAssignments, queryState.status]);
+  const statusCounts = block?.summary?.statusCounts || {};
+  const missingCount = statusCounts.missing || 0;
+  const incompleteCount = (statusCounts.due_unknown || 0) + (statusCounts.not_synced || 0) + (statusCounts.request_error || 0);
   const def = CATEGORY_BY_KEY.get(pageKey) || CATEGORY_BY_KEY.get('assignments');
   const isProjects = pageKey === 'projects';
+  const relatedHref = buildLedgerHref({
+    category: block?.label || def?.label,
+    status: queryState.status,
+  });
+  const topAction = useMemo(() => buildTopActions({ assignmentEvidence: allAssignments }, 1)[0] || null, [allAssignments]);
+
+  const updateQuery = useCallback((updates) => {
+    navigate({
+      pathname: location.pathname,
+      search: mergeExperienceQuery(location.search, updates),
+      hash: location.hash,
+    });
+  }, [location.hash, location.pathname, location.search, navigate]);
 
   const policyFlow = pageKey === 'labs'
     ? ['Raw lab points', 'Completion check', 'Drop lowest', 'Scale to cap', 'Final']
@@ -1041,56 +827,81 @@ export function CategoryDetailPage({ studentData, pageKey }) {
       ? ['Raw sessions', 'Group attendance', 'Make-ups', 'Forgiven absences', 'Final']
       : ['Raw project score', 'Late/extension state', 'Resubmission state', 'Configured cap', 'Final'];
 
+  if (!studentData) return <LoadingStudentPage title={def?.label || 'Category'} />;
+
   return (
     <PageFrame
       active={pageKey === 'quest' || pageKey === 'midterm' || pageKey === 'postterm' ? 'exams' : pageKey}
       title={block?.label || def?.label || 'Category'}
       subtitle="Summary, evidence, policy applied, impact, and action for this grading area."
-      actions={<Button component={RouterLink} to="/profile/assignments" size="small" variant="outlined" startIcon={<AssignmentOutlined />}>Full ledger</Button>}
+      actions={<Button component={RouterLink} to={relatedHref} size="small" variant="outlined" startIcon={<AssignmentOutlined />}>Open catalog rows</Button>}
     >
-      <CategoryFilterControls pageKey={pageKey} filter={filter} setFilter={setFilter} tab={tab} setTab={setTab} />
+      <CategoryFilterControls
+        pageKey={pageKey}
+        status={queryState.status}
+        onStatusChange={(status) => updateQuery({ status })}
+        tab={queryState.tab}
+        onTabChange={(tab) => updateQuery({ tab })}
+        disabled={allAssignments.length === 0}
+      />
+
+      {allAssignments.length === 0 && (
+        <Alert severity="warning">
+          No authoritative catalog evidence is available for this category. Filters are disabled; this is not a zero score and may indicate sync or course-scope coverage.
+        </Alert>
+      )}
 
       <Grid container spacing={2}>
         <Grid item xs={12} md={3}>
-          <MetricTile label="Final score" value={`${formatPoints(block?.score)} / ${formatPoints(block?.cap)}`} caption={formatPercentage(block?.percentage)} />
+          <MetricTile label="Final policy score" value={block?.exactScore == null || block?.cap == null ? 'Unavailable' : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`} caption={formatContractPercentage(block?.percentage)} />
         </Grid>
         <Grid item xs={12} md={3}>
-          <MetricTile label="Raw evidence" value={`${formatPoints(block?.summary?.rawScore)} / ${formatPoints(block?.summary?.rawMax)}`} caption={block?.summary?.rawMax ? formatPercentage(block?.summary?.rawPercentage) : 'No raw max'} />
+          <MetricTile label="Due-work progress" value={block?.summary?.dueMax > 0 ? `${formatContractPoints(block.summary.dueScore)} / ${formatContractPoints(block.summary.dueMax)}` : 'Unavailable'} caption={block?.summary?.dueMax > 0 ? `${formatContractPercentage(block.summary.duePercentage)} across ${block.summary.dueItemCount} due rows` : 'Unknown, unsynced, error, not-due, and N/A rows are excluded.'} />
         </Grid>
         <Grid item xs={12} md={3}>
-          <MetricTile label="Open signals" value={`${missingCount} missing`} caption={`${lateCount} late rows`} />
+          <MetricTile label="Catalog status" value={`${allAssignments.length} rows`} caption={`${missingCount} missing · ${incompleteCount} incomplete metadata`} />
         </Grid>
         <Grid item xs={12} md={3}>
-          <MetricTile label="Impact" value={`${formatPoints(remaining)} pts`} caption="Remaining before the category cap." />
+          <MetricTile label="Contract state" value={block?.canonicalStatus || 'unavailable'} caption={block?.source ? `Source: ${block.source}` : 'Canonical category source unavailable.'} />
         </Grid>
       </Grid>
 
       <Grid container spacing={2}>
         <Grid item xs={12} md={8}>
-          <SectionPanel title="Evidence" subtitle={pageKey === 'labs' && tab !== 'list' ? 'Switch to Lab List for row-level lab evidence.' : 'Click a row to inspect the raw assignment evidence.'}>
-            {pageKey === 'labs' && tab === 'policy' ? (
+          <SectionPanel title={pageKey === 'labs' ? `Labs · ${queryState.tab.replace(/^\w/, (char) => char.toUpperCase())}` : `${block?.label || 'Category'} Evidence`} subtitle="Every row retains its A2 catalog/evidence status; unavailable values are not rendered as zero.">
+            {pageKey === 'labs' && queryState.tab === 'policy' ? (
               <PolicyFlow steps={policyFlow} />
+            ) : pageKey === 'labs' && queryState.tab === 'overview' ? (
+              <CategoryDomainOverview pageKey={pageKey} block={block} />
             ) : isProjects ? (
               <ProjectsEvidence assignments={assignments} onOpenAssignment={setSelectedAssignment} />
             ) : (
-              <AssignmentEvidenceTable assignments={assignments} onOpenAssignment={setSelectedAssignment} />
+              <AssignmentEvidenceTable
+                assignments={assignments}
+                onOpenAssignment={setSelectedAssignment}
+                emptyMessage={`0 of ${allAssignments.length} catalog rows match this status filter. The category score remains the canonical policy-final value.`}
+              />
             )}
           </SectionPanel>
         </Grid>
         <Grid item xs={12} md={4}>
           <Stack spacing={2}>
-            <SectionPanel title="Policy Applied">
-              <PolicyFlow steps={policyFlow} compact />
-            </SectionPanel>
+            {!(pageKey === 'labs' && queryState.tab === 'policy') && (
+              <SectionPanel title="Policy Applied">
+                <PolicyFlow steps={policyFlow} compact />
+              </SectionPanel>
+            )}
             <SectionPanel title="Action">
               <Stack spacing={1.25}>
                 <Typography sx={{ color: colors.muted, fontSize: 14 }}>
-                  {missingCount > 0
-                    ? `Start with the ${missingCount} missing or zero row${missingCount === 1 ? '' : 's'} before chasing smaller gains.`
-                    : `This category is currently at ${formatPercentage(block?.percentage)}. Review the ledger if the score looks unexpected.`}
+                  {topAction
+                    ? `${topAction.title}. ${topAction.detail}`
+                    : allAssignments.length === 0
+                      ? 'No concrete action can be generated until catalog evidence is available.'
+                      : 'No concrete missing, zero, late, sync, timing, or request-error action is present.'}
                 </Typography>
-                <Button component={RouterLink} to={pageKey === 'attendance' ? '/profile/explain' : '/profile/assignments'} variant="contained" size="small" endIcon={<ArrowForward />}>
-                  {pageKey === 'attendance' ? 'Explain attendance score' : 'Open related rows'}
+                <Button component={RouterLink} to={topAction?.to || relatedHref} variant="contained" size="small" endIcon={<ArrowForward />}>
+                  Open related catalog rows
                 </Button>
               </Stack>
             </SectionPanel>
@@ -1133,26 +944,39 @@ function PolicyFlow({ steps = [], compact = false }) {
   );
 }
 
-function ExamScoreSummary({ studentData, mode, selectedExam, setSelectedExam, onOpenClobber }) {
+function ExamScoreSummary({ studentData, mode, selectedExam, onSelectExam }) {
   return (
     <Grid container spacing={2}>
       {EXAM_DEFS.map((def) => {
         const rows = getExamRows(studentData, def.key);
         const row = getBestExamRow(rows);
         const block = getCategoryBlock(studentData, def.key);
-        const cap = safeNumber(block?.cap);
-        const pct = getExamPercent(row, mode);
-        const points = percentageToPoints(pct, cap);
+        const diagnosticPercentage = getExamDiagnosticPercentage(row, mode);
         const active = selectedExam === def.key;
+        const value = mode === 'clobber'
+          ? (block?.exactScore == null || block?.cap == null
+            ? 'Canonical final unavailable'
+            : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`)
+          : formatContractPercentage(diagnosticPercentage);
+        const caption = mode === 'raw'
+          ? 'Latest raw-attempt diagnostic; not the final category score.'
+          : mode === 'question_best'
+            ? 'Latest question-best diagnostic; not the final category score.'
+            : 'Canonical policy-final category score.';
         return (
           <Grid key={def.key} item xs={12} md={4}>
             <Paper
+              component="button"
+              type="button"
               elevation={0}
-              onClick={() => setSelectedExam(def.key)}
+              onClick={() => onSelectExam(def.key)}
               sx={{
                 ...panelSx,
                 p: 2,
                 height: '100%',
+                width: '100%',
+                textAlign: 'left',
+                font: 'inherit',
                 cursor: 'pointer',
                 borderColor: active ? colors.ink : colors.border,
                 backgroundColor: active ? colors.band : colors.surface,
@@ -1161,29 +985,17 @@ function ExamScoreSummary({ studentData, mode, selectedExam, setSelectedExam, on
               <Stack spacing={1.25}>
                 <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                   <Typography sx={{ fontWeight: 800 }}>{def.label}</Typography>
-                  <Button component={RouterLink} to={def.route} size="small" endIcon={<ArrowForward />} onClick={(event) => event.stopPropagation()}>
-                    Open
-                  </Button>
+                  <ArrowForward sx={{ color: colors.soft, fontSize: 18 }} />
                 </Stack>
                 <Typography sx={{ fontSize: 25, fontWeight: 850, color: colors.ink, lineHeight: 1.05 }}>
-                  {points == null ? '-' : formatPoints(points)} / {formatPoints(cap)}
+                  {value}
                 </Typography>
                 <Typography sx={{ color: colors.muted, fontSize: 13 }}>
-                  {pct == null ? 'No policy row yet' : `${formatPercentage(pct)} in ${mode === 'raw' ? 'raw' : mode === 'questionBest' ? 'question-best' : 'after-clobber'} view`}
+                  {caption}
                 </Typography>
                 <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-                  <Chip size="small" label={`${rows.length} attempts`} sx={{ fontWeight: 700 }} />
-                  {row?.clobberSourceTitle && (
-                    <Chip
-                      size="small"
-                      label="Clobber applied"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpenClobber(row);
-                      }}
-                      sx={{ fontWeight: 700, backgroundColor: '#EEF2FF', color: '#4338CA' }}
-                    />
-                  )}
+                  <Chip size="small" label={formatAttemptCount(rows.length)} sx={{ fontWeight: 700 }} />
+                  {getActualClobberRows(rows).length > 0 && <Chip size="small" label="Positive clobber gain" sx={{ fontWeight: 700, backgroundColor: '#EEF2FF', color: '#4338CA' }} />}
                 </Stack>
               </Stack>
             </Paper>
@@ -1195,112 +1007,194 @@ function ExamScoreSummary({ studentData, mode, selectedExam, setSelectedExam, on
 }
 
 export function ExamsOverviewPage({ studentData }) {
-  const [mode, setMode] = useState('clobber');
-  const [selectedExam, setSelectedExam] = useState('quest');
-  const [clobberRow, setClobberRow] = useState(null);
-  const totalMetrics = useMemo(() => {
-    return EXAM_DEFS.reduce((acc, def) => {
-      const block = getCategoryBlock(studentData, def.key);
-      const row = getBestExamRow(getExamRows(studentData, def.key));
-      const cap = safeNumber(block?.cap);
-      acc.raw += percentageToPoints(getExamPercent(row, 'raw'), cap) || 0;
-      acc.questionBest += percentageToPoints(getExamPercent(row, 'questionBest'), cap) || 0;
-      acc.clobber += percentageToPoints(getExamPercent(row, 'clobber'), cap) || 0;
-      acc.final += safeNumber(block?.score);
-      return acc;
-    }, { raw: 0, questionBest: 0, clobber: 0, final: 0 });
-  }, [studentData]);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const mode = useMemo(() => parseExamMode(location.search), [location.search]);
+  const selectedExam = useMemo(() => parseExamSelection(location.search), [location.search]);
   const selectedDef = CATEGORY_BY_KEY.get(selectedExam);
+  const selectedRows = useMemo(() => getExamRows(studentData, selectedExam), [studentData, selectedExam]);
+  const actualClobberRows = useMemo(() => getActualClobberRows(selectedRows), [selectedRows]);
+  const canonicalGrade = getCanonicalStanding(studentData);
+  const canonicalExamSubtotal = studentData?.canonicalGrade?.subtotals?.exams?.basis === 'policy_final'
+    ? studentData.canonicalGrade.subtotals.exams
+    : null;
+
+  const setMode = useCallback((nextMode) => {
+    navigate({
+      pathname: location.pathname,
+      search: mergeExperienceQuery(location.search, { mode: nextMode }),
+      hash: location.hash,
+    });
+  }, [location.hash, location.pathname, location.search, navigate]);
+  const setSelectedExam = useCallback((nextExam) => {
+    navigate({
+      pathname: location.pathname,
+      search: mergeExperienceQuery(location.search, { exam: nextExam }),
+      hash: location.hash,
+    });
+  }, [location.hash, location.pathname, location.search, navigate]);
+
+  if (!studentData) return <LoadingStudentPage title="Exams And Clobber" />;
 
   return (
     <PageFrame
       active="exams"
       title="Exams And Clobber"
-      subtitle="Raw, question-best, and clobber outcomes shown through coordinated exam views."
+      subtitle="Choose one evidence mode. Diagnostic attempt data stays separate from canonical policy-final exam scores."
       actions={(
         <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_event, value) => value && setMode(value)}>
           <ToggleButton value="raw">Raw</ToggleButton>
-          <ToggleButton value="questionBest">Question Best</ToggleButton>
+          <ToggleButton value="question_best">Question Best</ToggleButton>
           <ToggleButton value="clobber">After Clobber</ToggleButton>
         </ToggleButtonGroup>
       )}
     >
-      <Grid container spacing={2}>
-        <Grid item xs={12} md={3}><MetricTile label="Raw exam total" value={formatPoints(totalMetrics.raw)} caption="Before question-best and clobber." /></Grid>
-        <Grid item xs={12} md={3}><MetricTile label="Question-best total" value={formatPoints(totalMetrics.questionBest)} caption="Best component/topic logic." /></Grid>
-        <Grid item xs={12} md={3}><MetricTile label="After clobber" value={formatPoints(totalMetrics.clobber)} caption="Later-exam replacement logic." /></Grid>
-        <Grid item xs={12} md={3}><MetricTile label="Net clobber gain" value={`+${formatPoints(Math.max(0, totalMetrics.clobber - totalMetrics.raw))}`} caption="Estimated gain over raw exam total." /></Grid>
-      </Grid>
+      {mode === 'clobber' && (
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={6}>
+            <MetricTile
+              label="Canonical exam subtotal"
+              value={canonicalExamSubtotal?.exactScore == null || canonicalExamSubtotal?.cap == null
+                ? 'Unavailable'
+                : `${formatContractPoints(canonicalExamSubtotal.exactScore)} / ${formatContractPoints(canonicalExamSubtotal.cap)}`}
+              caption="Policy-final Quest, Midterm, and Postterm subtotal from the canonical grade contract."
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <MetricTile
+              label="Canonical course standing"
+              value={canonicalGrade.displayScore == null || canonicalGrade.cap == null
+                ? 'Unavailable'
+                : `${formatContractPoints(canonicalGrade.displayScore)} / ${formatContractPoints(canonicalGrade.cap)}`}
+              caption="Shown for context; it is never recomputed from diagnostic exam rows."
+            />
+          </Grid>
+        </Grid>
+      )}
 
       <ExamScoreSummary
         studentData={studentData}
         mode={mode}
         selectedExam={selectedExam}
-        setSelectedExam={setSelectedExam}
-        onOpenClobber={setClobberRow}
+        onSelectExam={setSelectedExam}
       />
 
-      <Grid container spacing={2}>
-        <Grid item xs={12} lg={5}>
-          <SectionPanel title={`${selectedDef?.label || 'Exam'} Topic Mastery Radar`} subtitle="Mastery shape and growth over attempts.">
-            <TopicMasteryRadar trend={getExamTrend(studentData, selectedExam)} />
-          </SectionPanel>
-        </Grid>
-        <Grid item xs={12} lg={3.5}>
-          <SectionPanel title="Clobber Ladder" subtitle="Score transformation from raw to final.">
-            <ClobberLadder studentData={studentData} examKey={selectedExam} />
-          </SectionPanel>
-        </Grid>
-        <Grid item xs={12} lg={3.5}>
-          <SectionPanel title="Question Best Matrix" subtitle="Which attempt score was selected.">
-            <QuestionBestMatrix trend={getExamTrend(studentData, selectedExam)} compact />
-          </SectionPanel>
-        </Grid>
-      </Grid>
+      {mode === 'raw' && (
+        <SectionPanel title={`${selectedDef?.label || 'Exam'} Raw Attempts`} subtitle="Raw percentages are diagnostic attempt evidence and do not replace the canonical final category score.">
+          <ExamAttemptTable rows={selectedRows} percentageField="rawPercentage" label="Raw percentage" />
+        </SectionPanel>
+      )}
 
-      <Drawer anchor="right" open={Boolean(clobberRow)} onClose={() => setClobberRow(null)}>
-        <Box sx={{ width: { xs: 320, sm: 420 }, p: 2.5 }}>
-          <Typography variant="h6" sx={sectionTitleSx}>Clobber Explanation</Typography>
-          <Typography sx={{ color: colors.muted, fontSize: 14, mt: 1 }}>
-            {clobberRow?.assignmentTitle || 'This attempt'} was affected by {clobberRow?.clobberSourceTitle || 'a later exam'}.
-          </Typography>
-          <Divider sx={{ my: 2 }} />
-          <ClobberLadder studentData={studentData} examKey={normalizeText(clobberRow?.examType)} />
-        </Box>
-      </Drawer>
+      {mode === 'question_best' && (
+        <Grid container spacing={2}>
+          <Grid item xs={12} lg={6}>
+            <SectionPanel title={`${selectedDef?.label || 'Exam'} Topic Mastery Radar`} subtitle="Question-level diagnostic shape across attempts.">
+              <TopicMasteryRadar trend={getExamTrend(studentData, selectedExam)} />
+            </SectionPanel>
+          </Grid>
+          <Grid item xs={12} lg={6}>
+            <SectionPanel title="Question Best Matrix" subtitle="Only question-best diagnostic evidence is shown in this mode.">
+              <QuestionBestMatrix trend={getExamTrend(studentData, selectedExam)} compact />
+            </SectionPanel>
+          </Grid>
+        </Grid>
+      )}
+
+      {mode === 'clobber' && (
+        <SectionPanel title={`${selectedDef?.label || 'Exam'} Clobber Outcome`} subtitle="A ladder appears only when a later exam produced a positive score change.">
+          {actualClobberRows.length === 0 ? (
+            <Alert severity="info">
+              {selectedRows.length <= 1
+                ? `${selectedDef?.label || 'This exam'} has ${formatAttemptCount(selectedRows.length)}; no positive clobber transformation is available.`
+                : 'No positive clobber gain is recorded for these attempts. The canonical final score remains authoritative.'}
+            </Alert>
+          ) : actualClobberRows.map((row) => (
+            <ClobberLadder key={row.assignmentId || `${row.examType}-${row.attemptNo}`} studentData={studentData} examKey={selectedExam} row={row} />
+          ))}
+        </SectionPanel>
+      )}
+
+      <Button component={RouterLink} to={selectedDef?.route || '/profile/exams/quest'} variant="outlined" sx={{ alignSelf: 'flex-start' }} endIcon={<ArrowForward />}>
+        Open {selectedDef?.label || 'exam'} detail
+      </Button>
     </PageFrame>
   );
 }
 
 export function SingleExamPage({ studentData, examKey }) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const def = CATEGORY_BY_KEY.get(examKey) || CATEGORY_BY_KEY.get('quest');
   const block = getCategoryBlock(studentData, def.key);
+  const rows = getExamRows(studentData, def.key);
+  const actualClobberRows = getActualClobberRows(rows);
+  const mode = parseExamMode(location.search);
+  const setMode = (nextMode) => navigate({
+    pathname: location.pathname,
+    search: mergeExperienceQuery(location.search, { mode: nextMode }),
+    hash: location.hash,
+  });
+
+  if (!studentData) return <LoadingStudentPage title={def.label} />;
 
   return (
     <PageFrame
       active="exams"
-      title={`${def.label} ${formatPoints(block?.score)} / ${formatPoints(block?.cap)}`}
-      subtitle="Radar shows mastery shape, ladder shows score transformation, and matrix shows why the best score was used."
-      actions={<Button component={RouterLink} to="/profile/exams" size="small" variant="outlined">All exams</Button>}
+      title={`${def.label} ${block?.exactScore == null || block?.cap == null ? 'Unavailable' : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}`}
+      subtitle="The title always uses the canonical policy-final category value. Choose one diagnostic structure below."
+      actions={(
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_event, value) => value && setMode(value)}>
+            <ToggleButton value="raw">Raw</ToggleButton>
+            <ToggleButton value="question_best">Question Best</ToggleButton>
+            <ToggleButton value="clobber">After Clobber</ToggleButton>
+          </ToggleButtonGroup>
+          <Button component={RouterLink} to={`/profile/exams?mode=${mode}`} size="small" variant="outlined">All exams</Button>
+        </Stack>
+      )}
     >
-      <Grid container spacing={2}>
-        <Grid item xs={12} lg={6}>
-          <SectionPanel title="Topic Mastery Radar">
-            <TopicMasteryRadar trend={getExamTrend(studentData, def.key)} height={430} />
-          </SectionPanel>
+      <Alert severity="info">{formatAttemptCount(rows.length)} · canonical final {block?.exactScore == null || block?.cap == null ? 'unavailable' : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}.</Alert>
+      {mode === 'raw' && (
+        <SectionPanel title="Raw Attempts" subtitle="Attempt evidence only; no question-best matrix or clobber ladder is shown.">
+          <ExamAttemptTable rows={rows} percentageField="rawPercentage" label="Raw percentage" />
+        </SectionPanel>
+      )}
+      {mode === 'question_best' && (
+        <Grid container spacing={2}>
+          <Grid item xs={12} lg={6}><SectionPanel title="Topic Mastery Radar"><TopicMasteryRadar trend={getExamTrend(studentData, def.key)} height={430} /></SectionPanel></Grid>
+          <Grid item xs={12} lg={6}><SectionPanel title="Question Best Matrix"><QuestionBestMatrix trend={getExamTrend(studentData, def.key)} /></SectionPanel></Grid>
         </Grid>
-        <Grid item xs={12} lg={6}>
-          <SectionPanel title="Clobber Ladder">
-            <ClobberLadder studentData={studentData} examKey={def.key} roomy />
-          </SectionPanel>
-        </Grid>
-        <Grid item xs={12}>
-          <SectionPanel title="Question Best Matrix" subtitle="Attempt columns show cumulative best by topic; Best Used is the selected topic score.">
-            <QuestionBestMatrix trend={getExamTrend(studentData, def.key)} />
-          </SectionPanel>
-        </Grid>
-      </Grid>
+      )}
+      {mode === 'clobber' && (
+        <SectionPanel title="Clobber Outcome" subtitle="Only positive, recorded cross-exam gains receive a transformation ladder.">
+          {actualClobberRows.length === 0 ? (
+            <Alert severity="info">{rows.length <= 1 ? `${formatAttemptCount(rows.length)}; no clobber ladder is applicable.` : 'No positive clobber gain is recorded.'}</Alert>
+          ) : actualClobberRows.map((row) => (
+            <ClobberLadder key={row.assignmentId || `${row.examType}-${row.attemptNo}`} studentData={studentData} examKey={def.key} row={row} roomy />
+          ))}
+        </SectionPanel>
+      )}
     </PageFrame>
+  );
+}
+
+function ExamAttemptTable({ rows, percentageField, label }) {
+  if (rows.length === 0) return <Alert severity="info">No exam attempt evidence is available.</Alert>;
+  return (
+    <TableContainer sx={{ border: `1px solid ${colors.border}`, borderRadius: 1.5 }}>
+      <Table size="small">
+        <TableHead><TableRow><TableCell>Attempt</TableCell><TableCell>Assignment</TableCell><TableCell align="right">{label}</TableCell></TableRow></TableHead>
+        <TableBody>
+          {rows.map((row, index) => (
+            <TableRow key={row.assignmentId || `${row.examType}-${row.attemptNo}-${index}`}>
+              <TableCell>{row.attemptNo || index + 1}</TableCell>
+              <TableCell>{row.assignmentTitle || 'Exam attempt'}</TableCell>
+              <TableCell align="right">{formatContractPercentage(row[percentageField])}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }
 
@@ -1318,7 +1212,7 @@ function TopicMasteryRadar({ trend, height = 360 }) {
         const tone = palette[index % palette.length];
         return {
           label: series.name || `Attempt ${index + 1}`,
-          data: Array.isArray(series.data) ? series.data.map((value) => safeNumber(value)) : [],
+          data: Array.isArray(series.data) ? series.data.map((value) => optionalNumber(value)) : [],
           borderColor: tone.border,
           backgroundColor: tone.fill,
           borderWidth: index === trend.series.length - 1 ? 2.25 : 1.4,
@@ -1373,7 +1267,7 @@ function TopicMasteryRadar({ trend, height = 360 }) {
         bodyColor: '#FFFFFF',
         cornerRadius: 6,
         callbacks: {
-          label: (context) => `${context.dataset.label}: ${formatPercentage(context.parsed.r)}`,
+          label: (context) => `${context.dataset.label}: ${formatContractPercentage(context.parsed.r)}`,
         },
       },
     },
@@ -1394,26 +1288,26 @@ function TopicMasteryRadar({ trend, height = 360 }) {
   );
 }
 
-function ClobberLadder({ studentData, examKey, roomy = false }) {
+function ClobberLadder({ studentData, examKey, row: requestedRow = null, roomy = false }) {
   const rows = getExamRows(studentData, examKey);
-  const row = getBestExamRow(rows);
+  const row = requestedRow || getActualClobberRows(rows)[0] || null;
   const block = getCategoryBlock(studentData, examKey);
-  const cap = safeNumber(block?.cap);
+  const cap = block?.cap;
 
   if (!row) {
-    return <Typography sx={{ color: colors.muted, fontSize: 14 }}>No exam policy row is available yet.</Typography>;
+    return <Typography sx={{ color: colors.muted, fontSize: 14 }}>No positive clobber transformation is recorded.</Typography>;
   }
 
   const steps = [
-    { label: `${block?.label || 'Exam'} raw`, value: row.rawPercentage },
-    { label: 'Question best', value: row.questionBestPercentage },
+    { label: row.questionBestPercentage == null ? `${block?.label || 'Exam'} raw` : 'Question best before clobber', value: row.questionBestPercentage ?? row.rawPercentage },
     { label: row.clobberSourceTitle ? `Clobbered by ${row.clobberSourceTitle}` : 'Clobber check', value: row.clobberedPercentage },
     { label: 'Final used', value: row.finalPercentage },
   ].filter((step) => step.value !== null && step.value !== undefined);
 
-  const rawPoints = percentageToPoints(row.rawPercentage, cap) || 0;
-  const finalPoints = percentageToPoints(row.finalPercentage, cap) || percentageToPoints(row.clobberedPercentage, cap) || rawPoints;
-  const gain = Math.max(0, finalPoints - rawPoints);
+  const beforePercentage = row.questionBestPercentage ?? row.rawPercentage;
+  const beforePoints = percentageToPoints(beforePercentage, cap);
+  const finalPoints = percentageToPoints(row.finalPercentage ?? row.clobberedPercentage, cap);
+  const gain = beforePoints == null || finalPoints == null ? null : Math.max(0, finalPoints - beforePoints);
 
   return (
     <Stack spacing={roomy ? 1.5 : 1}>
@@ -1426,14 +1320,14 @@ function ClobberLadder({ studentData, examKey, roomy = false }) {
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography sx={{ color: colors.ink, fontWeight: finalStep ? 800 : 650, fontSize: 14 }}>{step.label}</Typography>
               <Typography sx={{ color: colors.muted, fontSize: 12.5 }}>
-                {points == null ? '-' : `${formatPoints(points)} / ${formatPoints(cap)}`} · {formatPercentage(step.value)}
+                {points == null || cap == null ? 'Diagnostic points unavailable' : `${formatContractPoints(points)} / ${formatContractPoints(cap)}`} · {formatContractPercentage(step.value)}
               </Typography>
             </Box>
           </Stack>
         );
       })}
       <Divider />
-      <Chip label={`Net gain +${formatPoints(gain)}`} sx={{ alignSelf: 'flex-start', backgroundColor: colors.greenBg, color: colors.green, fontWeight: 800 }} />
+      <Chip label={gain == null ? 'Net gain unavailable' : `Net gain +${formatContractPoints(gain)}`} sx={{ alignSelf: 'flex-start', backgroundColor: colors.greenBg, color: colors.green, fontWeight: 800 }} />
     </Stack>
   );
 }
@@ -1445,11 +1339,12 @@ function QuestionBestMatrix({ trend, compact = false }) {
 
   const series = compact ? trend.series.slice(-3) : trend.series;
   const rows = trend.components.map((component, componentIndex) => {
-    const values = series.map((item) => safeNumber(item.data?.[componentIndex]));
+    const values = series.map((item) => optionalNumber(item.data?.[componentIndex]));
+    const availableValues = values.filter((value) => value != null);
     return {
       component,
       values,
-      best: values.length ? Math.max(...values) : 0,
+      best: availableValues.length ? Math.max(...availableValues) : null,
     };
   });
 
@@ -1471,7 +1366,7 @@ function QuestionBestMatrix({ trend, compact = false }) {
                 {row.component}
               </Typography>
               <Typography sx={{ color: colors.ink, fontWeight: 850, fontSize: 14, flexShrink: 0 }}>
-                {formatPercentage(row.best, 0)}
+                {formatContractPercentage(row.best, 0)}
               </Typography>
             </Stack>
 
@@ -1497,7 +1392,7 @@ function QuestionBestMatrix({ trend, compact = false }) {
                     {series[index]?.name || `Attempt ${index + 1}`}
                   </Typography>
                   <Typography sx={{ color: colors.ink, fontSize: 15, fontWeight: 750, lineHeight: 1.3 }}>
-                    {formatPercentage(value, 0)}
+                    {formatContractPercentage(value, 0)}
                   </Typography>
                 </Box>
               ))}
@@ -1506,11 +1401,11 @@ function QuestionBestMatrix({ trend, compact = false }) {
             <Box>
               <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ mb: 0.5 }}>
                 <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>Best Used</Typography>
-                <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>{formatPercentage(row.best, 0)}</Typography>
+                <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>{formatContractPercentage(row.best, 0)}</Typography>
               </Stack>
               <LinearProgress
-                variant="determinate"
-                value={Math.max(0, Math.min(100, row.best))}
+                variant={row.best == null ? 'indeterminate' : 'determinate'}
+                value={row.best == null ? undefined : Math.max(0, Math.min(100, row.best))}
                 sx={{
                   height: 10,
                   borderRadius: 999,
@@ -1529,50 +1424,55 @@ function QuestionBestMatrix({ trend, compact = false }) {
   );
 }
 
-function groupAssignments(rows, groupBy) {
-  if (groupBy === 'none') return [['All assignments', rows]];
-  const groups = new Map();
-  rows.forEach((row) => {
-    let key = row.category || 'Uncategorized';
-    if (groupBy === 'time') {
-      const date = row.submissionTime ? new Date(row.submissionTime) : null;
-      key = date && Number.isFinite(date.getTime())
-        ? date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        : 'No submission time';
-    } else if (groupBy === 'policy') {
-      key = row.policyStatus;
-    }
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  });
-  return Array.from(groups.entries());
-}
-
 export function AssignmentLedger({ studentData }) {
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [category, setCategory] = useState('all');
-  const [groupBy, setGroupBy] = useState('category');
+  const location = useLocation();
+  const navigate = useNavigate();
   const [selectedAssignment, setSelectedAssignment] = useState(null);
-
-  const rows = useMemo(() => getRawAssignments(studentData).map((assignment) => decorateAssignment(assignment)), [studentData]);
+  const rows = useMemo(() => getAssignmentEvidence(studentData), [studentData]);
   const categories = useMemo(() => Array.from(new Set(rows.map((row) => row.category).filter(Boolean))).sort(), [rows]);
-  const visibleRows = useMemo(() => {
-    const query = normalizeText(search);
-    return rows
-      .filter((row) => category === 'all' || row.category === category)
-      .filter((row) => filter === 'all' || row.policyStatus === filter)
-      .filter((row) => !query || normalizeText(`${row.category} ${row.name}`).includes(query))
-      .sort((a, b) => (b.timestamp - a.timestamp) || String(a.category).localeCompare(String(b.category)) || String(a.name).localeCompare(String(b.name)));
-  }, [category, filter, rows, search]);
-  const groups = useMemo(() => groupAssignments(visibleRows, groupBy), [visibleRows, groupBy]);
+  const queryState = useMemo(() => parseLedgerQuery(location.search, rows), [location.search, rows]);
+  const visibleRows = useMemo(() => sortLedgerRows(filterLedgerRows(rows, queryState), queryState.group), [queryState, rows]);
+  const controlsDisabled = rows.length === 0;
+
+  const updateQuery = useCallback((updates, { replace = false } = {}) => {
+    navigate({
+      pathname: location.pathname,
+      search: mergeExperienceQuery(location.search, updates),
+      hash: location.hash,
+    }, { replace });
+  }, [location.hash, location.pathname, location.search, navigate]);
+
+  const exportRows = useCallback((exportScope) => {
+    const exportData = exportScope === 'all' ? rows : visibleRows;
+    const csv = buildLedgerCsv(exportData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = exportScope === 'all' ? 'assignment-ledger-all.csv' : 'assignment-ledger-current-filter.csv';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, [rows, visibleRows]);
+
+  if (!studentData) return <LoadingStudentPage title="Assignment Ledger" />;
 
   return (
     <PageFrame
       active="assignments"
       title="Assignment Ledger"
-      subtitle="The complete raw assignment table has moved out of the workspace and into this focused ledger."
-      actions={<Button variant="outlined" size="small" startIcon={<DownloadOutlined />}>Export</Button>}
+      subtitle="Authoritative assignment catalog joined with per-student evidence. Unknown, unsynced, and error states remain distinct from a true zero."
+      actions={(
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button disabled={controlsDisabled || visibleRows.length === 0} variant="outlined" size="small" startIcon={<DownloadOutlined />} onClick={() => exportRows('current')}>
+            Export current filtered CSV
+          </Button>
+          <Button disabled={controlsDisabled} variant="outlined" size="small" startIcon={<DownloadOutlined />} onClick={() => exportRows('all')}>
+            Export all catalog CSV
+          </Button>
+        </Stack>
+      )}
     >
       <SectionPanel>
         <Grid container spacing={1.5} alignItems="center">
@@ -1580,16 +1480,17 @@ export function AssignmentLedger({ studentData }) {
             <TextField
               fullWidth
               size="small"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search assignments"
+              value={queryState.search}
+              disabled={controlsDisabled}
+              onChange={(event) => updateQuery({ search: event.target.value }, { replace: true })}
+              placeholder="Search assignment name or ID"
               InputProps={{ startAdornment: <Search sx={{ color: colors.soft, fontSize: 18, mr: 1 }} /> }}
             />
           </Grid>
           <Grid item xs={12} md={3}>
             <FormControl fullWidth size="small">
               <InputLabel>Category</InputLabel>
-              <Select value={category} label="Category" onChange={(event) => setCategory(event.target.value)}>
+              <Select disabled={controlsDisabled} value={queryState.category} label="Category" onChange={(event) => updateQuery({ category: event.target.value })}>
                 <MenuItem value="all">All categories</MenuItem>
                 {categories.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
               </Select>
@@ -1597,39 +1498,75 @@ export function AssignmentLedger({ studentData }) {
           </Grid>
           <Grid item xs={12} md={3}>
             <FormControl fullWidth size="small">
-              <InputLabel>Group by</InputLabel>
-              <Select value={groupBy} label="Group by" onChange={(event) => setGroupBy(event.target.value)}>
+              <InputLabel>Sort/group label</InputLabel>
+              <Select disabled={controlsDisabled} value={queryState.group} label="Sort/group label" onChange={(event) => updateQuery({ group: event.target.value })}>
                 <MenuItem value="category">Category</MenuItem>
-                <MenuItem value="time">Time</MenuItem>
-                <MenuItem value="policy">Policy Status</MenuItem>
-                <MenuItem value="none">None</MenuItem>
+                <MenuItem value="status">Evidence status</MenuItem>
+                <MenuItem value="time">Due month</MenuItem>
+                <MenuItem value="none">No group label</MenuItem>
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2}>
             <Typography sx={{ color: colors.muted, fontSize: 13, textAlign: { xs: 'left', md: 'right' } }}>
-              {visibleRows.length} rows
+              Showing {visibleRows.length} of {rows.length} catalog rows
             </Typography>
           </Grid>
         </Grid>
-        <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_event, value) => value && setFilter(value)} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
-          {['all', 'missing', 'late', 'zero', 'dropped', 'clobbered', 'used'].map((item) => (
-            <ToggleButton key={item} value={item}>
-              {item.replace(/^\w/, (char) => char.toUpperCase())}
-            </ToggleButton>
+        <ToggleButtonGroup disabled={controlsDisabled} size="small" exclusive value={queryState.status} onChange={(_event, value) => value && updateQuery({ status: value })} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
+          <ToggleButton value="all">All</ToggleButton>
+          {EVIDENCE_STATUSES.map((status) => (
+            <ToggleButton key={status} value={status}>{getEvidenceStatusMeta(status).label}</ToggleButton>
           ))}
         </ToggleButtonGroup>
       </SectionPanel>
 
-      <Stack spacing={2}>
-        {groups.map(([group, groupRows]) => (
-          <SectionPanel key={group} title={group} subtitle={`${groupRows.length} assignment rows`}>
-            <AssignmentEvidenceTable assignments={groupRows} onOpenAssignment={setSelectedAssignment} />
-          </SectionPanel>
-        ))}
-      </Stack>
+      {rows.length === 0 ? (
+        <Alert severity="warning">No authoritative assignment catalog was returned. This is an unavailable/scope state, not a zero score.</Alert>
+      ) : visibleRows.length === 0 ? (
+        <Alert severity="info">0 of {rows.length} catalog rows match the URL-restorable category, status, and search filters. Clear a filter to return to the full catalog.</Alert>
+      ) : (
+        <SectionPanel title="Catalog evidence" subtitle={`Showing ${visibleRows.length} of ${rows.length} catalog rows in one table. Dates use America/Los_Angeles with year and timezone.`}>
+          <LedgerEvidenceTable rows={visibleRows} group={queryState.group} onOpenAssignment={setSelectedAssignment} />
+        </SectionPanel>
+      )}
       <AssignmentDrawer assignment={selectedAssignment} onClose={() => setSelectedAssignment(null)} />
     </PageFrame>
+  );
+}
+
+function LedgerEvidenceTable({ rows, group, onOpenAssignment }) {
+  return (
+    <TableContainer sx={{ borderRadius: 1.5, border: `1px solid ${colors.border}` }}>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            {group !== 'none' && <TableCell>Group</TableCell>}
+            <TableCell>Assignment ID</TableCell>
+            <TableCell>Assignment</TableCell>
+            <TableCell>Category</TableCell>
+            <TableCell>Evidence</TableCell>
+            <TableCell>Status</TableCell>
+            <TableCell>Due (America/Los_Angeles)</TableCell>
+            <TableCell>Submitted (America/Los_Angeles)</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.assignmentId} data-assignment-id={row.assignmentId} hover onClick={() => onOpenAssignment(row)} sx={{ cursor: 'pointer' }}>
+              {group !== 'none' && <TableCell>{getLedgerGroupLabel(row, group)}</TableCell>}
+              <TableCell>{row.assignmentId}</TableCell>
+              <TableCell sx={{ fontWeight: 700 }}>{row.name}</TableCell>
+              <TableCell>{row.category}</TableCell>
+              <TableCell>{formatEvidenceScore(row)}</TableCell>
+              <TableCell><StatusChip status={row.evidenceStatus} /></TableCell>
+              <TableCell>{formatCourseDateTime(row.dueAt)}</TableCell>
+              <TableCell>{formatCourseDateTime(row.submissionTime)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }
 
@@ -1646,9 +1583,10 @@ function AssignmentDrawer({ assignment, onClose }) {
           </Box>
           <Divider />
           <Grid container spacing={1.5}>
-            <Grid item xs={6}><MetricTile label="Score" value={`${formatPoints(assignment?.score)} / ${formatPoints(assignment?.maxPoints)}`} caption={formatPercentage(assignment?.percentage)} /></Grid>
-            <Grid item xs={6}><MetricTile label="Policy status" value={assignment?.policyStatus || '-'} caption="How this row is treated." /></Grid>
-            <Grid item xs={12}><MetricTile label="Submission time" value={assignment?.formattedSubmissionTime || '-'} caption={isLate(assignment?.lateness) ? `Late: ${assignment.lateness}` : 'No late flag'} /></Grid>
+            <Grid item xs={6}><MetricTile label="Evidence" value={formatEvidenceScore(assignment)} caption={formatContractPercentage(assignment?.percentage)} /></Grid>
+            <Grid item xs={6}><MetricTile label="Evidence status" value={assignment ? getEvidenceStatusMeta(assignment.evidenceStatus, assignment).label : 'Unavailable'} caption={assignment ? getEvidenceStatusMeta(assignment.evidenceStatus, assignment).reason : 'No row selected.'} /></Grid>
+            <Grid item xs={6}><MetricTile label="Due" value={formatCourseDateTime(assignment?.dueAt)} caption="America/Los_Angeles" /></Grid>
+            <Grid item xs={6}><MetricTile label="Submitted" value={formatCourseDateTime(assignment?.submissionTime)} caption={assignment?.isLate ? `Late: ${assignment.lateness}` : 'No recorded lateness flag'} /></Grid>
           </Grid>
           <SectionPanel title="Related Topic" sx={{ p: 2 }}>
             <Typography sx={{ color: colors.muted, fontSize: 14 }}>
@@ -1666,11 +1604,15 @@ function AssignmentDrawer({ assignment, onClose }) {
           </SectionPanel>
           <SectionPanel title="Suggested Action" sx={{ p: 2 }}>
             <Typography sx={{ color: colors.muted, fontSize: 14 }}>
-              {assignment?.policyStatus === 'missing'
+              {assignment?.evidenceStatus === 'missing'
                 ? 'Confirm whether the work can still be submitted or whether a make-up/extension policy applies.'
-                : assignment?.policyStatus === 'late'
-                  ? 'Check the lateness rule and verify whether the final score already reflects the penalty.'
-                  : 'Use this row as raw evidence when checking the category calculation.'}
+                : assignment?.evidenceStatus === 'earned_zero'
+                  ? 'Review the recorded zero and the assignment policy before taking action.'
+                  : assignment?.evidenceStatus === 'not_synced' || assignment?.evidenceStatus === 'request_error'
+                    ? 'Retry or verify the upstream sync before interpreting this assignment.'
+                    : assignment?.evidenceStatus === 'due_unknown'
+                      ? 'Confirm the due time before treating this work as due or missing.'
+                      : 'Use this catalog row as evidence alongside the canonical category result.'}
             </Typography>
           </SectionPanel>
         </Stack>
