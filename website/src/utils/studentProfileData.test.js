@@ -191,7 +191,7 @@ describe('student profile canonical adapter', () => {
     expect(result.policyFinalLetter).toBe('A-');
   });
 
-  test('profile raw-evidence adapter retains future and no-due non-exam catalog rows', () => {
+  test('41b3e4b regression: profile retains future and no-due non-exam catalog rows', () => {
     const rawRows = [
       {
         assignmentId: 'lab-future',

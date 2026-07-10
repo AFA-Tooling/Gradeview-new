@@ -20,7 +20,7 @@ describe('assignment timing and evidence retention', () => {
     expect(isAssignmentDue(assignment, NOW)).toBe(expected === 'past_due');
   });
 
-  test('strict due filtering and catalog evidence retention are separate operations', () => {
+  test('41b3e4b regression: strict due filtering and catalog evidence retention stay separate', () => {
     const rows = [
       { id: 'past', dueAt: '2026-07-01T00:00:00.000Z' },
       { id: 'future', dueAt: '2026-07-20T00:00:00.000Z' },
