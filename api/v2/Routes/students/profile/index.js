@@ -2,14 +2,12 @@ import { Router } from 'express';
 import { IAM_ROLE } from '../../../../lib/iam.mjs';
 import {
     getCategoryAverages,
-    getCourseAssignmentMatrix,
     getStudentCourses,
+    getStudentAssignmentEvidence,
     getStudentExamComponentTrends,
     getStudentExamPolicyScores,
     getStudentGradeFlow,
     getStudentPolicySummaries,
-    getStudentSubmissionsByTime,
-    getStudentSubmissionsGrouped,
     studentEnrolledInCourse,
 } from '../../../../lib/dbHelper.mjs';
 import { getBinsResponse } from '../../bins/index.js';
@@ -17,6 +15,14 @@ import {
     canonicalCategoryToProfileBlock,
     canonicalGradeToProfileSummary,
 } from '../../../../lib/canonicalGrade.mjs';
+import {
+    attachAssignmentEvidenceToCanonicalGrade,
+    assignmentEvidenceRequestError,
+    buildAssignmentEvidenceResponse,
+    groupAssignmentEvidence,
+    sortAssignmentEvidenceByTime,
+    summarizeAssignmentEvidence,
+} from '../../../../lib/assignmentEvidence.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -65,26 +71,6 @@ const CATEGORY_BLOCK_CONFIGS = [
     },
 ];
 
-function getStudentScoresWithMaxPointsAndTime(studentScores, maxScores) {
-    return Object.keys(studentScores || {}).reduce((assignmentsDict, assignment) => {
-        assignmentsDict[assignment] = Object.entries(
-            studentScores[assignment] || {},
-        ).reduce((scoresDict, [category, data]) => {
-            const maxScore = maxScores?.[assignment]?.[category] ?? data.max;
-            scoresDict[category] = {
-                student: data.student,
-                max: maxScore,
-                submissionTime: data.submissionTime,
-                lateness: data.lateness,
-                dueAt: data.dueAt,
-                releaseAt: data.releaseAt,
-            };
-            return scoresDict;
-        }, {});
-        return assignmentsDict;
-    }, {});
-}
-
 function normalizeText(value = '') {
     return String(value || '').trim().toLowerCase();
 }
@@ -101,19 +87,6 @@ function includesCategoryTerm(combined = '', term = '') {
 function categoryMatches(category = '', name = '', terms = []) {
     const combined = `${normalizeText(category)} ${normalizeText(name)}`;
     return terms.some((term) => includesCategoryTerm(combined, term));
-}
-
-function isHiddenStatsCategory(category = '') {
-    const normalized = normalizeText(category);
-    return !normalized || normalized === 'uncategorized' || normalized.startsWith('_');
-}
-
-function isDueForStats(item = {}, now = Date.now()) {
-    const rawDue = item?.dueAt || item?.due_at || item?.due || item?.dueDate || item?.due_date || item?.deadline;
-    if (!rawDue) return false;
-    const dueTime = new Date(rawDue).getTime();
-    if (!Number.isFinite(dueTime)) return false;
-    return dueTime <= now;
 }
 
 function getSummaryForBlock(canonicalGrade = null, summaryByKey = {}, summarySectionTotals = {}, config) {
@@ -140,62 +113,6 @@ function getSummaryForBlock(canonicalGrade = null, summaryByKey = {}, summarySec
     };
 }
 
-function summarizeAssignments(groupedSubmissions = {}, rawSubmissions = [], terms = []) {
-    const items = [];
-
-    Object.entries(groupedSubmissions || {}).forEach(([category, assignments]) => {
-        if (isHiddenStatsCategory(category)) return;
-        Object.entries(assignments || {}).forEach(([name, data]) => {
-            if (!categoryMatches(category, name, terms)) return;
-            if (!isDueForStats(data)) return;
-            const maxPoints = Number(data?.max) || 0;
-            const score = Number(data?.student) || 0;
-            const hasSignal = Boolean(data?.submissionTime) || score > 0;
-            items.push({
-                category,
-                name,
-                score,
-                maxPoints,
-                percentage: maxPoints > 0 ? (score / maxPoints) * 100 : 0,
-                submissionTime: data?.submissionTime || null,
-                lateness: data?.lateness || '',
-                submitted: hasSignal,
-            });
-        });
-    });
-
-    const recentItems = (rawSubmissions || [])
-        .filter((item) => !isHiddenStatsCategory(item?.category))
-        .filter((item) => categoryMatches(item?.category, item?.name, terms))
-        .filter((item) => isDueForStats(item))
-        .slice(0, 5)
-        .map((item) => ({
-            category: item.category,
-            name: item.name,
-            score: Number(item.score) || 0,
-            maxPoints: Number(item.maxPoints) || 0,
-            percentage: Number(item.percentage) || 0,
-            submissionTime: item.submissionTime || null,
-            lateness: item.lateness || '',
-        }));
-
-    const totalItems = items.length;
-    const submittedItems = items.filter((item) => item.submitted).length;
-    const missingItems = Math.max(0, totalItems - submittedItems);
-    const rawScore = items.reduce((sum, item) => sum + item.score, 0);
-    const rawMax = items.reduce((sum, item) => sum + item.maxPoints, 0);
-
-    return {
-        totalItems,
-        submittedItems,
-        missingItems,
-        rawScore,
-        rawMax,
-        rawPercentage: rawMax > 0 ? (rawScore / rawMax) * 100 : 0,
-        recentItems,
-    };
-}
-
 function summarizeExam(policyRows = [], examType = '') {
     const rows = (policyRows || []).filter((row) => normalizeText(row?.examType) === examType);
     const latest = rows[rows.length - 1] || null;
@@ -218,8 +135,7 @@ function getBlockStatus(percentage) {
 }
 
 function buildCategoryBlocks({
-    groupedSubmissions,
-    rawSubmissions,
+    assignmentEvidence,
     policyRows,
     summaries,
     examComponentTrends,
@@ -229,7 +145,9 @@ function buildCategoryBlocks({
     const canonicalGrade = summaries?.canonicalGrade || null;
 
     return CATEGORY_BLOCK_CONFIGS.map((config) => {
-        const assignmentSummary = summarizeAssignments(groupedSubmissions, rawSubmissions, config.terms);
+        const assignmentSummary = summarizeAssignmentEvidence(assignmentEvidence, {
+            matches: (category, name) => categoryMatches(category, name, config.terms),
+        });
         const scoreSummary = getSummaryForBlock(
             canonicalGrade,
             summaryByKey,
@@ -305,9 +223,7 @@ router.get('/', async (req, res) => {
     try {
         const effectiveCourseId = await resolveEffectiveCourseId(req, email);
 
-        const groupedSubmissionsPromise = getStudentSubmissionsGrouped(email, effectiveCourseId);
-        const assignmentMatrixPromise = getCourseAssignmentMatrix(effectiveCourseId);
-        const rawSubmissionsPromise = getStudentSubmissionsByTime(email, effectiveCourseId);
+        const assignmentEvidencePromise = getStudentAssignmentEvidence(email, effectiveCourseId);
         const categoryAveragesPromise = getCategoryAverages(effectiveCourseId).catch((err) => {
             console.warn('Profile category averages unavailable:', err?.message || err);
             return {};
@@ -318,47 +234,35 @@ router.get('/', async (req, res) => {
         const summariesPromise = getStudentPolicySummaries(email, effectiveCourseId);
 
         const [
-            groupedSubmissions,
-            assignmentMatrix,
-            rawSubmissions,
+            assignmentEvidence,
             categoryAverages,
             bins,
             policyRows,
             examComponentTrends,
             summaries,
         ] = await Promise.all([
-            groupedSubmissionsPromise,
-            assignmentMatrixPromise,
-            rawSubmissionsPromise,
+            assignmentEvidencePromise,
             categoryAveragesPromise,
             binsPromise,
             policyRowsPromise,
             examComponentTrendsPromise,
             summariesPromise,
         ]);
+        const groupedSubmissions = groupAssignmentEvidence(assignmentEvidence);
+        const rawSubmissions = sortAssignmentEvidenceByTime(assignmentEvidence);
+        const rawGrades = buildAssignmentEvidenceResponse(rawSubmissions);
 
         const categoryBlocks = buildCategoryBlocks({
-            groupedSubmissions,
-            rawSubmissions,
+            assignmentEvidence: rawSubmissions,
             policyRows,
             summaries,
             examComponentTrends,
         });
-        const dueWorkProgress = {
-            basis: 'due_work_progress',
-            status: 'available',
-            categories: Object.fromEntries(categoryBlocks.map((block) => [block.key, block.summary])),
-        };
-        const canonicalGrade = {
-            ...summaries.canonicalGrade,
-            rawEvidence: {
-                basis: 'raw_evidence',
-                status: 'available',
-                submissionCount: Array.isArray(rawSubmissions) ? rawSubmissions.length : 0,
-                source: 'student_submissions',
-            },
-            dueWorkProgress,
-        };
+        const canonicalGrade = attachAssignmentEvidenceToCanonicalGrade(
+            summaries.canonicalGrade,
+            assignmentEvidence,
+            categoryBlocks,
+        );
         const profileSummary = canonicalGradeToProfileSummary(email, canonicalGrade);
 
         const gradeFlow = includeGradeFlow
@@ -373,10 +277,10 @@ router.get('/', async (req, res) => {
         return res.status(200).json({
             courseId: effectiveCourseId,
             canonicalGrade,
-            grades: getStudentScoresWithMaxPointsAndTime(groupedSubmissions, assignmentMatrix),
+            grades: groupedSubmissions,
             rawGrades: {
+                ...rawGrades,
                 sortBy: 'time',
-                submissions: rawSubmissions || [],
             },
             categoryStats: categoryAverages || {},
             bins,
@@ -393,10 +297,14 @@ router.get('/', async (req, res) => {
         });
     } catch (err) {
         const status = Number(err?.status) || 500;
+        const evidenceError = err?.code === 'ASSIGNMENT_EVIDENCE_REQUEST_ERROR'
+            ? assignmentEvidenceRequestError(err)
+            : {};
         console.error('Error building student profile payload:', err);
         return res.status(status).json({
-            message: status < 500 ? err.message : 'Internal server error.',
-            code: err?.code || 'PROFILE_BUILD_FAILED',
+            ...evidenceError,
+            message: evidenceError.message || (status < 500 ? err.message : 'Internal server error.'),
+            code: evidenceError.code || err?.code || 'PROFILE_BUILD_FAILED',
             details: err?.details || null,
             error: err?.message || 'Failed to build student profile payload',
         });

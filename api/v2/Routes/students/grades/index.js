@@ -1,18 +1,22 @@
 import { Router } from 'express';
 import {
-    getStudentSubmissionsByTime,
-    getStudentSubmissionsGrouped,
+    getStudentAssignmentEvidence,
     getStudentCourses,
     studentEnrolledInCourse,
-    getCourseAssignmentMatrix,
 } from '../../../../lib/dbHelper.mjs';
 import { IAM_ROLE } from '../../../../lib/iam.mjs';
+import {
+    assignmentEvidenceRequestError,
+    buildAssignmentEvidenceResponse,
+    groupAssignmentEvidence,
+    sortAssignmentEvidenceByTime,
+} from '../../../../lib/assignmentEvidence.mjs';
 
 const router = Router({ mergeParams: true });
 
 router.get('/', async (req, res) => {
     const { email } = req.params;
-    const { sort, format, course_id: courseId } = req.query; // sort: 'time' or 'assignment' (default), format: 'list' or 'grouped'
+    const { sort, course_id: courseId } = req.query;
     
     try {
         const authEmail = req?.auth?.email;
@@ -39,67 +43,20 @@ router.get('/', async (req, res) => {
         }
 
         const effectiveCourseId = req.query.course_id || courseId || null;
+        const evidence = await getStudentAssignmentEvidence(email, effectiveCourseId);
 
-        // Handle time-based sorting from PostgreSQL
         if (sort === 'time') {
-            const submissionsByTime = await getStudentSubmissionsByTime(email, effectiveCourseId);
-            
-            if (!submissionsByTime || submissionsByTime.length === 0) {
-                return res.status(200).json([]);
-            }
-            
-            // Return array format with submission times for chronological view
+            const response = buildAssignmentEvidenceResponse(sortAssignmentEvidenceByTime(evidence));
             return res.status(200).json({
+                ...response,
                 sortBy: 'time',
-                submissions: submissionsByTime,
             });
         }
-        
-        // Handle grouped format from PostgreSQL
-        if (format === 'db') {
-            const groupedSubmissions = await getStudentSubmissionsGrouped(email, effectiveCourseId);
-            const maxScores = await getCourseAssignmentMatrix(effectiveCourseId);
-            
-            return res.status(200).json(
-                getStudentScoresWithMaxPointsAndTime(groupedSubmissions, maxScores)
-            );
-        }
-
-        const groupedSubmissions = await getStudentSubmissionsGrouped(email, effectiveCourseId);
-        const maxScores = await getCourseAssignmentMatrix(effectiveCourseId);
-        return res.status(200).json(
-            getStudentScoresWithMaxPointsAndTime(groupedSubmissions, maxScores)
-        );
+        return res.status(200).json(groupAssignmentEvidence(evidence));
     } catch (err) {
         console.error("Internal service error for student with email %s", email, err);
-        return res.status(500).json({ message: "Internal server error." });
+        return res.status(Number(err?.status) || 500).json(assignmentEvidenceRequestError(err));
     }
 });
-
-/**
- * Gets the student's scores but with the max points added on.
- * @param {object} studentScores the student's scores.
- * @param {object} maxScores the maximum possible scores.
- * @returns {object} students scores with max points.
- */
-function getStudentScoresWithMaxPointsAndTime(studentScores, maxScores) {
-    return Object.keys(studentScores).reduce((assignmentsDict, assignment) => {
-        assignmentsDict[assignment] = Object.entries(
-            studentScores[assignment],
-        ).reduce((scoresDict, [category, data]) => {
-            const maxScore = maxScores?.[assignment]?.[category] ?? data.max;
-            scoresDict[category] = {
-                student: data.student,
-                max: maxScore,
-                submissionTime: data.submissionTime,
-                lateness: data.lateness,
-                dueAt: data.dueAt,
-                releaseAt: data.releaseAt,
-            };
-            return scoresDict;
-        }, {});
-        return assignmentsDict;
-    }, {});
-}
 
 export default router;

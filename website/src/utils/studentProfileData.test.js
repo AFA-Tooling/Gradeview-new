@@ -8,6 +8,7 @@ import {
   applyCanonicalGrade,
   buildStudentProfileData,
 } from './studentProfileData';
+import { processStudentData } from './studentDataProcessor';
 
 const COMPONENTS = [
   ['attendance', 'Attendance / Participation', 'attendance', 15],
@@ -188,6 +189,98 @@ describe('student profile canonical adapter', () => {
     expect(result.totalScore).toBe(368.33);
     expect(result.displayScore).toBe(368);
     expect(result.policyFinalLetter).toBe('A-');
+  });
+
+  test('profile raw-evidence adapter retains future and no-due non-exam catalog rows', () => {
+    const rawRows = [
+      {
+        assignmentId: 'lab-future',
+        category: 'Labs',
+        name: 'Lab Future',
+        score: null,
+        maxPoints: 10,
+        evidenceStatus: 'not_due',
+        dueAt: '2099-07-20T00:00:00.000Z',
+      },
+      {
+        assignmentId: 'project-unknown',
+        category: 'Projects',
+        name: 'Project Due Unknown',
+        score: null,
+        maxPoints: 20,
+        evidenceStatus: 'due_unknown',
+        dueAt: null,
+      },
+    ];
+    const result = buildStudentProfileData(profilePayload(AVERY_GRADE, {
+      grades: {
+        Labs: {
+          'Lab Future': {
+            assignmentId: 'lab-future', student: null, max: 10, evidenceStatus: 'not_due',
+            dueAt: '2099-07-20T00:00:00.000Z',
+          },
+        },
+        Projects: {
+          'Project Due Unknown': {
+            assignmentId: 'project-unknown', student: null, max: 20, evidenceStatus: 'due_unknown',
+            dueAt: null,
+          },
+        },
+      },
+      rawGrades: {
+        basis: 'assignment_evidence',
+        catalogCount: 2,
+        sortBy: 'time',
+        submissions: rawRows,
+      },
+    }), 'student@example.edu', 'Student');
+
+    expect(result.rawAssignmentsList.map((row) => row.name)).toEqual([
+      'Lab Future', 'Project Due Unknown',
+    ]);
+    expect(result.assignmentsList.map((row) => row.name)).toEqual([
+      'Lab Future', 'Project Due Unknown',
+    ]);
+    expect(result.totalScore).toBe(AVERY_GRADE.exactScore);
+    expect(result.categoriesData.Labs.exactScore).toBe(AVERY_GRADE.categories.labs.exactScore);
+    expect(result.categoriesData.Projects.exactScore).toBe(AVERY_GRADE.categories.projects.exactScore);
+  });
+
+  test('student data processor retains future and no-due rows in both API adapters', () => {
+    const timeRows = [
+      {
+        category: 'Labs', name: 'Future Lab', score: null, maxPoints: 10,
+        evidenceStatus: 'not_due', dueAt: '2099-07-20T00:00:00.000Z',
+      },
+      {
+        category: 'Projects', name: 'Unknown Project', score: null, maxPoints: 20,
+        evidenceStatus: 'due_unknown', dueAt: null,
+      },
+    ];
+    const timeResult = processStudentData({
+      sortBy: 'time',
+      submissions: timeRows,
+    }, 'student@example.edu', 'Student', 'time');
+    expect(timeResult.assignmentsList.map((row) => row.name)).toEqual([
+      'Future Lab', 'Unknown Project',
+    ]);
+
+    const groupedResult = processStudentData({
+      Labs: {
+        'Future Lab': {
+          student: null, max: 10, evidenceStatus: 'not_due',
+          dueAt: '2099-07-20T00:00:00.000Z',
+        },
+      },
+      Projects: {
+        'Unknown Project': {
+          student: null, max: 20, evidenceStatus: 'due_unknown', dueAt: null,
+        },
+      },
+    }, 'student@example.edu', 'Student');
+    expect(groupedResult.assignmentsList.map((row) => row.name)).toEqual([
+      'Future Lab', 'Unknown Project',
+    ]);
   });
 
   test('fractional category exact scores and exact exam subtotal are never ceiled', () => {
