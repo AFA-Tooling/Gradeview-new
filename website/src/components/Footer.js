@@ -10,15 +10,16 @@ export default function Footer() {
             component="footer"
             sx={{
                 flex: '0 0 auto',
-                py: 1.5,
+                minHeight: 48,
+                py: 1.25,
                 px: 2,
                 bgcolor: 'background.paper',
                 borderTop: 1,
                 borderColor: 'divider',
                 textAlign: 'center',
                 width: '100%',
-                zIndex: 3,
-                position: 'relative',
+                zIndex: 'auto',
+                position: 'static',
             }}
         >
             <Typography
@@ -32,13 +33,23 @@ export default function Footer() {
                     flexWrap: 'wrap',
                 }}
             >
-                <Email sx={{ fontSize: 16 }} />
+                <Email aria-hidden="true" sx={{ fontSize: 18, flexShrink: 0 }} />
                 <span>Questions or issues?</span>
                 <Link
                     href={`mailto:${contactEmail}`}
                     color="secondary.main"
                     underline="hover"
-                    sx={{ fontWeight: 500 }}
+                    sx={{
+                        minHeight: 44,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        fontWeight: 600,
+                        overflowWrap: 'anywhere',
+                        '&:focus-visible': {
+                            outline: '3px solid #2563EB',
+                            outlineOffset: 2,
+                        },
+                    }}
                 >
                     {contactEmail}
                 </Link>
@@ -46,4 +57,3 @@ export default function Footer() {
         </Box>
     );
 }
-
