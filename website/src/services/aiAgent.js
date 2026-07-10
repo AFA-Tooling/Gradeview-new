@@ -15,12 +15,61 @@ import {
  */
 
 export class AIQueryRequestError extends Error {
-  constructor(message, { status = 0, code = 'QUERY_FAILED' } = {}) {
+  constructor(message, {
+    status = 0,
+    code = 'QUERY_FAILED',
+    reason = '',
+    recovery = '',
+  } = {}) {
     super(message);
     this.name = 'AIQueryRequestError';
     this.status = status;
     this.code = code;
+    this.reason = reason || message;
+    this.recovery = recovery;
   }
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+
+function createScopedRequestSignal(upstreamSignal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const abortFromUpstream = () => controller.abort();
+  if (upstreamSignal?.aborted) {
+    controller.abort();
+  } else {
+    upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    didTimeOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+    },
+  };
+}
+
+async function parseResponsePayload(response) {
+  return response.json().catch(() => null);
+}
+
+function createResponseError(response, payload, fallbackMessage) {
+  const reason = payload?.reason || payload?.message || payload?.error || fallbackMessage;
+  return new AIQueryRequestError(reason, {
+    status: response?.status || 0,
+    code: payload?.code || 'QUERY_FAILED',
+    reason,
+    recovery: payload?.recovery || '',
+  });
 }
 
 export class AIAgent {
@@ -53,7 +102,7 @@ export class AIAgent {
   /**
    * Fetch Database Schema Information
    */
-  async fetchDatabaseSchema(courseId, signal) {
+  async fetchDatabaseSchema(courseId, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     const token = localStorage.getItem('token');
     if (!token) {
       console.warn('No auth token, skipping schema fetch');
@@ -63,23 +112,39 @@ export class AIAgent {
     const normalizedCourseId = normalizeAIAnalyticsCourseId(courseId);
     if (!normalizedCourseId) return;
 
+    const request = createScopedRequestSignal(signal, timeoutMs);
     try {
       const response = await fetch(buildCourseScopedAIPath('/api/v2/admin/ai-query/schema', normalizedCourseId), {
         method: 'GET',
         headers: {
           'Authorization': token
         },
-        signal,
+        signal: request.signal,
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        this.databaseSchema = data.schema;
-        console.log('Database schema loaded:', this.databaseSchema);
+      const data = await parseResponsePayload(response);
+      if (!response.ok) {
+        throw createResponseError(
+          response,
+          data,
+          `Schema request failed with status ${response.status}.`,
+        );
       }
+
+      this.databaseSchema = data?.schema || null;
+      console.log('Database schema loaded:', this.databaseSchema);
+      return this.databaseSchema;
     } catch (error) {
-      if (error?.name === 'AbortError') throw error;
-      console.error('Failed to fetch schema:', error);
+      if (error?.name === 'AbortError' && request.didTimeOut()) {
+        throw new AIQueryRequestError('The schema request timed out.', {
+          code: 'REQUEST_TIMEOUT',
+          reason: 'The selected course schema did not load before the request timed out.',
+          recovery: 'Retry after checking the GradeView service connection.',
+        });
+      }
+      throw error;
+    } finally {
+      request.cleanup();
     }
   }
 
@@ -119,7 +184,11 @@ export class AIAgent {
    * @param {string} query - User query
    * @returns {Promise<object>} - API response
    */
-  async queryBackend(query, { courseId, signal } = {}) {
+  async queryBackend(query, {
+    courseId,
+    signal,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  } = {}) {
     // Get authentication token from localStorage
     const token = localStorage.getItem('token');
     if (!token) {
@@ -137,28 +206,54 @@ export class AIAgent {
       });
     }
 
-    const response = await fetch(buildCourseScopedAIPath('/api/v2/admin/ai-query', normalizedCourseId), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token
-      },
-      body: JSON.stringify({
-        query: query,
-        useAI: !!this.apiKey  // Use AI if API key exists, otherwise use rules
-      }),
-      signal,
-    });
+    const request = createScopedRequestSignal(signal, timeoutMs);
+    let response;
+    let payload;
+    try {
+      response = await fetch(buildCourseScopedAIPath('/api/v2/admin/ai-query', normalizedCourseId), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          query: query,
+          useAI: !!this.apiKey  // Use AI if API key exists, otherwise use rules
+        }),
+        signal: request.signal,
+      });
 
-    const payload = await response.json().catch(() => null);
+      payload = await parseResponsePayload(response);
+    } catch (error) {
+      if (error?.name === 'AbortError' && request.didTimeOut()) {
+        throw new AIQueryRequestError('The live course query timed out.', {
+          code: 'REQUEST_TIMEOUT',
+          reason: 'No live course result was produced before the request timed out.',
+          recovery: 'Retry the query. If it continues to time out, contact the GradeView administrator.',
+        });
+      }
+      if (error?.name === 'AbortError') throw error;
+      throw new AIQueryRequestError('The live course query could not reach GradeView.', {
+        code: 'NETWORK_ERROR',
+        reason: 'No live course result was produced because the network request failed.',
+        recovery: 'Check the connection and retry the query.',
+      });
+    } finally {
+      request.cleanup();
+    }
+
     if (!response.ok) {
-      const message = payload?.message || payload?.error || `Request failed with status ${response.status}.`;
-      throw new AIQueryRequestError(message, { status: response.status });
+      throw createResponseError(
+        response,
+        payload,
+        `Request failed with status ${response.status}.`,
+      );
     }
     if (payload?.type === 'error' || payload?.error) {
-      throw new AIQueryRequestError(
-        payload?.answer || payload?.message || payload?.error || 'The query did not complete.',
+      throw createResponseError(
         { status: 500 },
+        payload,
+        payload?.answer || 'The query did not complete.',
       );
     }
 

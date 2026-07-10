@@ -31,7 +31,33 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm test -- --runInBand --passWithNoTests
+        run: npm test -- --runInBand
+
+  website-test:
+    name: Website Contract and Component Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Pin npm version
+        run: npm i -g npm@10.8.2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run website tests
+        run: npm run test:ci
 
   website-build:
     name: Website Build
