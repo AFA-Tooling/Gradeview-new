@@ -1,4 +1,8 @@
-import { normalizeCatalogCategory } from './assignmentEvidence.mjs';
+import {
+    buildAssignmentEvidenceSummary,
+    normalizeCatalogCategory,
+    queryCourseWideAssignmentEvidence,
+} from './assignmentEvidence.mjs';
 
 function optionalNumber(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -131,11 +135,25 @@ export function mergeEnrolledRosterWithScoreRows(roster = [], scoreRows = []) {
     return students;
 }
 
-export async function queryRosterBackedStudentScores(pool, courseId = null) {
-    const scoreQuery = buildRosterScoreRowsQuery(courseId);
-    const [roster, scoreResult] = await Promise.all([
-        queryEnrolledCourseRoster(pool, courseId),
-        pool.query(scoreQuery.text, scoreQuery.values),
-    ]);
-    return mergeEnrolledRosterWithScoreRows(roster, scoreResult?.rows || []);
+export async function queryRosterBackedStudentScores(pool, courseId = null, { now = Date.now() } = {}) {
+    const groups = await queryCourseWideAssignmentEvidence(pool, { courseId, now });
+    return groups.map(({ assignmentEvidence = [], ...student }) => {
+        const scores = {};
+        assignmentEvidence.forEach((assignment) => {
+            if (!assignment?.hasSourceRecord || !assignment?.name) return;
+            const category = assignment.category || 'Uncategorized';
+            if (!scores[category]) scores[category] = {};
+            // Preserve the legacy matrix's stored DB value, including a true
+            // zero or the demo's historical missing-placeholder zero. The
+            // authoritative status distinction lives in assignmentEvidence.
+            scores[category][assignment.name] = assignment.recordedScore;
+        });
+
+        return {
+            ...student,
+            scores,
+            assignmentEvidence,
+            assignmentEvidenceSummary: buildAssignmentEvidenceSummary(assignmentEvidence),
+        };
+    });
 }
