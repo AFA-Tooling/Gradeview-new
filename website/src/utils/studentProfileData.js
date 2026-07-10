@@ -328,6 +328,10 @@ export function buildStudentProfileData(payload, studentEmail, studentName) {
 
   return {
     ...processed,
+    // A2's catalog-left-join array is the only authoritative row source.
+    // Keep it byte-for-byte semantic here so presentation code can distinguish
+    // true zeroes from unavailable evidence and preserve duplicate titles by ID.
+    assignmentEvidence: rawSubmissions,
     rawAssignmentsList,
     rawTrendData,
     gradeBins: gradingConfig.gradeBins,
