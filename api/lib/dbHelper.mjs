@@ -1856,9 +1856,12 @@ export async function getCategorySummaryDistribution(category, courseId = null, 
     }
 }
 
-export async function getAllStudentPolicySummaries(courseId = null) {
+export async function getAllStudentPolicySummaries(courseId = null, rosterEmails = []) {
     const summaryMaps = await getCoursePolicySummaryMaps(courseId);
-    const emails = new Set();
+    const emails = new Set(
+        (Array.isArray(rosterEmails) ? rosterEmails : [])
+            .map((email) => String(email || '').trim().toLowerCase()),
+    );
     summaryMaps.byComponent.forEach(({ rowMap }) => {
         rowMap.forEach((_score, email) => emails.add(email));
     });

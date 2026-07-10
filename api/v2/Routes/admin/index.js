@@ -1,6 +1,11 @@
 import { Router } from 'express';
-import { validateAdminPortalMiddleware } from '../../../lib/authlib.mjs';
-import { IAM_ROLE } from '../../../lib/iam.mjs';
+import {
+    getRequestedCourseId,
+    requireWritableSessionMiddleware,
+    validateAuthenticatedMiddleware,
+    validateAdminPortalMiddleware,
+} from '../../../lib/authlib.mjs';
+import { ACCESS_ERROR_CODE, ensurePermission } from '../../../lib/iam.mjs';
 import CategoriesRouter from './categories/index.js';
 import AssignmentsRouter from './assignments/index.js';
 import StatsRouter from './stats/index.js';
@@ -21,8 +26,6 @@ const limiter = RateLimit({
 // apply rate limiter to all requests
 router.use(limiter);
 
-router.use(validateAdminPortalMiddleware);
-
 function requireCourseScopeForClassData(req, res, next) {
     const classDataPrefixes = [
         '/categories',
@@ -34,14 +37,16 @@ function requireCourseScopeForClassData(req, res, next) {
     ];
     const isClassDataRequest = classDataPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`));
 
-    if (req?.auth?.role !== IAM_ROLE.SUPER_ADMIN && isClassDataRequest && !req?.query?.course_id) {
-        return res.status(403).json({ error: 'course_id is required for course-scoped class-data access' });
+    if (isClassDataRequest && !getRequestedCourseId(req)) {
+        ensurePermission(false, null, ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED);
     }
 
     return next();
 }
 
+router.use(validateAuthenticatedMiddleware);
 router.use(requireCourseScopeForClassData);
+router.use(validateAdminPortalMiddleware);
 
 // Mount sub-routers
 router.use('/categories', CategoriesRouter);
@@ -50,7 +55,7 @@ router.use('/stats', StatsRouter);
 router.use('/distribution', DistributionRouter);
 router.use('/studentScores', StudentScoresRouter);
 router.use('/ai-query', AIQueryRouter); // AI Agent query endpoint
-router.use('/sync', SyncRouter); // GradeSync integration
+router.use('/sync', requireWritableSessionMiddleware, SyncRouter); // GradeSync integration
 
 // Default admin route
 router.get('/', (_, res) => {

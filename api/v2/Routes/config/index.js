@@ -1,23 +1,33 @@
 import { Router } from 'express';
 import { getPool } from '../../../lib/dbHelper.mjs';
-import { validateAuthenticatedMiddleware } from '../../../lib/authlib.mjs';
-import { canManageCourse, canManageSystem, SUPER_ADMIN_EMAIL } from '../../../lib/iam.mjs';
+import {
+    requireWritableSessionMiddleware,
+    validateAuthenticatedMiddleware,
+} from '../../../lib/authlib.mjs';
+import {
+    ACCESS_ACTION,
+    ACCESS_ERROR_CODE,
+    canManageCourse,
+    canManageSystem,
+    ensureCourseAccess,
+    ensurePermission,
+    getCourseAccessDecision,
+    SUPER_ADMIN_EMAIL,
+} from '../../../lib/iam.mjs';
 
 const router = Router();
 const pool = getPool();
 const HEAD_ADMIN_EMAIL = SUPER_ADMIN_EMAIL;
 
 router.use(validateAuthenticatedMiddleware);
+router.use(requireWritableSessionMiddleware);
 
 async function ensureSystemAdmin(req, res) {
     const allowed = await canManageSystem({
         requesterEmail: req?.auth?.email,
         snapshot: req?.auth?.snapshot || null,
     });
-    if (!allowed) {
-        res.status(403).json({ error: 'Super admin access required' });
-        return false;
-    }
+    ensurePermission(allowed, null, ACCESS_ERROR_CODE.ROLE_FORBIDDEN);
     return true;
 }
 
@@ -26,22 +36,24 @@ async function ensureHeadAdmin(req, res) {
         requesterEmail: req?.auth?.email,
         snapshot: req?.auth?.snapshot || null,
     });
-    if (!allowed) {
-        res.status(403).json({ error: 'Only the head admin can manage personnel permissions' });
-        return false;
-    }
+    ensurePermission(allowed, null, ACCESS_ERROR_CODE.ROLE_FORBIDDEN);
     return true;
 }
 
 async function ensureCourseAdmin(req, res, courseId) {
-    const allowed = await canManageCourse({
+    const action = ['GET', 'HEAD'].includes(String(req?.method || '').toUpperCase())
+        ? ACCESS_ACTION.READ
+        : ACCESS_ACTION.WRITE;
+    const decision = await getCourseAccessDecision({
         requesterEmail: req?.auth?.email,
         courseId,
+        action,
         snapshot: req?.auth?.snapshot || null,
     });
-    if (!allowed) {
-        res.status(403).json({ error: 'Course admin permission required' });
-        return false;
+    ensureCourseAccess(decision);
+
+    if (decision.role !== 'super_admin' && decision.role !== 'course_admin') {
+        ensurePermission(false, null, ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN);
     }
     return true;
 }

@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { getPool } from '../../../../lib/dbHelper.mjs';
 import {
-    COURSE_SCOPE_PREDICATE,
+    ACCESS_ERROR_CODE,
+    createAccessPolicyError,
+} from '../../../../lib/iam.mjs';
+import {
+    COURSE_QUERY_PLAN_ID,
     addLiveCourseSource,
-    assertCourseScopedSql,
+    buildCourseScopedExecution,
+    buildGeneratedCourseScopedExecution,
+    listCourseScopedQueryPlans,
     normalizeCourseId,
 } from './courseScope.js';
 
@@ -22,6 +28,7 @@ const DATABASE_SCHEMA = {
             description: "Student information table",
             columns: {
                 id: "Integer, primary key",
+                course_id: "Integer, enrolled course ID (foreign key)",
                 sid: "String, student ID",
                 email: "String, email address",
                 legal_name: "String, full name"
@@ -63,7 +70,8 @@ const DATABASE_SCHEMA = {
     relationships: {
         "submissions.student_id -> students.id": "Submission record linked to student",
         "submissions.assignment_id -> assignments.id": "Submission record linked to assignment",
-        "assignments.course_id -> courses.id": "Assignment linked to course"
+        "assignments.course_id -> courses.id": "Assignment linked to course",
+        "students.course_id -> courses.id": "Student enrollment linked to course"
     },
     common_patterns: [
         "Calculate average score: AVG(total_score / NULLIF(max_points, 0) * 100)",
@@ -78,7 +86,7 @@ const DATABASE_SCHEMA = {
  * AI Query Endpoint - Dynamic SQL Generation
  * POST /admin/ai-query
  */
-router.post('/', async (req, res) => {
+router.post('/', async (req, res, next) => {
     try {
         const { query, useAI = true } = req.body || {};
         const courseId = normalizeCourseId(req.query?.course_id);
@@ -89,9 +97,7 @@ router.post('/', async (req, res) => {
             });
         }
         if (!courseId) {
-            return res.status(400).json({
-                error: 'Select exactly one course before running AI Analytics',
-            });
+            return next(createAccessPolicyError(ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED));
         }
 
         console.log(`[AI Agent] Query: "${query}"`);
@@ -109,6 +115,9 @@ router.post('/', async (req, res) => {
         res.json(addLiveCourseSource(result, courseId));
 
     } catch (error) {
+        if (error?.isControlledApiError === true) {
+            return next(error);
+        }
         console.error('[AI Agent Error]', error);
         res.status(500).json({ 
             error: 'Internal server error',
@@ -132,11 +141,11 @@ async function processWithAI(userQuery, courseId) {
     
     console.log(`[AI Agent] Generated SQL:`, sqlQuery);
 
-    // 2. Validate SQL security
-    validateSQL(sqlQuery);
+    // 2. Resolve the generated text to a server-owned plan, then bind course scope.
+    const execution = buildGeneratedCourseScopedExecution(sqlQuery, courseId);
 
-    // 3. Execute SQL
-    const queryResult = await executeCourseScopedQuery(sqlQuery, courseId);
+    // 3. Execute only the server-owned SQL with the authorized course as $1.
+    const queryResult = await executeCourseScopedQuery(execution);
 
     // 4. Explain results using AI
     const explanation = await explainResultsWithAI(userQuery, queryResult.rows, apiKey);
@@ -145,7 +154,8 @@ async function processWithAI(userQuery, courseId) {
         type: 'ai_generated',
         answer: explanation,
         data: queryResult.rows,
-        sqlQuery: sqlQuery,
+        sqlQuery: execution.text,
+        queryPlan: execution.planId,
         suggestions: generateSuggestions(userQuery, queryResult.rows),
         visualizationType: inferVisualizationType(queryResult.rows)
     };
@@ -155,6 +165,7 @@ async function processWithAI(userQuery, courseId) {
  * Generate SQL query using OpenAI
  */
 async function generateSQLWithAI(userQuery, apiKey) {
+    const approvedPlans = listCourseScopedQueryPlans();
     const prompt = `You are a PostgreSQL database expert. Generate SQL queries based on user questions.
 
 Database Structure:
@@ -163,15 +174,12 @@ ${JSON.stringify(DATABASE_SCHEMA, null, 2)}
 User Question: ${userQuery}
 
 Requirements:
-1. Return only the SQL query statement, no explanations
-2. Use standard PostgreSQL syntax
-3. Must be a SELECT query (no INSERT, UPDATE, DELETE)
-4. Add appropriate LIMIT (recommended 10-50 records)
-5. Use ROUND() to keep 2 decimal places for numeric values
-6. Handle NULL values (use NULLIF, COALESCE, etc.)
-7. For percentage calculations, ensure denominator is not zero
-8. The selected course is supplied as PostgreSQL parameter $1. Join the courses table with alias c and require both supported identifiers using exactly: WHERE (c.id::text = $1 OR c.gradescope_course_id::text = $1)
-9. Every assignments/submissions/student result must be reachable through that selected-course join; never query data from other courses
+1. Return exactly one SQL statement from the approved plans below, with no explanations.
+2. Do not add, remove, reorder, or rewrite any clause.
+3. Pick the plan that best matches the user's question.
+
+Approved plans:
+${JSON.stringify(approvedPlans, null, 2)}
 
 SQL Query:`;
 
@@ -256,44 +264,12 @@ Please summarize this query result in 1-2 concise sentences, in English.`;
     return data.choices[0].message.content.trim();
 }
 
-/**
- * Validate SQL security
- */
-function validateSQL(sql) {
-    const lowerSQL = sql.toLowerCase().trim();
-
-    // Must be a SELECT statement
-    if (!lowerSQL.startsWith('select')) {
-        throw new Error('Only SELECT queries are allowed');
-    }
-
-    // Forbidden keywords
-    const forbiddenKeywords = [
-        'insert', 'update', 'delete', 'drop', 'truncate', 
-        'alter', 'create', 'grant', 'revoke', 'exec',
-        'execute', 'script', 'javascript', 'xp_', 'sp_'
-    ];
-
-    for (const keyword of forbiddenKeywords) {
-        const pattern = new RegExp(`\\b${keyword}\\b`, 'i');
-        if (pattern.test(sql)) {
-            throw new Error(`Forbidden SQL keyword detected: ${keyword}`);
-        }
-    }
-
-    // Check for multiple statements (prevent SQL injection)
-    if (sql.includes(';')) {
-        throw new Error('Multiple SQL statements not allowed');
-    }
-
-    assertCourseScopedSql(sql);
-
-    return true;
+async function executeCourseScopedQuery(execution) {
+    return getDbPool().query(execution.text, execution.values);
 }
 
-async function executeCourseScopedQuery(sql, courseId) {
-    assertCourseScopedSql(sql);
-    return getDbPool().query(sql, [courseId]);
+async function executeCourseScopedPlan(planId, courseId) {
+    return executeCourseScopedQuery(buildCourseScopedExecution(planId, courseId));
 }
 
 /**
@@ -318,34 +294,7 @@ async function processWithRules(userQuery, courseId) {
  * Student analysis (fallback mode)
  */
 async function getStudentAnalysis(courseId) {
-    const result = await executeCourseScopedQuery(`
-        WITH student_stats AS (
-            SELECT 
-                s.id,
-                s.legal_name as name,
-                s.sid as student_id,
-                COUNT(sub.id) as total_submissions,
-                AVG(sub.total_score / NULLIF(sub.max_points, 0) * 100) as avg_score,
-                STDDEV(sub.total_score / NULLIF(sub.max_points, 0) * 100) as score_stddev
-            FROM students s
-            JOIN submissions sub ON s.id = sub.student_id
-            JOIN assignments a ON a.id = sub.assignment_id
-            JOIN courses c ON c.id = a.course_id
-            WHERE ${COURSE_SCOPE_PREDICATE}
-            GROUP BY s.id, s.legal_name, s.sid
-            HAVING COUNT(sub.id) > 0
-        )
-        SELECT 
-            name,
-            student_id,
-            ROUND(avg_score::numeric, 2) as avg_score,
-            ROUND(score_stddev::numeric, 2) as variance,
-            total_submissions
-        FROM student_stats
-        WHERE score_stddev IS NOT NULL
-        ORDER BY score_stddev DESC
-        LIMIT 10
-    `, courseId);
+    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.STUDENT_VARIANCE, courseId);
 
     return {
         type: 'rule_based',
@@ -360,23 +309,7 @@ async function getStudentAnalysis(courseId) {
  * Assignment analysis (fallback mode)
  */
 async function getAssignmentAnalysis(courseId) {
-    const result = await executeCourseScopedQuery(`
-        SELECT 
-            a.title,
-            a.category,
-            ROUND(a.max_points::numeric, 2) as max_points,
-            COUNT(sub.id) as submission_count,
-            ROUND(AVG(sub.total_score / NULLIF(a.max_points, 0) * 100)::numeric, 2) as avg_score_pct
-        FROM assignments a
-        JOIN courses c ON c.id = a.course_id
-        LEFT JOIN submissions sub ON a.id = sub.assignment_id
-        WHERE ${COURSE_SCOPE_PREDICATE}
-          AND a.title IS NOT NULL
-        GROUP BY a.id, a.title, a.category, a.max_points
-        HAVING COUNT(sub.id) > 0
-        ORDER BY avg_score_pct ASC
-        LIMIT 10
-    `, courseId);
+    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.ASSIGNMENT_DIFFICULTY, courseId);
 
     return {
         type: 'rule_based',
@@ -391,27 +324,7 @@ async function getAssignmentAnalysis(courseId) {
  * Statistical analysis (fallback mode)
  */
 async function getStatistics(courseId) {
-    const result = await executeCourseScopedQuery(`
-        WITH score_stats AS (
-            SELECT 
-                (sub.total_score / NULLIF(sub.max_points, 0) * 100) as score_pct
-            FROM submissions sub
-            JOIN assignments a ON a.id = sub.assignment_id
-            JOIN courses c ON c.id = a.course_id
-            WHERE ${COURSE_SCOPE_PREDICATE}
-              AND sub.total_score IS NOT NULL
-              AND sub.max_points IS NOT NULL
-              AND sub.max_points > 0
-        )
-        SELECT 
-            ROUND(AVG(score_pct)::numeric, 2) as mean,
-            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY score_pct)::numeric, 2) as median,
-            ROUND(STDDEV(score_pct)::numeric, 2) as std_dev,
-            ROUND(MIN(score_pct)::numeric, 2) as min,
-            ROUND(MAX(score_pct)::numeric, 2) as max,
-            COUNT(*) as total_records
-        FROM score_stats
-    `, courseId);
+    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.SCORE_STATISTICS, courseId);
 
     return {
         type: 'rule_based',
@@ -426,18 +339,7 @@ async function getStatistics(courseId) {
  * General overview (fallback mode)
  */
 async function getGeneralOverview(courseId) {
-    const result = await executeCourseScopedQuery(`
-        SELECT 
-            COUNT(DISTINCT s.id) as total_students,
-            COUNT(DISTINCT a.id) as total_assignments,
-            COUNT(sub.id) as total_submissions,
-            ROUND(AVG(sub.total_score / NULLIF(sub.max_points, 0) * 100)::numeric, 2) as overall_avg
-        FROM assignments a
-        JOIN courses c ON c.id = a.course_id
-        JOIN submissions sub ON sub.assignment_id = a.id
-        JOIN students s ON s.id = sub.student_id
-        WHERE ${COURSE_SCOPE_PREDICATE}
-    `, courseId);
+    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW, courseId);
 
     return {
         type: 'rule_based',
@@ -505,10 +407,10 @@ function inferVisualizationType(results) {
  * GET /admin/ai-query/schema
  * 返回数据库schema信息
  */
-router.get('/schema', async (req, res) => {
+router.get('/schema', async (req, res, next) => {
     const courseId = normalizeCourseId(req.query?.course_id);
     if (!courseId) {
-        return res.status(400).json({ error: 'Select exactly one course before loading AI Analytics schema' });
+        return next(createAccessPolicyError(ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED));
     }
     res.json({
         schema: DATABASE_SCHEMA,
