@@ -12,7 +12,8 @@ import {
     validateStaffOrAdminMiddleware,
     validateStudentSelfOrStaffOrAdminMiddleware,
 } from '../../../lib/authlib.mjs';
-import { getStudentsByCourse, getStudentCourses, getAllStudentsFromDb, getStaffCourses } from '../../../lib/dbHelper.mjs';
+import { getEnrolledCourseRoster, getStudentCourses, getStaffCourses } from '../../../lib/dbHelper.mjs';
+import { buildStudentsRosterResponse } from './rosterResponse.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -69,13 +70,8 @@ router.get('/', validateStaffOrAdminMiddleware, async (req, res) => {
     try {
         const { course_id: courseId } = req.query;
 
-        if (courseId) {
-            const students = await getStudentsByCourse(courseId);
-            return res.status(200).json({ students });
-        }
-
-        const students = await getAllStudentsFromDb();
-        return res.status(200).json({ students });
+        const roster = await getEnrolledCourseRoster(courseId || null);
+        return res.status(200).json(buildStudentsRosterResponse(roster));
     } catch (err) {
         console.error(`Internal service error fetching all students. `, err);
         return res.status(500).json({ message: "Internal server error." });
