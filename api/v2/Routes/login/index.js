@@ -3,7 +3,10 @@ import { validateAuthenticatedMiddleware } from '../../../lib/authlib.mjs';
 import RateLimit from 'express-rate-limit';
 import { getPool } from '../../../lib/dbHelper.mjs';
 import { buildPermissionSnapshot, IAM_ROLE } from '../../../lib/iam.mjs';
-import { buildPermissionTokenResponse } from '../../../lib/sessionToken.mjs';
+import {
+    buildPermissionTokenResponse,
+    inheritSessionCapabilities,
+} from '../../../lib/sessionToken.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -102,7 +105,9 @@ router.post('/demo', async (_, res) => {
 
         return res.status(200).json({
             ...buildPermissionTokenResponse(snapshot, {
+                is_demo: true,
                 demo: true,
+                read_only: true,
                 demo_course_id: snapshot.demo_course_id,
             }),
             demo: true,
@@ -129,7 +134,10 @@ router.post('/demo', async (_, res) => {
 
 router.get('/', validateAuthenticatedMiddleware, async (req, res) => {
     const email = req?.auth?.email;
-    const snapshot = await buildPermissionSnapshot(email);
+    const snapshot = inheritSessionCapabilities(
+        await buildPermissionSnapshot(email),
+        req?.auth?.snapshot || {},
+    );
     const role = req?.auth?.role || null;
     console.log(JSON.stringify({
         event: 'iam.login',
@@ -141,9 +149,12 @@ router.get('/', validateAuthenticatedMiddleware, async (req, res) => {
 
     res.send(buildPermissionTokenResponse(snapshot));
 }, (error, req, res, next) => {
+    if (error?.isControlledApiError === true) {
+        return next(error);
+    }
     // If an error occurs in the middleware, return a useful reason.
     const message = error?.message || 'Login failed.';
-    res.send({ status: false, message });
+    return res.send({ status: false, message });
 });
 
 export default router;

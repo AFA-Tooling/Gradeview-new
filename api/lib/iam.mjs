@@ -1,4 +1,3 @@
-import UnauthorizedAccessError from './errors/http/UnauthorizedAccessError.js';
 import { studentEnrolledInCourse } from './dbHelper.mjs';
 import { getPool } from './dbHelper.mjs';
 
@@ -11,6 +10,66 @@ export const IAM_ROLE = {
     INSTRUCTOR: 'instructor',
     STUDENT: 'student',
 };
+
+export const ACCESS_ACTION = Object.freeze({
+    READ: 'read',
+    WRITE: 'write',
+});
+
+export const ACCESS_ERROR_CODE = Object.freeze({
+    AUTH_REQUIRED: 'AUTH_REQUIRED',
+    ROLE_FORBIDDEN: 'ROLE_FORBIDDEN',
+    COURSE_SCOPE_REQUIRED: 'COURSE_SCOPE_REQUIRED',
+    COURSE_SCOPE_FORBIDDEN: 'COURSE_SCOPE_FORBIDDEN',
+    DEMO_READ_ONLY: 'DEMO_READ_ONLY',
+});
+
+const ACCESS_ERROR_DEFINITIONS = Object.freeze({
+    [ACCESS_ERROR_CODE.AUTH_REQUIRED]: {
+        status: 401,
+        reason: 'Authentication is required for this request.',
+        recovery: 'Sign in again, then retry the request.',
+    },
+    [ACCESS_ERROR_CODE.ROLE_FORBIDDEN]: {
+        status: 403,
+        reason: 'Your role does not permit this action.',
+        recovery: 'Use an account with the required role or contact a GradeView administrator.',
+    },
+    [ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED]: {
+        status: 400,
+        reason: 'Select exactly one course before accessing course data.',
+        recovery: 'Choose a course and retry with its course_id.',
+    },
+    [ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN]: {
+        status: 403,
+        reason: 'You do not have access to the selected course.',
+        recovery: 'Choose a course assigned to your account or request course access.',
+    },
+    [ACCESS_ERROR_CODE.DEMO_READ_ONLY]: {
+        status: 403,
+        reason: 'Demo sessions are read-only and cannot change GradeView data.',
+        recovery: 'Sign in with an authorized staff account to make changes.',
+    },
+});
+
+export class AccessPolicyError extends Error {
+    constructor(code, overrides = {}) {
+        const definition = ACCESS_ERROR_DEFINITIONS[code]
+            || ACCESS_ERROR_DEFINITIONS[ACCESS_ERROR_CODE.ROLE_FORBIDDEN];
+        const reason = overrides.reason || definition.reason;
+        super(reason);
+        this.name = 'AccessPolicyError';
+        this.status = overrides.status || definition.status;
+        this.code = code;
+        this.reason = reason;
+        this.recovery = overrides.recovery || definition.recovery;
+        this.isControlledApiError = true;
+    }
+}
+
+export function createAccessPolicyError(code, overrides = {}) {
+    return new AccessPolicyError(code, overrides);
+}
 
 function normalizeEmail(email) {
     return String(email || '').trim().toLowerCase();
@@ -255,8 +314,74 @@ export async function canManageCourse({ requesterEmail, courseId, snapshot = nul
     return role === IAM_ROLE.SUPER_ADMIN || role === IAM_ROLE.COURSE_ADMIN;
 }
 
-export function ensurePermission(allowed, errorMessage = 'not permitted') {
-    if (!allowed) {
-        throw new UnauthorizedAccessError(errorMessage);
+export async function getCourseAccessDecision({
+    requesterEmail,
+    courseId,
+    action = ACCESS_ACTION.READ,
+    snapshot = null,
+}) {
+    const normalizedCourseId = String(courseId || '').trim();
+    if (!normalizedCourseId) {
+        return {
+            allowed: false,
+            code: ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED,
+            role: IAM_ROLE.NONE,
+        };
     }
+
+    const role = await resolveRole(requesterEmail, normalizedCourseId, snapshot);
+    const roleAllowsAction = action === ACCESS_ACTION.WRITE
+        ? role === IAM_ROLE.SUPER_ADMIN || role === IAM_ROLE.COURSE_ADMIN
+        : role === IAM_ROLE.SUPER_ADMIN
+            || role === IAM_ROLE.COURSE_ADMIN
+            || role === IAM_ROLE.INSTRUCTOR;
+
+    if (!roleAllowsAction) {
+        return {
+            allowed: false,
+            code: ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN,
+            role,
+        };
+    }
+
+    const isReadOnly = snapshot?.read_only === true
+        || snapshot?.is_demo === true
+        || snapshot?.capabilities?.read_only === true;
+    if (action === ACCESS_ACTION.WRITE && isReadOnly) {
+        return {
+            allowed: false,
+            code: ACCESS_ERROR_CODE.DEMO_READ_ONLY,
+            role,
+        };
+    }
+
+    return {
+        allowed: true,
+        code: null,
+        role,
+    };
+}
+
+export function ensurePermission(
+    allowed,
+    errorMessage = 'not permitted',
+    code = ACCESS_ERROR_CODE.ROLE_FORBIDDEN,
+    overrides = {},
+) {
+    if (!allowed) {
+        throw createAccessPolicyError(code, {
+            ...overrides,
+            reason: overrides.reason || errorMessage || undefined,
+        });
+    }
+}
+
+export function ensureCourseAccess(decision, overrides = {}) {
+    ensurePermission(
+        decision?.allowed === true,
+        overrides.reason || null,
+        decision?.code || ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN,
+        overrides,
+    );
+    return decision;
 }
