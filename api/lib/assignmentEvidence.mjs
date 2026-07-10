@@ -449,11 +449,14 @@ export function joinAssignmentCatalogWithEvidence(
 }
 
 export function countAssignmentEvidenceStatuses(rows = []) {
+    const initialCounts = Object.fromEntries(
+        Object.values(ASSIGNMENT_EVIDENCE_STATUS).map((status) => [status, 0]),
+    );
     return (Array.isArray(rows) ? rows : []).reduce((counts, row) => {
         const status = String(row?.evidenceStatus || ASSIGNMENT_EVIDENCE_STATUS.REQUEST_ERROR);
         counts[status] = (counts[status] || 0) + 1;
         return counts;
-    }, {});
+    }, initialCounts);
 }
 
 export function summarizeAssignmentEvidence(rows = [], {
@@ -625,6 +628,11 @@ export function buildAssignmentEvidenceResponse(rows = []) {
     };
 }
 
+export function buildAssignmentEvidenceSummary(rows = []) {
+    const { submissions: _submissions, ...summary } = buildAssignmentEvidenceResponse(rows);
+    return summary;
+}
+
 export function assignmentEvidenceRequestError(error) {
     return {
         schemaVersion: ASSIGNMENT_EVIDENCE_SCHEMA_VERSION,
@@ -714,6 +722,155 @@ export async function queryStudentAssignmentEvidence(pool, {
         .filter((row) => hasSubmissionRecord(row) || row.request_error || row.requestError)
         .map(toEvidenceRow);
     return joinAssignmentCatalogWithEvidence(catalogRows, evidenceRows, { now });
+}
+
+function courseScopeRequiredError() {
+    const error = new Error('course_id is required for course-wide assignment evidence');
+    error.code = 'COURSE_SCOPE_REQUIRED';
+    error.status = 400;
+    error.details = {
+        field: 'course_id',
+        recovery: 'Choose a course and retry with its course_id.',
+    };
+    return error;
+}
+
+function rowMatchesCourseScope(row = {}, courseId = null) {
+    const requested = normalizeText(courseId);
+    if (!requested) return false;
+    return [row.course_id, row.courseId, row.gradescope_course_id, row.gradescopeCourseId]
+        .some((value) => normalizeText(value) === requested);
+}
+
+function courseStudentKey(row = {}) {
+    const courseId = row.course_id ?? row.courseId ?? row.gradescope_course_id ?? row.gradescopeCourseId ?? '';
+    const studentId = row.student_id ?? row.studentId ?? '';
+    if (studentId !== null && studentId !== undefined && String(studentId)) {
+        return `${courseId}:${studentId}`;
+    }
+    return `${courseId}:${normalizeText(row.student_email || row.studentEmail)}`;
+}
+
+export function buildCourseWideAssignmentEvidenceQuery(courseId) {
+    const normalizedCourseId = String(courseId || '').trim();
+    if (!normalizedCourseId) throw courseScopeRequiredError();
+
+    return {
+        text: `
+            SELECT
+                st.id::text AS student_id,
+                st.sid AS student_sid,
+                st.email AS student_email,
+                COALESCE(st.legal_name, st.email) AS student_name,
+                c.id::text AS course_id,
+                c.gradescope_course_id,
+                c.name AS course_name,
+                c.semester,
+                c.year,
+                c.last_synced_at AS course_last_synced_at,
+                a.id::text AS assignment_pk,
+                a.assignment_id AS external_assignment_id,
+                a.title AS assignment_name,
+                COALESCE(a.category, 'Uncategorized') AS category,
+                a.max_points AS assignment_max_points,
+                a.assignment_metadata,
+                a.last_synced_at AS assignment_last_synced_at,
+                a.assignment_metadata ->> 'source_sync_status' AS source_sync_status,
+                a.assignment_metadata ->> 'request_error' AS request_error,
+                s.id::text AS submission_pk,
+                s.total_score,
+                s.max_points AS submission_max_points,
+                s.status AS submission_status,
+                s.submission_id,
+                s.submission_time,
+                s.lateness,
+                s.submission_count,
+                eam.due_at AS exam_due_at,
+                eam.release_at AS exam_release_at
+            FROM courses c
+            JOIN students st
+              ON st.course_id = c.id
+            LEFT JOIN assignments a
+              ON a.course_id = c.id
+             AND a.course_id = st.course_id
+            LEFT JOIN submissions s
+              ON s.assignment_id = a.id
+             AND s.student_id = st.id
+            LEFT JOIN exam_attempt_map eam
+              ON eam.assignment_id = a.id
+             AND eam.course_id = c.id
+            WHERE c.id::text = $1
+               OR c.gradescope_course_id::text = $1
+            ORDER BY
+                c.id,
+                st.legal_name,
+                st.email,
+                st.id,
+                COALESCE(a.category, 'Uncategorized'),
+                a.title,
+                a.id
+        `,
+        values: [normalizedCourseId],
+    };
+}
+
+export function buildCourseWideAssignmentEvidenceGroups(
+    rows = [],
+    { courseId, now = Date.now() } = {},
+) {
+    const normalizedCourseId = String(courseId || '').trim();
+    if (!normalizedCourseId) throw courseScopeRequiredError();
+
+    const groups = new Map();
+    (Array.isArray(rows) ? rows : [])
+        .filter((row) => rowMatchesCourseScope(row, normalizedCourseId))
+        .forEach((row) => {
+            const key = courseStudentKey(row);
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    id: row.student_id == null ? null : String(row.student_id),
+                    sid: row.student_sid || null,
+                    name: row.student_name || row.student_email || 'Unknown',
+                    email: row.student_email || null,
+                    courseId: row.course_id == null ? null : String(row.course_id),
+                    gradescopeCourseId: row.gradescope_course_id == null
+                        ? null
+                        : String(row.gradescope_course_id),
+                    courseName: row.course_name || null,
+                    rosterSource: 'enrolled_students',
+                    identityStatus: row.student_email ? 'available' : 'email_unavailable',
+                    evidenceByAssignmentId: new Map(),
+                });
+            }
+
+            if (!isVisibleCatalogAssignment(row)) return;
+            const evidence = serializeAssignmentEvidence(row, { now });
+            if (!evidence.assignmentId) return;
+            groups.get(key).evidenceByAssignmentId.set(evidence.assignmentId, evidence);
+        });
+
+    return Array.from(groups.values()).map(({ evidenceByAssignmentId, ...student }) => ({
+        ...student,
+        assignmentEvidence: Array.from(evidenceByAssignmentId.values()),
+    }));
+}
+
+export async function queryCourseWideAssignmentEvidence(pool, {
+    courseId,
+    now = Date.now(),
+} = {}) {
+    const query = buildCourseWideAssignmentEvidenceQuery(courseId);
+    let result;
+    try {
+        result = await pool.query(query.text, query.values);
+    } catch (error) {
+        const wrapped = new Error(error?.message || 'Failed to query course-wide assignment evidence');
+        wrapped.code = 'ASSIGNMENT_EVIDENCE_REQUEST_ERROR';
+        wrapped.status = 503;
+        wrapped.cause = error;
+        throw wrapped;
+    }
+    return buildCourseWideAssignmentEvidenceGroups(result?.rows || [], { courseId, now });
 }
 
 export function buildCourseAssignmentCatalogQuery(courseId = null) {

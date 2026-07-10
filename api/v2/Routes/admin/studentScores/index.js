@@ -7,6 +7,10 @@ import {
     getStudentPolicySummaries,
 } from '../../../../lib/dbHelper.mjs';
 import { canonicalGradeToAdminSummary } from '../../../../lib/canonicalGrade.mjs';
+import {
+    attachAssignmentEvidenceToCanonicalGrade,
+    buildAssignmentEvidenceSummary,
+} from '../../../../lib/assignmentEvidence.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -59,13 +63,33 @@ function keepDisplayedPolicySections(summarySectionTotals = {}, studentScores = 
     return visibleSummaryTotals;
 }
 
-async function buildStudentsWithSummary(students = [], courseId = null) {
-    const summariesByEmail = await getAllStudentPolicySummaries(courseId || null);
+export async function buildStudentsWithSummary(
+    students = [],
+    courseId = null,
+    { getAllStudentPolicySummariesImpl = getAllStudentPolicySummaries } = {},
+) {
+    const rosterEmails = students.map((student) => String(student?.email || '').trim().toLowerCase());
+    const summariesByEmail = await getAllStudentPolicySummariesImpl(courseId || null, rosterEmails);
 
-    return Promise.all(students.map(async (student) => {
+    return students.map((student) => {
         const studentEmail = String(student?.email || '').trim().toLowerCase();
-        const summary = summariesByEmail.get(studentEmail)
-            || await getStudentPolicySummaries(studentEmail, courseId || null);
+        const summary = summariesByEmail.get(studentEmail);
+        if (!summary) {
+            const error = new Error(`Policy summary missing for enrolled student ${studentEmail || student?.id || 'unknown'}`);
+            error.code = 'POLICY_SUMMARY_MISSING';
+            error.status = 500;
+            throw error;
+        }
+        const assignmentEvidence = Array.isArray(student?.assignmentEvidence)
+            ? student.assignmentEvidence
+            : [];
+        const assignmentEvidenceSummary = student?.assignmentEvidenceSummary
+            || buildAssignmentEvidenceSummary(assignmentEvidence);
+        const canonicalGrade = attachAssignmentEvidenceToCanonicalGrade(
+            summary.canonicalGrade,
+            assignmentEvidence,
+            [],
+        );
         const displayedSummarySectionTotals = keepDisplayedPolicySections(
             summary.summarySectionTotals || {},
             student?.scores || {},
@@ -73,48 +97,62 @@ async function buildStudentsWithSummary(students = [], courseId = null) {
 
         return {
             ...student,
-            canonicalGrade: summary.canonicalGrade,
+            assignmentEvidence,
+            assignmentEvidenceSummary,
+            canonicalGrade,
+            dueWorkProgress: canonicalGrade.dueWorkProgress,
             summaryByKey: summary.summaryByKey || {},
             summarySectionTotals: summary.summarySectionTotals || {},
             displayedSummarySectionTotals,
             summaryTotal: summary.summaryTotal,
             deprecated: summary.deprecated || {},
         };
-    }));
+    });
+}
+
+export function buildStudentScoresRouteResponse(students = [], queryTime = 0) {
+    return {
+        students,
+        dataSource: 'database',
+        queryTime,
+    };
+}
+
+export function createStudentScoresListHandler({
+    getAllStudentScoresImpl = getAllStudentScores,
+    buildStudentsWithSummaryImpl = buildStudentsWithSummary,
+    now = () => Date.now(),
+} = {}) {
+    return async (req, res) => {
+        const startTime = now();
+        const { course_id: courseId } = req.query;
+
+        try {
+            const students = await getAllStudentScoresImpl(courseId || null);
+            const studentsWithSummary = await buildStudentsWithSummaryImpl(students, courseId || null);
+            const queryTime = now() - startTime;
+            console.log(`[PERF] Fetched all student scores from DB in ${queryTime}ms (${students.length} students)`);
+            return res.json(buildStudentScoresRouteResponse(studentsWithSummary, queryTime));
+        } catch (error) {
+            console.error('Error fetching student scores:', error);
+            const status = Number(error?.status) || 500;
+            return res.status(status).json({
+                code: error?.code || 'STUDENT_SCORES_FAILED',
+                details: error?.details || null,
+                error: error.message || 'Failed to fetch student scores',
+                students: [],
+            });
+        }
+    };
 }
 
 /**
  * GET /admin/student-scores
  * Returns all student scores in the format expected by admin.jsx
- * OPTIMIZED: Uses a single database query
+ * Assignment evidence uses one course-wide query; policy summaries use a
+ * constant number of batched component queries independent of roster size.
  */
-router.get('/', async (req, res) => {
-    const startTime = Date.now();
-    const { course_id: courseId } = req.query;
-    
-    try {
-        const students = await getAllStudentScores(courseId || null);
-        const studentsWithSummary = await buildStudentsWithSummary(students, courseId || null);
-        
-        const queryTime = Date.now() - startTime;
-        console.log(`[PERF] Fetched all student scores from DB in ${queryTime}ms (${students.length} students)`);
-        
-        res.json({
-            students: studentsWithSummary,
-            dataSource: 'database',
-            queryTime: queryTime
-        });
-    } catch (error) {
-        console.error('Error fetching student scores:', error);
-        const status = Number(error?.status) || 500;
-        res.status(status).json({
-            code: error?.code || 'STUDENT_SCORES_FAILED',
-            details: error?.details || null,
-            error: error.message || 'Failed to fetch student scores',
-            students: []
-        });
-    }
-});
+router.get('/', createStudentScoresListHandler());
 
 /**
  * GET /admin/student-scores/summary/:email
