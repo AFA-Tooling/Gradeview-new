@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Box,
     Paper,
@@ -7,6 +7,7 @@ import {
     Button,
     Divider,
     Alert,
+    AlertTitle,
     Snackbar,
     Chip,
     IconButton,
@@ -23,6 +24,7 @@ import {
     Stack,
     Tab,
     Tabs,
+    LinearProgress,
 } from '@mui/material';
 import {
     Settings as SettingsIcon,
@@ -36,6 +38,110 @@ import {
 } from '@mui/icons-material';
 import PageHeader from '../components/PageHeader';
 import apiv2 from '../utils/apiv2';
+import {
+    SHELL_UI_CAPABILITIES_STORAGE_KEY,
+    deriveShellCapabilities,
+    parseStoredPermissions,
+} from '../utils/personaNavigation';
+
+const SETTINGS_REQUEST_TIMEOUT_MS = 15000;
+
+function readCapabilities() {
+    return deriveShellCapabilities(
+        parseStoredPermissions(localStorage.getItem('permissions')),
+        parseStoredPermissions(localStorage.getItem(SHELL_UI_CAPABILITIES_STORAGE_KEY)),
+    );
+}
+
+function normalizeSettingsError(error, fallback, { timedOut = false } = {}) {
+    const payload = error?.response?.data || {};
+    const status = Number(error?.response?.status || 0);
+    const timeout = timedOut || error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT';
+    if (timeout) {
+        return {
+            code: 'SETTINGS_TIMEOUT',
+            reason: 'GradeView configuration did not load before the request timed out.',
+            recovery: 'Check the GradeView service connection, then retry without reloading the page.',
+        };
+    }
+    return {
+        code: payload.code || (status === 403 ? 'COURSE_SCOPE_FORBIDDEN' : status >= 500 ? 'CONFIG_SERVICE_UNAVAILABLE' : 'CONFIG_REQUEST_FAILED'),
+        reason: payload.reason || payload.message || payload.error || error?.message || fallback,
+        recovery: payload.recovery || (status === 403
+            ? 'Confirm your staff access for the current course, then retry.'
+            : 'Retry without reloading the page. If the problem continues, contact the GradeView administrator.'),
+    };
+}
+
+function normalizeSyncConfig(rawConfig) {
+    const sourceConfig = rawConfig || {};
+    const globalSettings = {
+        csv_output_dir: 'data/exports',
+        log_level: 'INFO',
+        retry_attempts: 3,
+        retry_delay_seconds: 5,
+        ...(sourceConfig.global_settings || {}),
+    };
+
+    const courses = Array.isArray(sourceConfig.courses) ? sourceConfig.courses : [];
+    const normalizedCourses = courses.map((course, courseIndex) => {
+        const general = course.general || {};
+        const gradesyncSection = course.gradesync || {};
+        const sourceContainer = gradesyncSection.sources || course.sources || {};
+        const legacySources = {
+            gradescope: gradesyncSection.gradescope || course.gradescope,
+            prairielearn: gradesyncSection.prairielearn || course.prairielearn,
+            iclicker: gradesyncSection.iclicker || course.iclicker,
+        };
+
+        const sources = {
+            gradescope: {
+                enabled: sourceContainer?.gradescope?.enabled ?? legacySources.gradescope?.enabled ?? false,
+                course_id: sourceContainer?.gradescope?.course_id ?? legacySources.gradescope?.course_id ?? '',
+                sync_interval_hours: sourceContainer?.gradescope?.sync_interval_hours ?? legacySources.gradescope?.sync_interval_hours ?? 24,
+            },
+            prairielearn: {
+                enabled: sourceContainer?.prairielearn?.enabled ?? legacySources.prairielearn?.enabled ?? false,
+                course_id: sourceContainer?.prairielearn?.course_id ?? legacySources.prairielearn?.course_id ?? '',
+            },
+            iclicker: {
+                enabled: sourceContainer?.iclicker?.enabled ?? legacySources.iclicker?.enabled ?? false,
+                course_names: sourceContainer?.iclicker?.course_names ?? legacySources.iclicker?.course_names ?? [],
+            },
+        };
+
+        return {
+            id: general.id || course.id || sources.gradescope.course_id || `course_${courseIndex + 1}`,
+            name: general.name || course.name || '',
+            department: general.department || course.department || '',
+            course_number: general.course_number || course.course_number || '',
+            semester: general.semester || course.semester || 'Fall',
+            year: general.year || course.year || new Date().getFullYear(),
+            instructor: general.instructor || course.instructor || '',
+            sources,
+            database: {
+                enabled: gradesyncSection.database?.enabled ?? course.database?.enabled ?? true,
+                use_as_primary: gradesyncSection.database?.use_as_primary ?? course.database?.use_as_primary ?? true,
+            },
+            buckets: {
+                total_points_cap: gradesyncSection.buckets?.total_points_cap ?? course.buckets?.total_points_cap ?? '',
+                rounding_policy: gradesyncSection.buckets?.rounding_policy ?? course.buckets?.rounding_policy ?? '',
+                component_percentages: gradesyncSection.buckets?.component_percentages || course.buckets?.component_percentages || [],
+                grade_bins: gradesyncSection.buckets?.grade_bins || course.buckets?.grade_bins || [],
+                grading_breakdown: gradesyncSection.buckets?.grading_breakdown || course.buckets?.grading_breakdown || [],
+                components: gradesyncSection.buckets?.components || course.buckets?.components || [],
+                rules: gradesyncSection.buckets?.rules || course.buckets?.rules || {},
+            },
+            assignment_categories: gradesyncSection.assignment_categories || course.assignment_categories || [],
+        };
+    });
+
+    return {
+        ...sourceConfig,
+        global_settings: globalSettings,
+        courses: normalizedCourses,
+    };
+}
 
 export default function Settings() {
     const [config, setConfig] = useState(null);
@@ -49,82 +155,15 @@ export default function Settings() {
     const [tabValue, setTabValue] = useState(0);
     const [expandedCourse, setExpandedCourse] = useState(0);
     const [syncEndpointAvailable, setSyncEndpointAvailable] = useState(true);
-
-    const normalizeSyncConfig = (rawConfig) => {
-        const sourceConfig = rawConfig || {};
-        const globalSettings = sourceConfig.global_settings || {
-            csv_output_dir: 'data/exports',
-            log_level: 'INFO',
-            retry_attempts: 3,
-            retry_delay_seconds: 5,
-        };
-
-        const courses = Array.isArray(sourceConfig.courses) ? sourceConfig.courses : [];
-        const normalizedCourses = courses.map((course) => {
-            const general = course.general || {};
-            const gradesyncSection = course.gradesync || {};
-            const sourceContainer = gradesyncSection.sources || course.sources || {};
-            const legacySources = {
-                gradescope: gradesyncSection.gradescope || course.gradescope,
-                prairielearn: gradesyncSection.prairielearn || course.prairielearn,
-                iclicker: gradesyncSection.iclicker || course.iclicker,
-            };
-
-            const sources = {
-                gradescope: {
-                    enabled: sourceContainer?.gradescope?.enabled ?? legacySources.gradescope?.enabled ?? false,
-                    course_id: sourceContainer?.gradescope?.course_id ?? legacySources.gradescope?.course_id ?? '',
-                    sync_interval_hours: sourceContainer?.gradescope?.sync_interval_hours ?? legacySources.gradescope?.sync_interval_hours ?? 24,
-                },
-                prairielearn: {
-                    enabled: sourceContainer?.prairielearn?.enabled ?? legacySources.prairielearn?.enabled ?? false,
-                    course_id: sourceContainer?.prairielearn?.course_id ?? legacySources.prairielearn?.course_id ?? '',
-                },
-                iclicker: {
-                    enabled: sourceContainer?.iclicker?.enabled ?? legacySources.iclicker?.enabled ?? false,
-                    course_names: sourceContainer?.iclicker?.course_names ?? legacySources.iclicker?.course_names ?? [],
-                },
-            };
-
-            return {
-                id: general.id || course.id || sources.gradescope.course_id || `course_${Date.now()}`,
-                name: general.name || course.name || '',
-                department: general.department || course.department || '',
-                course_number: general.course_number || course.course_number || '',
-                semester: general.semester || course.semester || 'Fall',
-                year: general.year || course.year || new Date().getFullYear(),
-                instructor: general.instructor || course.instructor || '',
-                sources,
-                database: {
-                    enabled: gradesyncSection.database?.enabled ?? course.database?.enabled ?? true,
-                    use_as_primary: gradesyncSection.database?.use_as_primary ?? course.database?.use_as_primary ?? true,
-                },
-                buckets: {
-                    total_points_cap: gradesyncSection.buckets?.total_points_cap ?? course.buckets?.total_points_cap ?? '',
-                    rounding_policy: gradesyncSection.buckets?.rounding_policy ?? course.buckets?.rounding_policy ?? '',
-                    component_percentages: gradesyncSection.buckets?.component_percentages || course.buckets?.component_percentages || [],
-                    grade_bins: gradesyncSection.buckets?.grade_bins || course.buckets?.grade_bins || [],
-                    grading_breakdown: gradesyncSection.buckets?.grading_breakdown || course.buckets?.grading_breakdown || [],
-                    components: gradesyncSection.buckets?.components || course.buckets?.components || [],
-                    rules: gradesyncSection.buckets?.rules || course.buckets?.rules || {},
-                },
-                assignment_categories: gradesyncSection.assignment_categories || course.assignment_categories || [],
-            };
-        });
-
-        return {
-            ...sourceConfig,
-            global_settings: globalSettings,
-            courses: normalizedCourses,
-        };
-    };
-
-    useEffect(() => {
-        loadConfig();
-    }, []);
+    const [loadError, setLoadError] = useState(null);
+    const [syncLoadError, setSyncLoadError] = useState(null);
+    const loadRequestIdRef = useRef(0);
+    const loadControllerRef = useRef(null);
+    const capabilities = useMemo(readCapabilities, []);
+    const isReadOnly = capabilities.isReadOnly;
 
     const getErrorMessage = (error, fallbackMessage) => {
-        const serverError = error?.response?.data?.error || error?.response?.data?.message;
+        const serverError = error?.response?.data?.reason || error?.response?.data?.error || error?.response?.data?.message;
         const status = error?.response?.status;
         if (serverError && status) {
             return `${fallbackMessage} (${status}: ${serverError})`;
@@ -135,17 +174,36 @@ export default function Settings() {
         return fallbackMessage;
     };
 
-    const loadConfig = async () => {
+    const loadConfig = useCallback(async () => {
+        loadControllerRef.current?.abort();
+        const controller = new AbortController();
+        loadControllerRef.current = controller;
+        const requestId = loadRequestIdRef.current + 1;
+        loadRequestIdRef.current = requestId;
+        let timedOut = false;
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+        }, SETTINGS_REQUEST_TIMEOUT_MS);
+
         try {
             setLoading(true);
+            setLoadError(null);
+            setSyncLoadError(null);
+            setConfig(null);
+            setOriginalConfig(null);
+            setSyncConfig(null);
+            setOriginalSyncConfig(null);
             const [viewResult, syncResult] = await Promise.allSettled([
-                apiv2.get('/config'),
-                apiv2.get('/config/sync'),
+                apiv2.get('/config', { signal: controller.signal }),
+                apiv2.get('/config/sync', { signal: controller.signal }),
             ]);
+            if (requestId !== loadRequestIdRef.current) return;
 
             if (viewResult.status === 'fulfilled') {
-                setConfig(viewResult.value.data);
-                setOriginalConfig(JSON.parse(JSON.stringify(viewResult.value.data)));
+                const loadedConfig = viewResult.value.data || {};
+                setConfig(loadedConfig);
+                setOriginalConfig(JSON.parse(JSON.stringify(loadedConfig)));
             } else {
                 throw viewResult.reason;
             }
@@ -160,17 +218,41 @@ export default function Settings() {
                 setSyncConfig(fallbackSync);
                 setOriginalSyncConfig(JSON.parse(JSON.stringify(fallbackSync)));
                 setSyncEndpointAvailable(false);
-                showSnackbar(getErrorMessage(syncResult.reason, 'GradeSync configuration endpoint unavailable, loaded fallback view'), 'warning');
+                setSyncLoadError(normalizeSettingsError(
+                    syncResult.reason,
+                    'GradeSync configuration could not be loaded.',
+                    { timedOut },
+                ));
             }
         } catch (error) {
-            showSnackbar(getErrorMessage(error, 'Failed to load GradeView configuration'), 'error');
-            console.error('Error loading config:', error);
+            if (requestId !== loadRequestIdRef.current) return;
+            setConfig(null);
+            setOriginalConfig(null);
+            setSyncConfig(null);
+            setOriginalSyncConfig(null);
+            setLoadError(normalizeSettingsError(
+                error,
+                'GradeView configuration could not be loaded.',
+                { timedOut },
+            ));
         } finally {
-            setLoading(false);
+            clearTimeout(timeoutId);
+            if (requestId === loadRequestIdRef.current) {
+                setLoading(false);
+            }
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        loadConfig();
+        return () => {
+            loadRequestIdRef.current += 1;
+            loadControllerRef.current?.abort();
+        };
+    }, [loadConfig]);
 
     const saveConfig = async () => {
+        if (isReadOnly) return;
         try {
             setSaving(true);
             await apiv2.put('/config', config);
@@ -207,11 +289,12 @@ export default function Settings() {
     };
 
     const addAdmin = () => {
+        const admins = Array.isArray(config?.admins) ? config.admins : [];
         if (newAdmin && newAdmin.includes('@')) {
-            if (!config.admins.includes(newAdmin)) {
+            if (!admins.includes(newAdmin)) {
                 setConfig({
                     ...config,
-                    admins: [...config.admins, newAdmin],
+                    admins: [...admins, newAdmin],
                 });
                 setNewAdmin('');
                 showSnackbar('Admin added', 'success');
@@ -226,7 +309,7 @@ export default function Settings() {
     const removeAdmin = (email) => {
         setConfig({
             ...config,
-            admins: config.admins.filter((admin) => admin !== email),
+            admins: (Array.isArray(config?.admins) ? config.admins : []).filter((admin) => admin !== email),
         });
         showSnackbar('Admin removed', 'info');
     };
@@ -383,8 +466,10 @@ export default function Settings() {
 
     if (loading) {
         return (
-            <Box sx={{ p: 3, textAlign: 'center' }}>
-                <Typography>Loading configuration...</Typography>
+            <Box sx={{ p: 3 }} role="status" aria-live="polite">
+                <PageHeader>Settings</PageHeader>
+                <Typography sx={{ mb: 1 }}>Loading GradeView configuration…</Typography>
+                <LinearProgress aria-label="Loading GradeView configuration" />
             </Box>
         );
     }
@@ -392,7 +477,17 @@ export default function Settings() {
     if (!config) {
         return (
             <Box sx={{ p: 3 }}>
-                <Alert severity="error">Failed to load GradeView configuration</Alert>
+                <PageHeader>Settings</PageHeader>
+                <Alert
+                    severity="error"
+                    role="alert"
+                    action={<Button color="inherit" onClick={loadConfig}>Retry settings</Button>}
+                >
+                    <AlertTitle>GradeView configuration unavailable</AlertTitle>
+                    <Typography variant="body2">Code: <strong>{loadError?.code || 'CONFIG_REQUEST_FAILED'}</strong></Typography>
+                    <Typography variant="body2">Reason: {loadError?.reason || 'The configuration request did not complete.'}</Typography>
+                    <Typography variant="body2">Recovery: {loadError?.recovery || 'Retry without reloading the page.'}</Typography>
+                </Alert>
             </Box>
         );
     }
@@ -405,8 +500,31 @@ export default function Settings() {
                 配置按层级组织：系统级设置 → 课程级设置 → 数据源 / 评分规则 / 分类映射。保存后对所有用户生效。
             </Alert>
 
+            {isReadOnly && (
+                <Alert severity="warning" role="status" sx={{ mb: 3 }}>
+                    <AlertTitle>Read-only Demo</AlertTitle>
+                    All configuration mutation controls are disabled on this page. The GradeView API
+                    independently rejects Demo writes with <strong>DEMO_READ_ONLY</strong>. Sign in with
+                    an authorized staff account to make changes.
+                </Alert>
+            )}
+
+            {syncLoadError && (
+                <Alert
+                    severity="warning"
+                    role="alert"
+                    sx={{ mb: 3 }}
+                    action={<Button color="inherit" onClick={loadConfig}>Retry GradeSync settings</Button>}
+                >
+                    <AlertTitle>GradeSync configuration unavailable</AlertTitle>
+                    <Typography variant="body2">Code: <strong>{syncLoadError.code}</strong></Typography>
+                    <Typography variant="body2">Reason: {syncLoadError.reason}</Typography>
+                    <Typography variant="body2">Recovery: {syncLoadError.recovery}</Typography>
+                </Alert>
+            )}
+
             <Box className='glass-section' sx={{ borderBottom: 1, borderColor: 'divider', mb: 3, px: 2, py: 1, borderRadius: 2 }}>
-                <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
+                <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)} aria-label="Settings sections">
                     <Tab label="GradeView Configuration" />
                     <Tab label="GradeSync Configuration" icon={<SyncIcon />} iconPosition="start" />
                 </Tabs>
@@ -414,6 +532,11 @@ export default function Settings() {
 
             {/* GradeView Configuration Tab */}
             <Box role="tabpanel" hidden={tabValue !== 0}>
+            <Box
+                component="fieldset"
+                disabled={isReadOnly}
+                sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}
+            >
 
             {/* Admin Users */}
             <Paper elevation={2} className='glass-section' sx={{ p: 3, mb: 3 }}>
@@ -445,6 +568,7 @@ export default function Settings() {
                         variant="contained"
                         startIcon={<Add />}
                         onClick={addAdmin}
+                        aria-label="Add administrator"
                         sx={{ minWidth: '100px' }}
                     >
                         Add
@@ -487,6 +611,7 @@ export default function Settings() {
                 />
             </Paper>
             </Box>
+            </Box>
 
             {/* GradeSync Configuration Tab */}
             <Box role="tabpanel" hidden={tabValue !== 1}>
@@ -500,7 +625,11 @@ export default function Settings() {
                             </Box>
                             <Divider sx={{ mb: 2 }} />
 
-                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                            <Box
+                                component="fieldset"
+                                disabled={isReadOnly}
+                                sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', border: 0, m: 0, p: 0, minWidth: 0 }}
+                            >
                                 <TextField
                                     label="CSV Output Directory"
                                     value={syncConfig.global_settings?.csv_output_dir || ''}
@@ -560,11 +689,17 @@ export default function Settings() {
                                     <School sx={{ mr: 1 }} />
                                     <Typography variant="h6">Courses</Typography>
                                 </Box>
-                                <Button startIcon={<Add />} onClick={addCourse} variant="outlined">
+                                <Button startIcon={<Add />} onClick={addCourse} variant="outlined" disabled={isReadOnly}>
                                     Add Course
                                 </Button>
                             </Box>
                             <Divider sx={{ mb: 2 }} />
+
+                            {syncConfig.courses?.length === 0 && (
+                                <Alert severity="info" role="status">
+                                    No GradeSync courses are configured. This is an empty configuration, not a load error.
+                                </Alert>
+                            )}
 
                             {syncConfig.courses?.map((course, courseIndex) => (
                                 <Accordion 
@@ -579,7 +714,11 @@ export default function Settings() {
                                         </Typography>
                                     </AccordionSummary>
                                     <AccordionDetails>
-                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                        <Box
+                                            component="fieldset"
+                                            disabled={isReadOnly}
+                                            sx={{ display: 'flex', flexDirection: 'column', gap: 2, border: 0, m: 0, p: 0, minWidth: 0 }}
+                                        >
                                             {/* Basic Info */}
                                             <Typography variant="subtitle2" color="primary">Basic Information</Typography>
                                             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -767,7 +906,7 @@ export default function Settings() {
                                                     <Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                                                             <Typography variant="subtitle2">Component Percentages</Typography>
-                                                            <Button size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'component_percentages', { component: '', percentage: 0 })}>
+                                                            <Button aria-label={`Add component percentage for ${course.name}`} size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'component_percentages', { component: '', percentage: 0 })}>
                                                                 Add
                                                             </Button>
                                                         </Box>
@@ -788,7 +927,7 @@ export default function Settings() {
                                                                     sx={{ width: '120px' }}
                                                                     size="small"
                                                                 />
-                                                                <IconButton color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'component_percentages', itemIndex)}>
+                                                                <IconButton aria-label={`Remove component percentage ${itemIndex + 1} from ${course.name}`} color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'component_percentages', itemIndex)}>
                                                                     <Delete />
                                                                 </IconButton>
                                                             </Box>
@@ -798,7 +937,7 @@ export default function Settings() {
                                                     <Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                                                             <Typography variant="subtitle2">Grade Bins</Typography>
-                                                            <Button size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'grade_bins', { grade: '', range: '' })}>
+                                                            <Button aria-label={`Add grade bin for ${course.name}`} size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'grade_bins', { grade: '', range: '' })}>
                                                                 Add
                                                             </Button>
                                                         </Box>
@@ -818,7 +957,7 @@ export default function Settings() {
                                                                     sx={{ flex: 1 }}
                                                                     size="small"
                                                                 />
-                                                                <IconButton color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'grade_bins', itemIndex)}>
+                                                                <IconButton aria-label={`Remove grade bin ${itemIndex + 1} from ${course.name}`} color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'grade_bins', itemIndex)}>
                                                                     <Delete />
                                                                 </IconButton>
                                                             </Box>
@@ -828,7 +967,7 @@ export default function Settings() {
                                                     <Box>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                                                             <Typography variant="subtitle2">Grading Breakdown</Typography>
-                                                            <Button size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'grading_breakdown', { assignment: '', points: 0 })}>
+                                                            <Button aria-label={`Add grading breakdown row for ${course.name}`} size="small" startIcon={<Add />} onClick={() => addBucketListItem(courseIndex, 'grading_breakdown', { assignment: '', points: 0 })}>
                                                                 Add
                                                             </Button>
                                                         </Box>
@@ -849,7 +988,7 @@ export default function Settings() {
                                                                     sx={{ width: '140px' }}
                                                                     size="small"
                                                                 />
-                                                                <IconButton color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'grading_breakdown', itemIndex)}>
+                                                                <IconButton aria-label={`Remove grading breakdown row ${itemIndex + 1} from ${course.name}`} color="error" size="small" onClick={() => removeBucketListItem(courseIndex, 'grading_breakdown', itemIndex)}>
                                                                     <Delete />
                                                                 </IconButton>
                                                             </Box>
@@ -864,7 +1003,7 @@ export default function Settings() {
                                             <Box>
                                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                                                     <Typography variant="subtitle2" color="primary">Assignment Categories</Typography>
-                                                    <Button size="small" startIcon={<Add />} onClick={() => addCategory(courseIndex)}>
+                                                    <Button aria-label={`Add assignment category for ${course.name}`} size="small" startIcon={<Add />} onClick={() => addCategory(courseIndex)}>
                                                         Add Category
                                                     </Button>
                                                 </Box>
@@ -879,6 +1018,7 @@ export default function Settings() {
                                                                 sx={{ flex: 1 }}
                                                             />
                                                             <IconButton 
+                                                                aria-label={`Remove assignment category ${category.name} from ${course.name}`}
                                                                 size="small" 
                                                                 onClick={() => removeCategory(courseIndex, catIndex)}
                                                                 color="error"
@@ -936,7 +1076,7 @@ export default function Settings() {
                     variant="outlined"
                     startIcon={<Refresh />}
                     onClick={resetConfig}
-                    disabled={!hasChanges()}
+                    disabled={isReadOnly || !hasChanges()}
                 >
                     Reset Changes
                 </Button>
@@ -944,7 +1084,7 @@ export default function Settings() {
                     variant="contained"
                     startIcon={<Save />}
                     onClick={saveConfig}
-                    disabled={!hasChanges() || saving}
+                    disabled={isReadOnly || !hasChanges() || saving}
                 >
                     {saving ? 'Saving...' : 'Save Configuration'}
                 </Button>

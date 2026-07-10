@@ -26,6 +26,7 @@
     "startCurrentBuild": "nodemon index.js",
     "react": "react-scripts start",
     "test": "react-scripts test",
+    "test:ci": "react-scripts test --watchAll=false --runInBand",
     "build": "react-scripts build && rm -rf server/build && mv build server/build && cp -r server/build .",
     "eject": "react-scripts eject"
   },
