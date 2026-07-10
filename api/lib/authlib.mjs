@@ -42,10 +42,8 @@ function isCourseScopedStaffRole(role) {
 export async function getAuthContext(req) {
     try {
         validateAuthenticatedRequestFormat(req);
-    } catch (error) {
-        throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED, {
-            reason: error?.message || undefined,
-        });
+    } catch {
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED);
     }
 
     let authEmail;
@@ -53,9 +51,7 @@ export async function getAuthContext(req) {
         authEmail = await getEmailFromAuth(req);
     } catch (error) {
         if (error?.status === 401 || error?.name === 'AuthorizationError') {
-            throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED, {
-                reason: error?.message || undefined,
-            });
+            throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED);
         }
         throw error;
     }
@@ -249,10 +245,8 @@ export async function validateStudentMiddleware(req, _, next) {
  * @throws {AuthorizationError} if the request does not have an authorization header.
  */
 function validateAuthenticatedRequestFormat(req) {
-    let token = req.headers['authorization'];
+    const token = req?.headers?.authorization;
     if (!token) {
-        throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED, {
-            reason: 'no authorization token provided.',
-        });
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED);
     }
 }

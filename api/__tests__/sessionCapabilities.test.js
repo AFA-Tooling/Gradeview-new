@@ -269,7 +269,7 @@ describe('signed session capabilities', () => {
 
         expect(response.body).toMatchObject({
             code: 'AUTH_REQUIRED',
-            reason: 'Session token is invalid or expired. Please sign in again.',
+            reason: 'Authentication is required for this request.',
             recovery: 'Sign in again, then retry the request.',
         });
         expect(querySpy).toHaveBeenCalledTimes(queryCount);
