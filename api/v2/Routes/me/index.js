@@ -5,7 +5,10 @@ import {
     canManageSystem,
     resolveRole,
 } from '../../../lib/iam.mjs';
-import { buildPermissionTokenResponse } from '../../../lib/sessionToken.mjs';
+import {
+    buildPermissionTokenResponse,
+    inheritSessionCapabilities,
+} from '../../../lib/sessionToken.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -22,7 +25,10 @@ function summarizeCourseRoles(snapshot = {}) {
 router.get('/permissions', validateAuthenticatedMiddleware, async (req, res) => {
     const email = req?.auth?.email;
     const courseId = req?.query?.course_id || null;
-    const snapshot = await buildPermissionSnapshot(email);
+    const snapshot = inheritSessionCapabilities(
+        await buildPermissionSnapshot(email),
+        req?.auth?.snapshot || {},
+    );
     const role = await resolveRole(email, courseId, snapshot);
 
     console.log(JSON.stringify({

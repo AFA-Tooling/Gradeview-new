@@ -1,7 +1,16 @@
 import { Router } from 'express';
 import http from 'http';
 import crypto from 'crypto';
-import { canManageCourse, canViewClassData, IAM_ROLE } from '../../../../lib/iam.mjs';
+import {
+    ACCESS_ACTION,
+    ACCESS_ERROR_CODE,
+    canManageCourse,
+    canViewClassData,
+    ensureCourseAccess,
+    ensurePermission,
+    getCourseAccessDecision,
+    IAM_ROLE,
+} from '../../../../lib/iam.mjs';
 import { clearPolicySummaryCache } from '../../../../lib/dbHelper.mjs';
 
 const router = Router({ mergeParams: true });
@@ -439,17 +448,16 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/v2/admin/sync/:courseId - Trigger sync
-router.post('/:courseId', async (req, res) => {
+router.post('/:courseId', async (req, res, next) => {
     const { courseId } = req.params;
     try {
-        const allowed = await canManageCourse({
+        const decision = await getCourseAccessDecision({
             requesterEmail: req?.auth?.email,
             courseId,
+            action: ACCESS_ACTION.WRITE,
             snapshot: req?.auth?.snapshot || null,
         });
-        if (!allowed) {
-            return res.status(403).json({ error: 'Course admin permission required' });
-        }
+        ensureCourseAccess(decision);
 
         console.log(`[Proxy] Triggering sync for ${courseId} at ${GRADESYNC_URL}/api/sync/${courseId}`);
         const data = await requestJson(`${GRADESYNC_URL}/api/sync/${courseId}`, {
@@ -460,6 +468,9 @@ router.post('/:courseId', async (req, res) => {
         clearPolicySummaryCache(courseId);
         res.json(data);
     } catch (err) {
+        if (err?.isControlledApiError === true) {
+            return next(err);
+        }
         console.error('GradeSync proxy error:', err);
         if (isTimeoutError(err)) {
             return res.status(504).json({ error: 'Grade sync timed out while waiting for GradeSync response', details: err.message });
@@ -469,18 +480,17 @@ router.post('/:courseId', async (req, res) => {
 });
 
 // POST /api/v2/admin/sync/:courseId/start - Start sync job asynchronously
-router.post('/:courseId/start', async (req, res) => {
+router.post('/:courseId/start', async (req, res, next) => {
     const { courseId } = req.params;
 
     try {
-        const allowed = await canManageCourse({
+        const decision = await getCourseAccessDecision({
             requesterEmail: req?.auth?.email,
             courseId,
+            action: ACCESS_ACTION.WRITE,
             snapshot: req?.auth?.snapshot || null,
         });
-        if (!allowed) {
-            return res.status(403).json({ error: 'Course admin permission required' });
-        }
+        ensureCourseAccess(decision);
 
         const existingRunningJob = Array.from(syncJobs.values()).find(
             (job) => job.courseId === courseId && (job.status === 'queued' || job.status === 'running')
@@ -504,6 +514,9 @@ router.post('/:courseId/start', async (req, res) => {
 
         return res.status(202).json(getSyncJob(job.id));
     } catch (err) {
+        if (err?.isControlledApiError === true) {
+            return next(err);
+        }
         console.error('GradeSync async start error:', err);
         return res.status(500).json({ error: 'Failed to start sync job', details: err.message });
     }
@@ -523,9 +536,7 @@ router.get('/jobs/:jobId', async (req, res) => {
         courseId: job.courseId,
         snapshot: req?.auth?.snapshot || null,
     });
-    if (!allowed) {
-        return res.status(403).json({ error: 'Course admin permission required' });
-    }
+    ensurePermission(allowed, null, ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN);
 
     return res.status(200).json(job);
 });

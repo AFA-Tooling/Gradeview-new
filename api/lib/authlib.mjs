@@ -1,16 +1,19 @@
-import AuthorizationError from './errors/http/AuthorizationError.js';
-import UnauthorizedAccessError from './errors/http/UnauthorizedAccessError.js';
 import { getEmailFromAuth } from './googleAuthHelper.mjs';
 import {
+    ACCESS_ACTION,
+    ACCESS_ERROR_CODE,
     IAM_ROLE,
     canManageSystem,
     canViewClassData,
     canViewStudentGrades,
+    createAccessPolicyError,
+    ensureCourseAccess,
     ensurePermission,
+    getCourseAccessDecision,
     resolveRole,
-    canManageCourse,
 } from './iam.mjs';
 import { verifyAccessToken } from './jwtAuth.mjs';
+import { getSessionCapabilities } from './sessionToken.mjs';
 
 function extractAuthorizationToken(req) {
     const headerValue = req?.headers?.authorization;
@@ -24,18 +27,38 @@ function extractAuthorizationToken(req) {
     return trimmed;
 }
 
-function getRequestedCourseId(req) {
-    return req?.query?.course_id || req?.params?.courseId || req?.params?.course_id || null;
+export function getRequestedCourseId(req) {
+    const value = req?.query?.course_id || req?.params?.courseId || req?.params?.course_id || null;
+    if (Array.isArray(value)) {
+        return null;
+    }
+    return String(value || '').trim() || null;
 }
 
 function isCourseScopedStaffRole(role) {
     return role === IAM_ROLE.COURSE_ADMIN || role === IAM_ROLE.INSTRUCTOR;
 }
 
-async function getAuthContext(req) {
-    validateAuthenticatedRequestFormat(req);
+export async function getAuthContext(req) {
+    try {
+        validateAuthenticatedRequestFormat(req);
+    } catch (error) {
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED, {
+            reason: error?.message || undefined,
+        });
+    }
 
-    const authEmail = await getEmailFromAuth(req);
+    let authEmail;
+    try {
+        authEmail = await getEmailFromAuth(req);
+    } catch (error) {
+        if (error?.status === 401 || error?.name === 'AuthorizationError') {
+            throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED, {
+                reason: error?.message || undefined,
+            });
+        }
+        throw error;
+    }
     const courseId = getRequestedCourseId(req);
     const rawToken = extractAuthorizationToken(req);
 
@@ -43,6 +66,7 @@ async function getAuthContext(req) {
     if (rawToken) {
         try {
             const payload = verifyAccessToken(rawToken);
+            const sessionCapabilities = getSessionCapabilities(payload);
             snapshot = {
                 email: payload?.email || payload?.sub || authEmail,
                 is_super: payload?.is_super === true,
@@ -52,6 +76,10 @@ async function getAuthContext(req) {
                 has_student: payload?.has_student === true,
                 generated_at: payload?.generated_at || null,
                 impersonated_by: payload?.impersonated_by || null,
+                is_demo: sessionCapabilities.is_demo,
+                read_only: sessionCapabilities.read_only,
+                demo_course_id: sessionCapabilities.demo_course_id,
+                capabilities: sessionCapabilities,
             };
         } catch {
             snapshot = null;
@@ -67,6 +95,8 @@ async function getAuthContext(req) {
         snapshot,
         snapshotFromToken: Boolean(snapshot),
         impersonatedBy: snapshot?.impersonated_by || null,
+        isDemo: snapshot?.is_demo === true,
+        readOnly: snapshot?.read_only === true,
     };
 
     return req.auth;
@@ -75,6 +105,19 @@ async function getAuthContext(req) {
 export async function validateAuthenticatedMiddleware(req, _, next) {
     await getAuthContext(req);
     next();
+}
+
+export function requireWritableSessionMiddleware(req, _, next) {
+    const method = String(req?.method || '').toUpperCase();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        return next();
+    }
+
+    if (req?.auth?.readOnly === true || req?.auth?.snapshot?.read_only === true) {
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.DEMO_READ_ONLY);
+    }
+
+    return next();
 }
 
 /**
@@ -112,8 +155,8 @@ export async function validateAdminMiddleware(req, _, next) {
 
 export async function validateStaffOrAdminMiddleware(req, _, next) {
     const auth = await getAuthContext(req);
-    if (isCourseScopedStaffRole(auth.role) && !auth.courseId) {
-        ensurePermission(false, 'course_id is required for course-scoped staff/admin access');
+    if (!auth.courseId) {
+        ensurePermission(false, null, ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED);
     }
 
     const allowed = await canViewClassData({
@@ -121,17 +164,22 @@ export async function validateStaffOrAdminMiddleware(req, _, next) {
         courseId: auth.courseId,
         snapshot: auth.snapshot,
     });
-    ensurePermission(allowed, 'staff/admin permission required');
+    ensurePermission(
+        allowed,
+        null,
+        auth.courseId ? ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN : ACCESS_ERROR_CODE.ROLE_FORBIDDEN,
+    );
     next();
 }
 
 export async function validateAdminPortalMiddleware(req, _, next) {
-    const auth = await getAuthContext(req);
+    const auth = req?.auth || await getAuthContext(req);
     ensurePermission(
         auth.role === IAM_ROLE.SUPER_ADMIN
             || auth.role === IAM_ROLE.COURSE_ADMIN
             || auth.role === IAM_ROLE.INSTRUCTOR,
-        'admin permission required',
+        null,
+        auth.courseId ? ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN : ACCESS_ERROR_CODE.ROLE_FORBIDDEN,
     );
     next();
 }
@@ -139,19 +187,21 @@ export async function validateAdminPortalMiddleware(req, _, next) {
 export async function validateCourseAdminOrSuperMiddleware(req, _, next) {
     const auth = await getAuthContext(req);
     const courseId = req?.params?.courseId || auth.courseId;
-    const allowed = await canManageCourse({
+    const decision = await getCourseAccessDecision({
         requesterEmail: auth.email,
         courseId,
+        action: ACCESS_ACTION.WRITE,
         snapshot: auth.snapshot,
     });
-    ensurePermission(allowed, 'course admin permission required');
+    ensureCourseAccess(decision);
     next();
 }
 
 export async function validateStudentSelfOrStaffOrAdminMiddleware(req, _, next) {
     const auth = await getAuthContext(req);
-    if (isCourseScopedStaffRole(auth.role) && !auth.courseId) {
-        ensurePermission(false, 'course_id is required for course-scoped staff/admin access');
+    const requiresCourseScope = auth.role === IAM_ROLE.SUPER_ADMIN || isCourseScopedStaffRole(auth.role);
+    if (requiresCourseScope && !auth.courseId) {
+        ensurePermission(false, null, ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED);
     }
 
     const allowed = await canViewStudentGrades({
@@ -160,7 +210,11 @@ export async function validateStudentSelfOrStaffOrAdminMiddleware(req, _, next) 
         courseId: auth.courseId,
         snapshot: auth.snapshot,
     });
-    ensurePermission(allowed, 'not permitted');
+    ensurePermission(
+        allowed,
+        null,
+        auth.courseId ? ACCESS_ERROR_CODE.COURSE_SCOPE_FORBIDDEN : ACCESS_ERROR_CODE.ROLE_FORBIDDEN,
+    );
     next();
 }
 
@@ -177,11 +231,13 @@ export async function validateStudentMiddleware(req, _, next) {
     const { email } = req.params;
 
     if (auth.role !== IAM_ROLE.STUDENT) {
-        throw new AuthorizationError('You are not a registered student.');
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.ROLE_FORBIDDEN, {
+            reason: 'You are not a registered student.',
+        });
     }
 
     if (email && auth.email !== email) {
-        throw new UnauthorizedAccessError('not permitted');
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.ROLE_FORBIDDEN);
     }
 
     next();
@@ -195,6 +251,8 @@ export async function validateStudentMiddleware(req, _, next) {
 function validateAuthenticatedRequestFormat(req) {
     let token = req.headers['authorization'];
     if (!token) {
-        throw new AuthorizationError('no authorization token provided.');
+        throw createAccessPolicyError(ACCESS_ERROR_CODE.AUTH_REQUIRED, {
+            reason: 'no authorization token provided.',
+        });
     }
 }
