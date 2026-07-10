@@ -14,5 +14,6 @@ describe('login layout', () => {
     expect(screen.getByTestId('login-viewport')).toHaveAttribute('data-layout', 'viewport-centered');
     expect(screen.getByRole('heading', { level: 1, name: 'Sign in to GradeView' })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Explore Read-only Demo' })).toBeInTheDocument();
   });
 });
