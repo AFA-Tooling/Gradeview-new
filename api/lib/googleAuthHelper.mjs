@@ -5,6 +5,30 @@ import { decodeAccessToken, verifyAccessToken } from './jwtAuth.mjs';
 import { getPool } from './dbHelper.mjs';
 
 const GOOGLE_OAUTH_CLIENT_ID_KEY = 'google_oauth_client_id';
+const INVALID_CREDENTIALS_MESSAGE = 'Authentication credentials are missing or invalid.';
+
+function createInvalidCredentialsError() {
+    return new AuthorizationError(INVALID_CREDENTIALS_MESSAGE);
+}
+
+function classifyGoogleAuthorizationFailure(error) {
+    if (String(error?.message || '').includes('No pem found')) {
+        return 'certificate_key_miss';
+    }
+    if (error?.name === 'TokenExpiredError') {
+        return 'token_expired';
+    }
+    if (error?.name === 'JsonWebTokenError') {
+        return 'token_invalid';
+    }
+    return 'token_verification_failed';
+}
+
+function logGoogleAuthorizationFailure(error) {
+    console.error('Google authorization failed.', {
+        failure_type: classifyGoogleAuthorizationFailure(error),
+    });
+}
 
 async function getGoogleOauthClientIdForAuth() {
     try {
@@ -45,7 +69,7 @@ export async function getEmailFromAuth(authInput) {
         const decoded = decodeAccessToken(token);
         const issuer = String(decoded?.iss || '').toLowerCase();
         if (issuer === 'gradeview-api') {
-            throw new AuthorizationError('Session token is invalid or expired. Please sign in again.');
+            throw createInvalidCredentialsError();
         }
         // Not a valid GradeView JWT, continue with Google ID token validation.
     }
@@ -81,13 +105,8 @@ export async function getEmailFromAuth(authInput) {
         }
     }
     
-    console.error('Error during Google authorization:', lastError);
-    const debugReason = String(lastError?.message || '').trim();
-    throw new AuthorizationError(
-        debugReason
-            ? `Could not authenticate authorization token. ${debugReason}`
-            : 'Could not authenticate authorization token.',
-    );
+    logGoogleAuthorizationFailure(lastError);
+    throw createInvalidCredentialsError();
 }
 
 function extractAuthorizationToken(authInput) {
@@ -100,7 +119,7 @@ function extractAuthorizationToken(authInput) {
     }
 
     if (!headerValue || typeof headerValue !== 'string') {
-        throw new AuthorizationError('no authorization token provided.');
+        throw createInvalidCredentialsError();
     }
 
     const trimmed = headerValue.trim();
