@@ -1,9 +1,10 @@
 import { Router } from 'express';
+import { getPool } from '../../../../lib/dbHelper.mjs';
 import {
-    getPool,
-    resolveAssignmentDueAt,
-    resolveAssignmentReleaseAt,
-} from '../../../../lib/dbHelper.mjs';
+    assignmentEvidenceRequestError,
+    queryCourseAssignmentCatalog,
+} from '../../../../lib/assignmentEvidence.mjs';
+import { buildAdminAssignmentsRouteResponse } from './assignmentsResponse.mjs';
 
 const router = Router({ mergeParams: true });
 
@@ -23,91 +24,15 @@ router.get('/', async (req, res) => {
         const includeMetadata = ['1', 'true', 'yes'].includes(
             String(req.query?.include_metadata || req.query?.includeMetadata || '').trim().toLowerCase(),
         );
-        const pool = getPool();
-        const naturalCollator = new Intl.Collator('en', {
-            numeric: true,
-            sensitivity: 'base',
-            ignorePunctuation: true,
-        });
-        let query = `
-            SELECT 
-                COALESCE(a.category, 'Uncategorized') as category,
-                a.title as assignment_name,
-                a.max_points,
-                a.assignment_metadata,
-                eam.due_at AS exam_due_at,
-                eam.release_at AS exam_release_at,
-                ac.display_order
-            FROM assignments a
-            JOIN courses c ON a.course_id = c.id
-            LEFT JOIN exam_attempt_map eam
-              ON eam.assignment_id = a.id
-             AND eam.course_id = c.id
-            LEFT JOIN assignment_categories ac
-              ON ac.course_id = c.id
-             AND LOWER(TRIM(ac.name)) = LOWER(TRIM(COALESCE(a.category, 'Uncategorized')))
-            WHERE a.title IS NOT NULL
-        `;
-
-        const params = [];
-        if (courseId) {
-            query += ` AND (c.gradescope_course_id::text = $1 OR c.id::text = $1)`;
-            params.push(courseId);
-        }
-        
-        const result = await pool.query(query, params);
-
-        const sortedRows = [...result.rows].sort((a, b) => {
-            const orderA = Number.isFinite(Number(a.display_order)) ? Number(a.display_order) : Number.MAX_SAFE_INTEGER;
-            const orderB = Number.isFinite(Number(b.display_order)) ? Number(b.display_order) : Number.MAX_SAFE_INTEGER;
-            if (orderA !== orderB) return orderA - orderB;
-
-            const categoryA = (a.category || '').trim();
-            const categoryB = (b.category || '').trim();
-            const categoryCmp = naturalCollator.compare(categoryA, categoryB);
-            if (categoryCmp !== 0) return categoryCmp;
-
-            const nameA = (a.assignment_name || '').trim();
-            const nameB = (b.assignment_name || '').trim();
-            return naturalCollator.compare(nameA, nameB);
-        });
-        
-        // Group by category
-        const grouped = {};
-        const metadata = {};
-        sortedRows.forEach(row => {
-            const category = row.category.trim();
-            const name = row.assignment_name.trim();
-            const maxPoints = parseFloat(row.max_points) || 0;
-            
-            if (!grouped[category]) {
-                grouped[category] = {};
-            }
-            if (!metadata[category]) {
-                metadata[category] = {};
-            }
-            grouped[category][name] = maxPoints;
-            metadata[category][name] = {
-                maxPoints,
-                dueAt: resolveAssignmentDueAt(row),
-                releaseAt: resolveAssignmentReleaseAt(row),
-            };
-        });
-        
-        console.log(`[INFO] Fetched ${result.rows.length} assignments from database, ${Object.keys(grouped).length} categories`);
-
-        if (includeMetadata) {
-            res.json({
-                assignments: grouped,
-                metadata,
-            });
-            return;
-        }
-
-        res.json(grouped);
+        const { body, catalogResponse } = buildAdminAssignmentsRouteResponse(
+            await queryCourseAssignmentCatalog(getPool(), courseId || null),
+            includeMetadata,
+        );
+        console.log(`[INFO] Fetched ${catalogResponse.catalogCount} visible assignments from database, ${Object.keys(catalogResponse.assignments).length} categories`);
+        res.json(body);
     } catch (error) {
         console.error('Error fetching assignments from database:', error);
-        res.status(500).json({ error: error.message || 'Failed to fetch assignments' });
+        res.status(Number(error?.status) || 500).json(assignmentEvidenceRequestError(error));
     }
 });
 

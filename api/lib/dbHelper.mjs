@@ -19,8 +19,24 @@ import {
     resolveQuestPolicyScore,
 } from './canonicalGrade.mjs';
 import { buildPolicySummaryFromComponentMaps } from './policySummaryBuilder.mjs';
+import {
+    groupAssignmentEvidence,
+    queryStudentAssignmentEvidence,
+    resolveAssignmentDueAt,
+    resolveAssignmentReleaseAt,
+    sortAssignmentEvidenceByTime,
+} from './assignmentEvidence.mjs';
+import {
+    enrolledRosterToLegacyPairs,
+    queryEnrolledCourseRoster,
+    queryRosterBackedStudentScores,
+} from './courseRoster.mjs';
 
 export { buildPolicySummaryFromComponentMaps } from './policySummaryBuilder.mjs';
+export {
+    resolveAssignmentDueAt,
+    resolveAssignmentReleaseAt,
+} from './assignmentEvidence.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Relative to api/lib/ is ../../
@@ -253,79 +269,6 @@ export function getPool() {
     return pool;
 }
 
-function safeJsonObject(value) {
-    if (!value) return {};
-    if (typeof value === 'object' && !Array.isArray(value)) return value;
-    if (typeof value === 'string') {
-        try {
-            const parsed = JSON.parse(value);
-            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-        } catch {
-            return {};
-        }
-    }
-    return {};
-}
-
-function firstPresentValue(...values) {
-    return values.find((value) => value !== undefined && value !== null && value !== '');
-}
-
-function normalizeDateValue(value) {
-    if (!value) return null;
-    const date = value instanceof Date ? value : new Date(value);
-    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
-}
-
-export function resolveAssignmentDueAt(row = {}) {
-    const metadata = safeJsonObject(row.assignment_metadata);
-    const submissionWindow = safeJsonObject(metadata.submission_window || metadata.submissionWindow);
-    const dates = safeJsonObject(metadata.dates);
-
-    return normalizeDateValue(firstPresentValue(
-        row.due_at,
-        row.exam_due_at,
-        metadata.due,
-        metadata.due_at,
-        metadata.dueAt,
-        metadata.due_date,
-        metadata.dueDate,
-        metadata.deadline,
-        metadata.deadline_at,
-        metadata.deadlineAt,
-        submissionWindow.due_date,
-        submissionWindow.dueDate,
-        submissionWindow.due_at,
-        submissionWindow.dueAt,
-        dates.due,
-        dates.due_at,
-        dates.dueAt,
-    ));
-}
-
-export function resolveAssignmentReleaseAt(row = {}) {
-    const metadata = safeJsonObject(row.assignment_metadata);
-    const submissionWindow = safeJsonObject(metadata.submission_window || metadata.submissionWindow);
-    const dates = safeJsonObject(metadata.dates);
-
-    return normalizeDateValue(firstPresentValue(
-        row.release_at,
-        row.exam_release_at,
-        metadata.release,
-        metadata.release_at,
-        metadata.releaseAt,
-        metadata.release_date,
-        metadata.releaseDate,
-        submissionWindow.release_date,
-        submissionWindow.releaseDate,
-        submissionWindow.release_at,
-        submissionWindow.releaseAt,
-        dates.release,
-        dates.release_at,
-        dates.releaseAt,
-    ));
-}
-
 /**
  * Gets student submissions sorted by submission time
  * @param {string} email - The student's email
@@ -333,64 +276,20 @@ export function resolveAssignmentReleaseAt(row = {}) {
  * @returns {Promise<Array>} Array of submissions with assignment details
  */
 export async function getStudentSubmissionsByTime(email, courseId = null) {
-    const pool = getPool();
-    
-    let query = `
-        SELECT 
-            a.title as assignment_name,
-            a.category,
-            s.total_score as score,
-            a.max_points,
-            s.submission_time,
-            s.lateness,
-            a.assignment_metadata,
-            eam.due_at AS exam_due_at,
-            eam.release_at AS exam_release_at,
-            c.name as course_name,
-            c.semester,
-            c.year
-        FROM submissions s
-        JOIN assignments a ON s.assignment_id = a.id
-        JOIN students st ON s.student_id = st.id
-        JOIN courses c ON a.course_id = c.id
-        LEFT JOIN exam_attempt_map eam
-          ON eam.assignment_id = a.id
-         AND eam.course_id = c.id
-        WHERE st.email = $1
-    `;
-    
-    const params = [email];
-    
-    if (courseId) {
-        query += ` AND (c.gradescope_course_id::text = $2 OR c.id::text = $2)`;
-        params.push(courseId);
-    }
-    
-    query += `
-        ORDER BY s.submission_time DESC
-    `;
-    
     try {
-        const result = await pool.query(query, params);
-        
-        return result.rows.map(row => ({
-            category: row.category || 'Uncategorized',
-            name: row.assignment_name,
-            score: parseFloat(row.score) || 0,
-            maxPoints: parseFloat(row.max_points) || 0,
-            percentage: row.max_points > 0 ? (parseFloat(row.score) / parseFloat(row.max_points)) * 100 : 0,
-            submissionTime: row.submission_time,
-            lateness: row.lateness,
-            dueAt: resolveAssignmentDueAt(row),
-            releaseAt: resolveAssignmentReleaseAt(row),
-            courseName: row.course_name,
-            semester: row.semester,
-            year: row.year,
-        }));
+        const evidence = await getStudentAssignmentEvidence(email, courseId);
+        return sortAssignmentEvidenceByTime(evidence);
     } catch (err) {
-        console.error('Error fetching student submissions by time:', err);
+        console.error('Error fetching student assignment evidence by time:', err);
         throw err;
     }
+}
+
+export async function getStudentAssignmentEvidence(email, courseId = null) {
+    return queryStudentAssignmentEvidence(getPool(), {
+        email,
+        courseId,
+    });
 }
 
 /**
@@ -400,85 +299,10 @@ export async function getStudentSubmissionsByTime(email, courseId = null) {
  * @returns {Promise<Object>} Object grouped by category/assignment plus submission times
  */
 export async function getStudentSubmissionsGrouped(email, courseId = null) {
-    const pool = getPool();
-    
-    let query;
-    let params;
-
-    if (courseId) {
-        query = `
-            SELECT
-                a.title as assignment_name,
-                a.category,
-                COALESCE(s.total_score, 0) as score,
-                a.max_points,
-                s.submission_time,
-                s.lateness,
-                a.assignment_metadata,
-                eam.due_at AS exam_due_at,
-                eam.release_at AS exam_release_at
-            FROM assignments a
-            JOIN courses c ON a.course_id = c.id
-            LEFT JOIN students st ON st.email = $1 AND st.course_id = c.id
-            LEFT JOIN submissions s ON s.assignment_id = a.id AND s.student_id = st.id
-            LEFT JOIN exam_attempt_map eam
-              ON eam.assignment_id = a.id
-             AND eam.course_id = c.id
-            WHERE (c.gradescope_course_id::text = $2 OR c.id::text = $2)
-            ORDER BY a.category, a.title
-        `;
-        params = [email, courseId];
-    } else {
-        query = `
-            SELECT 
-                a.title as assignment_name,
-                a.category,
-                s.total_score as score,
-                a.max_points,
-                s.submission_time,
-                s.lateness,
-                a.assignment_metadata,
-                eam.due_at AS exam_due_at,
-                eam.release_at AS exam_release_at
-            FROM submissions s
-            JOIN assignments a ON s.assignment_id = a.id
-            JOIN students st ON s.student_id = st.id
-            JOIN courses c ON a.course_id = c.id
-            LEFT JOIN exam_attempt_map eam
-              ON eam.assignment_id = a.id
-             AND eam.course_id = c.id
-            WHERE st.email = $1
-        `;
-        params = [email];
-    }
-    
     try {
-        const result = await pool.query(query, params);
-        
-        // Group by category
-        const grouped = {};
-        
-        result.rows.forEach(row => {
-            const category = row.category || 'Uncategorized';
-            const assignmentName = row.assignment_name;
-            
-            if (!grouped[category]) {
-                grouped[category] = {};
-            }
-            
-            grouped[category][assignmentName] = {
-                student: parseFloat(row.score) || 0,
-                max: parseFloat(row.max_points) || 0,
-                submissionTime: row.submission_time,
-                lateness: row.lateness,
-                dueAt: resolveAssignmentDueAt(row),
-                releaseAt: resolveAssignmentReleaseAt(row),
-            };
-        });
-        
-        return grouped;
+        return groupAssignmentEvidence(await getStudentAssignmentEvidence(email, courseId));
     } catch (err) {
-        console.error('Error fetching grouped student submissions:', err);
+        console.error('Error fetching grouped student assignment evidence:', err);
         throw err;
     }
 }
@@ -2105,103 +1929,26 @@ export async function getAssignmentsSummaryDistribution(assignmentTitles) {
  * @returns {Promise<Array>} Array of {name, email, scores: {category: {assignmentName: score}}}
  */
 export async function getAllStudentScores(courseId = null) {
-    const pool = getPool();
-
-    const params = [];
-    const courseFilter = courseId ? String(courseId) : null;
-    if (courseFilter) {
-        params.push(courseFilter);
-    }
-
-    const courseScopeCte = courseFilter
-        ? `
-        target_courses AS (
-            SELECT id
-            FROM courses
-            WHERE gradescope_course_id::text = $1 OR id::text = $1
-        ),
-        student_scope AS (
-            SELECT st.id, st.legal_name, st.email, st.course_id
-            FROM students st
-            JOIN target_courses tc ON tc.id = st.course_id
-        ),
-        `
-        : `
-        student_scope AS (
-            SELECT st.id, st.legal_name, st.email, st.course_id
-            FROM students st
-        ),
-        `;
-
-    const query = `
-        WITH
-        ${courseScopeCte}
-        score_sections AS (
-            SELECT
-                st.id AS student_id,
-                st.legal_name AS student_name,
-                st.email AS student_email,
-                COALESCE(a.category, 'Uncategorized') AS category,
-                jsonb_object_agg(a.title, s.total_score ORDER BY a.title)
-                    FILTER (WHERE a.title IS NOT NULL) AS assignment_scores
-            FROM student_scope st
-            LEFT JOIN submissions s ON s.student_id = st.id
-            LEFT JOIN assignments a
-              ON a.id = s.assignment_id
-             AND (st.course_id IS NULL OR a.course_id = st.course_id)
-            GROUP BY st.id, st.legal_name, st.email, COALESCE(a.category, 'Uncategorized')
-        )
-        SELECT
-            student_id,
-            student_name,
-            student_email,
-            COALESCE(
-                jsonb_object_agg(category, assignment_scores ORDER BY category)
-                    FILTER (WHERE assignment_scores IS NOT NULL),
-                '{}'::jsonb
-            ) AS scores
-        FROM score_sections
-        GROUP BY student_id, student_name, student_email
-        ORDER BY student_email
-    `;
-
     try {
-        const result = await pool.query(query, params);
-
-        return result.rows.map((row) => ({
-            name: row.student_name || 'Unknown',
-            email: row.student_email,
-            scores: row.scores || {},
-        }));
+        return await queryRosterBackedStudentScores(getPool(), courseId);
     } catch (err) {
         console.error('Error fetching all student scores:', err);
         throw err;
     }
 }
 
+export async function getEnrolledCourseRoster(courseId = null) {
+    return queryEnrolledCourseRoster(getPool(), courseId);
+}
+
 /**
- * Gets students with submissions in a specific course.
+ * Gets enrolled students in a specific course, including students with no submissions.
  * @param {string} courseId - Course ID or Gradescope course ID
  * @returns {Promise<Array<Array<string>>>} List of [legalName, email]
  */
 export async function getStudentsByCourse(courseId) {
-    const pool = getPool();
-
-    const query = `
-        SELECT DISTINCT
-            COALESCE(st.legal_name, st.email) AS student_name,
-            st.email AS student_email
-        FROM submissions s
-        JOIN students st ON s.student_id = st.id
-        JOIN assignments a ON s.assignment_id = a.id
-        JOIN courses c ON a.course_id = c.id
-        WHERE (c.gradescope_course_id::text = $1 OR c.id::text = $1)
-        ORDER BY student_name ASC
-    `;
-
     try {
-        const result = await pool.query(query, [courseId]);
-        return result.rows.map((row) => [row.student_name, row.student_email]);
+        return enrolledRosterToLegacyPairs(await getEnrolledCourseRoster(courseId));
     } catch (err) {
         console.error('Error fetching students by course:', err);
         throw err;
@@ -2324,26 +2071,7 @@ export async function getCourseTotalPossibleScore(courseId = null) {
  * @returns {Promise<Array<Array<string>>>} List of [legalName, email]
  */
 export async function getAllStudentsFromDb(courseId = null) {
-    const pool = getPool();
-
-    let query = `
-        SELECT DISTINCT
-            COALESCE(st.legal_name, st.email) AS student_name,
-            st.email AS student_email
-        FROM students st
-        JOIN courses c ON st.course_id = c.id
-    `;
-
-    const params = [];
-    if (courseId) {
-        query += ` WHERE (c.gradescope_course_id::text = $1 OR c.id::text = $1)`;
-        params.push(String(courseId));
-    }
-
-    query += ` ORDER BY student_name ASC`;
-
-    const result = await pool.query(query, params);
-    return result.rows.map((row) => [row.student_name, row.student_email]);
+    return enrolledRosterToLegacyPairs(await getEnrolledCourseRoster(courseId));
 }
 
 function graphNormalize(value = '') {

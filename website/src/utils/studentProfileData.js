@@ -5,7 +5,7 @@ import {
   buildQuestComponentTrendFallback,
   buildQuestComponentTrendFromAssignments,
 } from './studentDataProcessor';
-import { isAssignmentDue } from './assignmentDue';
+import { shouldRetainAssignmentEvidence } from './assignmentDue';
 
 export function resolveCourseQueryId(courseId, courses = []) {
   if (!courseId) return '';
@@ -163,7 +163,7 @@ function buildRawAssignments(rawSubmissions = []) {
       const name = String(submission?.name || '').trim();
       if (!name || !category || normalizedCategory === 'uncategorized' || normalizedCategory.startsWith('_')) return false;
       if (isRollupSubmission(submission)) return false;
-      if (!isAssignmentDue(submission)) return false;
+      if (!shouldRetainAssignmentEvidence(submission)) return false;
       return Number(submission?.maxPoints) > 0;
     })
     .map((submission) => {

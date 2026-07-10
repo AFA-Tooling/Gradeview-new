@@ -1,6 +1,6 @@
 // src/utils/studentDataProcessor.js
 
-import { isAssignmentDue } from './assignmentDue';
+import { shouldRetainAssignmentEvidence } from './assignmentDue';
 
 /**
  * Process student grades data into structured format for display
@@ -167,7 +167,7 @@ function processTimeSortedData(submissions, email, name, classAverages = {}, gra
   const pointsMap = normalizePointsMap(gradingConfig.assignmentPoints);
 
   submissions.forEach((submission) => {
-    if (!isAssignmentDue(submission)) {
+    if (!shouldRetainAssignmentEvidence(submission)) {
       return;
     }
 
@@ -337,7 +337,7 @@ function processAssignmentSortedData(data, email, name, classAverages = {}, grad
     let categoryCount = 0;
 
     Object.entries(assignments).forEach(([assignmentName, assignmentData]) => {
-      if (!isAssignmentDue(assignmentData)) {
+      if (!shouldRetainAssignmentEvidence(assignmentData)) {
         return;
       }
 
