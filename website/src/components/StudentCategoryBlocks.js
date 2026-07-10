@@ -7,6 +7,13 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
+import {
+  formatAttemptCount,
+  formatEvidenceScore,
+  formatPercentage,
+  formatPoints,
+  getEvidenceStatusMeta,
+} from './studentExperienceModel';
 
 const blockColors = {
   attendance: { ink: '#0F766E', bg: '#ECFDF5', border: '#99F6E4' },
@@ -16,102 +23,93 @@ const blockColors = {
   default: { ink: '#374151', bg: '#F9FAFB', border: '#E5E7EB' },
 };
 
-function safeNumber(value, fallback = 0) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function formatPoints(value) {
-  const numeric = safeNumber(value);
-  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
-}
-
-function formatPercentage(value) {
-  return `${safeNumber(value).toFixed(1)}%`;
-}
-
 function getTone(type = 'default') {
   return blockColors[type] || blockColors.default;
 }
 
 const ScoreBar = memo(function ScoreBar({ value, tone }) {
-  const percentage = Math.max(0, Math.min(100, safeNumber(value)));
+  const numeric = value == null ? null : Number(value);
+  const percentage = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : null;
   return (
     <Box sx={{ mt: 1.4 }}>
       <Box sx={{ height: 8, borderRadius: 999, backgroundColor: '#EEF0F4', overflow: 'hidden' }}>
-        <Box
-          sx={{
-            width: `${percentage}%`,
-            height: '100%',
-            borderRadius: 999,
-            backgroundColor: tone.ink,
-          }}
-        />
+        {percentage != null && (
+          <Box sx={{ width: `${percentage}%`, height: '100%', borderRadius: 999, backgroundColor: tone.ink }} />
+        )}
       </Box>
     </Box>
   );
 });
 
-const RecentItems = memo(function RecentItems({ items = [] }) {
+const EvidenceItems = memo(function EvidenceItems({ items = [] }) {
   if (!items.length) {
-    return (
-      <Typography variant="caption" sx={{ color: '#6B7280' }}>
-        No recent raw submissions in this category.
-      </Typography>
-    );
+    return <Typography variant="caption" sx={{ color: '#6B7280' }}>No authoritative catalog evidence in this category.</Typography>;
   }
-
   return (
     <Stack spacing={0.75}>
-      {items.slice(0, 3).map((item, index) => (
-        <Stack
-          key={`${item.name || 'item'}-${item.submissionTime || index}`}
-          direction="row"
-          spacing={1}
-          alignItems="center"
-          justifyContent="space-between"
-        >
-          <Typography
-            variant="caption"
-            sx={{
-              color: '#374151',
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {item.name || 'Assignment'}
-          </Typography>
-          <Typography variant="caption" sx={{ color: '#111827', fontWeight: 700, flexShrink: 0 }}>
-            {formatPoints(item.score)} / {formatPoints(item.maxPoints)}
-          </Typography>
+      {items.slice(0, 3).map((item) => (
+        <Stack key={item.assignmentId} direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="caption" sx={{ color: '#374151', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.name || 'Assignment'}
+            </Typography>
+            <Typography variant="caption" sx={{ color: '#6B7280' }}>{getEvidenceStatusMeta(item.evidenceStatus, item).label}</Typography>
+          </Box>
+          <Typography variant="caption" sx={{ color: '#111827', fontWeight: 700, flexShrink: 0 }}>{formatEvidenceScore(item)}</Typography>
         </Stack>
       ))}
     </Stack>
   );
 });
 
+function StatusCountChip({ block, status }) {
+  const count = block.summary?.statusCounts?.[status] || 0;
+  return <Chip size="small" label={`${count} ${getEvidenceStatusMeta(status).label.toLowerCase()}`} />;
+}
+
 const AttendanceDetail = memo(function AttendanceDetail({ block }) {
   const summary = block.summary || {};
   return (
-    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-      <Chip size="small" label={`${summary.submittedItems || 0}/${summary.totalItems || 0} sessions`} />
-      <Chip size="small" label={`${summary.missingItems || 0} open/missing`} />
-      <Chip size="small" label={`Raw ${formatPercentage(summary.rawPercentage)}`} />
+    <Stack spacing={1.1}>
+      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+        <Chip size="small" label={`${summary.totalItems || 0} catalog sessions`} />
+        <StatusCountChip block={block} status="submitted" />
+        <StatusCountChip block={block} status="missing" />
+        <StatusCountChip block={block} status="due_unknown" />
+      </Stack>
+      <Typography variant="caption" sx={{ color: '#6B7280' }}>
+        Due-work progress: {summary.dueMax > 0 ? `${formatPoints(summary.dueScore)} / ${formatPoints(summary.dueMax)}` : 'Unavailable'}
+      </Typography>
     </Stack>
   );
 });
 
-const CourseworkDetail = memo(function CourseworkDetail({ block }) {
+const LabsDetail = memo(function LabsDetail({ block }) {
   const summary = block.summary || {};
   return (
-    <Stack spacing={1.25}>
-      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-        <Chip size="small" label={`${summary.submittedItems || 0}/${summary.totalItems || 0} submitted`} />
-        <Chip size="small" label={`Raw ${formatPoints(summary.rawScore)} / ${formatPoints(summary.rawMax)}`} />
+    <Stack spacing={1.1}>
+      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+        <Chip size="small" label={`${summary.totalItems || 0} catalog labs`} />
+        <StatusCountChip block={block} status="earned_zero" />
+        <StatusCountChip block={block} status="not_synced" />
+        <StatusCountChip block={block} status="not_due" />
       </Stack>
-      <RecentItems items={summary.recentItems || []} />
+      <EvidenceItems items={block.evidenceRows} />
+    </Stack>
+  );
+});
+
+const ProjectsDetail = memo(function ProjectsDetail({ block }) {
+  const summary = block.summary || {};
+  return (
+    <Stack spacing={1.1}>
+      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+        <Chip size="small" label={`${summary.totalItems || 0} catalog projects`} />
+        <StatusCountChip block={block} status="submitted" />
+        <StatusCountChip block={block} status="missing" />
+        <Chip size="small" label={`${summary.lateItems || 0} late`} />
+      </Stack>
+      <EvidenceItems items={block.evidenceRows} />
     </Stack>
   );
 });
@@ -119,121 +117,70 @@ const CourseworkDetail = memo(function CourseworkDetail({ block }) {
 const ExamDetail = memo(function ExamDetail({ block }) {
   const exam = block.exam || {};
   return (
-    <Stack spacing={1.25}>
-      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-        <Chip size="small" label={`${exam.attempts || 0} policy attempts`} />
-        <Chip size="small" label={`Latest ${exam.latestFinalPercentage == null ? '-' : formatPercentage(exam.latestFinalPercentage)}`} />
-        {block.componentTrendAvailable && <Chip size="small" label="Topic trend ready" />}
-        {(exam.clobberedAttempts || 0) > 0 && <Chip size="small" label={`${exam.clobberedAttempts} clobbered`} />}
+    <Stack spacing={1.1}>
+      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+        <Chip size="small" label={formatAttemptCount(exam.attempts)} />
+        {exam.questionBestAvailable && <Chip size="small" label="Question-best diagnostic available" />}
+        {exam.positiveClobberCount > 0 && <Chip size="small" label={`${exam.positiveClobberCount} positive clobber`} />}
       </Stack>
-      <RecentItems items={block.summary?.recentItems || []} />
+      <Typography variant="caption" sx={{ color: '#6B7280' }}>Final score above is canonical; attempt diagnostics do not replace it.</Typography>
     </Stack>
   );
 });
 
-const DefaultDetail = memo(function DefaultDetail({ block }) {
-  return <CourseworkDetail block={block} />;
-});
-
 const detailRenderers = {
   attendance: AttendanceDetail,
-  labs: CourseworkDetail,
-  projects: CourseworkDetail,
+  labs: LabsDetail,
+  projects: ProjectsDetail,
   exam: ExamDetail,
-  default: DefaultDetail,
 };
 
 const CategoryBlockCard = memo(function CategoryBlockCard({ block }) {
   const tone = getTone(block.type);
-  const Detail = detailRenderers[block.type] || detailRenderers.default;
-
+  const Detail = detailRenderers[block.type] || LabsDetail;
+  const hasCanonicalScore = block.exactScore != null && block.cap != null;
   return (
-    <Paper
-      elevation={0}
-      sx={{
-        height: '100%',
-        borderRadius: 2,
-        border: `1px solid ${tone.border}`,
-        backgroundColor: '#FFFFFF',
-        p: 2,
-      }}
-    >
+    <Paper elevation={0} sx={{ height: '100%', borderRadius: 2, border: `1px solid ${tone.border}`, backgroundColor: '#FFFFFF', p: 2 }}>
       <Stack spacing={1.5} sx={{ height: '100%' }}>
         <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
           <Box sx={{ minWidth: 0 }}>
-            <Typography
-              variant="subtitle2"
-              sx={{
-                color: '#111827',
-                fontWeight: 800,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {block.label}
-            </Typography>
+            <Typography variant="subtitle2" sx={{ color: '#111827', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{block.label}</Typography>
             <Typography variant="caption" sx={{ color: '#6B7280' }}>
-              {formatPercentage(block.percentage)} final policy
+              {block.percentage == null ? 'Canonical final unavailable' : `${formatPercentage(block.percentage)} final policy`}
             </Typography>
           </Box>
           <Chip
             size="small"
-            label={`${formatPoints(block.score)} / ${formatPoints(block.cap)}`}
+            label={hasCanonicalScore ? `${formatPoints(block.exactScore)} / ${formatPoints(block.cap)}` : 'Unavailable'}
             sx={{ fontWeight: 800, color: tone.ink, backgroundColor: tone.bg, flexShrink: 0 }}
           />
         </Stack>
-
         <ScoreBar value={block.percentage} tone={tone} />
-
-        <Box sx={{ mt: 'auto' }}>
-          <Detail block={block} />
-        </Box>
+        <Box sx={{ mt: 'auto' }}><Detail block={block} /></Box>
       </Stack>
     </Paper>
   );
 });
 
 function sortBlocks(blocks = []) {
-  const order = new Map([
-    ['attendance', 0],
-    ['labs', 1],
-    ['projects', 2],
-    ['quest', 3],
-    ['midterm', 4],
-    ['postterm', 5],
-  ]);
-
-  return [...blocks].sort((a, b) => (
-    (order.get(a.key) ?? 99) - (order.get(b.key) ?? 99)
-    || String(a.label || '').localeCompare(String(b.label || ''))
+  const order = new Map([['attendance', 0], ['labs', 1], ['projects', 2], ['quest', 3], ['midterm', 4], ['postterm', 5]]);
+  return [...blocks].sort((left, right) => (
+    (order.get(left.key) ?? 99) - (order.get(right.key) ?? 99)
+    || String(left.label || '').localeCompare(String(right.label || ''))
   ));
 }
 
 export default memo(function StudentCategoryBlocks({ blocks = [] }) {
   const sortedBlocks = useMemo(() => sortBlocks(blocks), [blocks]);
-
   if (sortedBlocks.length === 0) return null;
-
   return (
     <Box sx={{ mb: 3 }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between" sx={{ mb: 1.5 }}>
-        <Box>
-          <Typography variant="h6" sx={{ color: '#111827', fontWeight: 800 }}>
-            Category Summary
-          </Typography>
-          <Typography variant="caption" sx={{ color: '#6B7280' }}>
-            Policy-adjusted status by grading area.
-          </Typography>
-        </Box>
-      </Stack>
-
+      <Box sx={{ mb: 1.5 }}>
+        <Typography variant="h6" sx={{ color: '#111827', fontWeight: 800 }}>Category Summary</Typography>
+        <Typography variant="caption" sx={{ color: '#6B7280' }}>Canonical policy-final scores with domain-specific catalog evidence.</Typography>
+      </Box>
       <Grid container spacing={2}>
-        {sortedBlocks.map((block) => (
-          <Grid key={block.key || block.label} item xs={12} sm={6} lg={4}>
-            <CategoryBlockCard block={block} />
-          </Grid>
-        ))}
+        {sortedBlocks.map((block) => <Grid key={block.key} item xs={12} sm={6} lg={4}><CategoryBlockCard block={block} /></Grid>)}
       </Grid>
     </Box>
   );

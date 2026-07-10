@@ -246,6 +246,58 @@ describe('student profile canonical adapter', () => {
     expect(result.categoriesData.Projects.exactScore).toBe(AVERY_GRADE.categories.projects.exactScore);
   });
 
+  test('passes through authoritative evidence IDs, statuses, and nullable scores without coercion', () => {
+    const evidence = [
+      {
+        assignmentId: 'lab-duplicate-a',
+        category: 'Labs',
+        name: 'Duplicate Lab',
+        evidenceStatus: 'due_unknown',
+        score: null,
+        recordedScore: null,
+        maxPoints: 10,
+        dueAt: null,
+        releaseAt: null,
+        sourceSyncStatus: 'synced',
+        requestError: null,
+      },
+      {
+        assignmentId: 'lab-duplicate-b',
+        category: 'Labs',
+        name: 'Duplicate Lab',
+        evidenceStatus: 'earned_zero',
+        score: 0,
+        recordedScore: 0,
+        maxPoints: 10,
+        dueAt: '2026-07-01T12:00:00.000Z',
+        releaseAt: '2026-06-01T12:00:00.000Z',
+        sourceSyncStatus: 'synced',
+        requestError: null,
+      },
+    ];
+
+    const result = buildStudentProfileData(profilePayload(AVERY_GRADE, {
+      rawGrades: {
+        basis: 'assignment_evidence',
+        catalogCount: 2,
+        sortBy: 'time',
+        submissions: evidence,
+      },
+    }), 'student@example.edu', 'Student');
+
+    expect(result.assignmentEvidence).toHaveLength(2);
+    expect(result.assignmentEvidence.map((row) => row.assignmentId)).toEqual([
+      'lab-duplicate-a',
+      'lab-duplicate-b',
+    ]);
+    expect(result.assignmentEvidence.map((row) => row.evidenceStatus)).toEqual([
+      'due_unknown',
+      'earned_zero',
+    ]);
+    expect(result.assignmentEvidence.map((row) => row.score)).toEqual([null, 0]);
+    expect(result.assignmentEvidence).toEqual(evidence);
+  });
+
   test('student data processor retains future and no-due rows in both API adapters', () => {
     const timeRows = [
       {
