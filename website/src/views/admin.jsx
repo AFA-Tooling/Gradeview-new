@@ -1,5 +1,5 @@
 // src/views/admin.jsx
-import { Fragment, memo, useCallback, useRef, useState, useEffect, useMemo, useTransition } from 'react';
+import { Fragment, memo, useCallback, useDeferredValue, useRef, useState, useEffect, useMemo, useTransition } from 'react';
 import {
   Alert,
   Button,
@@ -27,12 +27,13 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import Grid from '@mui/material/Grid';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import AIAnalytics from './aiAnalytics';
 import GradeSyncControl from './GradeSyncControl';
 import apiv2 from '../utils/apiv2';
 import { cachedApiGet } from '../utils/apiCache';
+import { buildStudentExperiencePath, STUDENT_PERSONA } from '../utils/studentRoutes';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -67,6 +68,16 @@ function getAdminTabIndex(search = '') {
   const requestedTab = new URLSearchParams(search).get('tab');
   const requestedIndex = ADMIN_TAB_QUERY_VALUES.indexOf(requestedTab);
   return requestedIndex === -1 ? 0 : requestedIndex;
+}
+
+function getSortButtonAriaLabel(columnLabel, isActive, sortAsc) {
+  if (!isActive) return `Sort by ${columnLabel} ascending`;
+  return `Sort by ${columnLabel} ${sortAsc ? 'descending' : 'ascending'}`;
+}
+
+function shouldOpenRawColumnsByDefault() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  return !window.matchMedia('(max-width: 599.95px)').matches;
 }
 
 function getTrailingSectionRank(section = '') {
@@ -134,7 +145,7 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
   isLight,
   hdrBorderH,
   hdrBorderV,
-  onOpenProfile,
+  studentHref,
 }) {
   const finalPercentage = totalMaxPoints > 0
     ? ((student.total / totalMaxPoints) * 100).toFixed(2)
@@ -152,16 +163,27 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
         maxWidth: '250px',
       }}>
         <Box
+          component={RouterLink}
+          to={studentHref}
+          aria-label={`View report for ${student.name} (${student.email})`}
           sx={{
+            display: 'inline-flex',
+            flexDirection: 'column',
+            color: 'inherit',
             cursor: 'pointer',
+            borderRadius: 0.5,
+            textDecoration: 'none',
             '&:hover': {
               color: '#1976d2',
               textDecoration: 'underline',
             },
+            '&:focus-visible': {
+              outline: '2px solid #1976d2',
+              outlineOffset: '2px',
+            },
           }}
-          onClick={() => onOpenProfile(student)}
         >
-          <strong>{student.name}</strong><br/>
+          <strong>{student.name}</strong>
           <small>{student.email}</small>
         </Box>
       </TableCell>
@@ -260,6 +282,8 @@ export default function Admin() {
   const [studentScores, setStudentScores] = useState([]); // [{name,email,scores}]
   const [loadingSS, setLoadingSS]         = useState(false);
   const [errorSS, setErrorSS]             = useState();
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const deferredStudentSearchQuery = useDeferredValue(studentSearchQuery);
 
   // --- SECTION CAPS (from /bins assignment_points) ---
   const [sectionCaps, setSectionCaps] = useState({}); // { "Labs": 80, "Quest": 25, ... }
@@ -279,6 +303,7 @@ export default function Admin() {
   const [visibleAssignments, setVisibleAssignments] = useState({}); // {assignmentName: boolean}
   const [selectorDialogOpen, setSelectorDialogOpen] = useState(null); // Section name or null
   const [scoreDisplayMode, setScoreDisplayMode] = useState('both'); // policy | raw | both
+  const [rawColumnsOpen, setRawColumnsOpen] = useState(shouldOpenRawColumnsByDefault);
 
   const buildCourseQuery = (courseId) => {
     if (!courseId) return '';
@@ -567,6 +592,15 @@ export default function Admin() {
     return arr;
   }, [studentWithTotals, sortBy, sortAsc]);
 
+  const visibleStudents = useMemo(() => {
+    const query = deferredStudentSearchQuery.trim().toLowerCase();
+    if (!query) return sortedStudents;
+    return sortedStudents.filter((student) => (
+      String(student.name || '').toLowerCase().includes(query)
+      || String(student.email || '').toLowerCase().includes(query)
+    ));
+  }, [deferredStudentSearchQuery, sortedStudents]);
+
   const visibleTableSections = useMemo(() => (
     orderedAssignmentSections
       .map(([section, sectionAssignments]) => {
@@ -584,12 +618,18 @@ export default function Admin() {
       .filter((item) => item.colSpan > 0)
   ), [orderedAssignmentSections, scoreDisplayMode, visibleAssignments]);
 
+  const selectedRawAssignmentCount = useMemo(() => (
+    assignments.reduce((count, assignment) => (
+      count + (visibleAssignments[assignment.name] ? 1 : 0)
+    ), 0)
+  ), [assignments, visibleAssignments]);
+
   const totalStudentScoreColumns = useMemo(() => (
     3 + visibleTableSections.reduce((sum, section) => sum + section.colSpan, 0)
   ), [visibleTableSections]);
 
   const virtualStudentWindow = useMemo(() => {
-    const totalRows = sortedStudents.length;
+    const totalRows = visibleStudents.length;
     if (totalRows === 0) {
       return {
         rows: [],
@@ -607,11 +647,11 @@ export default function Admin() {
     const endIndex = Math.min(totalRows, startIndex + visibleCount);
 
     return {
-      rows: sortedStudents.slice(startIndex, endIndex),
+      rows: visibleStudents.slice(startIndex, endIndex),
       topPadding: startIndex * STUDENT_SCORE_ROW_HEIGHT,
       bottomPadding: (totalRows - endIndex) * STUDENT_SCORE_ROW_HEIGHT,
     };
-  }, [sortedStudents, studentsScrollTop, studentsViewportHeight]);
+  }, [visibleStudents, studentsScrollTop, studentsViewportHeight]);
 
   const handleStudentsTableScroll = useCallback((event) => {
     setStudentsScrollTop(event.currentTarget.scrollTop);
@@ -641,11 +681,9 @@ export default function Admin() {
     if (studentsTableRef.current) {
       studentsTableRef.current.scrollTop = 0;
     }
-  }, [sortBy, sortAsc, scoreDisplayMode, visibleAssignments, selectedCourse, sortedStudents.length]);
+  }, [sortBy, sortAsc, scoreDisplayMode, visibleAssignments, selectedCourse, deferredStudentSearchQuery]);
 
-  const handleOpenStudentProfile = useCallback((student) => {
-    navigate(`/students/${encodeURIComponent(student.email)}/report`);
-  }, [navigate]);
+  const studentReportSearch = buildCourseQuery(selectedCourse);
 
   // Handlers
   const handleTabChange = (_, newTab) => {
@@ -835,16 +873,23 @@ export default function Admin() {
   return (
     <Box className='admin-shell' sx={{ minHeight: '100vh' }}>
       {/* Tabs */}
-      <Box className='glass-section' sx={{ px: 4, py: 1, mb: 2, borderRadius: 2 }}>
+      <Box className='glass-section' sx={{ px: { xs: 1, sm: 4 }, py: 1, mb: 2, borderRadius: 2, minWidth: 0 }}>
         <Tabs 
           value={tab} 
           onChange={handleTabChange}
+          variant="scrollable"
+          scrollButtons={false}
+          aria-label="Class health sections"
           sx={{
+            minWidth: 0,
             '& .MuiTab-root': {
               textTransform: 'none',
               fontSize: '0.95rem',
               fontWeight: 500,
               minHeight: 48,
+              minWidth: { xs: 'auto', sm: 90 },
+              px: { xs: 1.5, sm: 2 },
+              whiteSpace: 'nowrap',
             }
           }}
         >
@@ -1203,7 +1248,7 @@ export default function Admin() {
 
       {/* STUDENTS × ASSIGNMENTS TAB */}
         {tab === 1 && (
-        <Box px={4} py={4}>
+        <Box sx={{ px: { xs: 1.5, sm: 4 }, pt: { xs: 2, sm: 4 }, pb: { xs: 9, sm: 7 }, minWidth: 0 }}>
             {loadingSS && (
               <Box display="flex" justifyContent="center" p={4}>
                 <Typography>Loading student scores…</Typography>
@@ -1212,23 +1257,63 @@ export default function Admin() {
             {errorSS && <Alert severity="error" sx={{ mb: 3 }}>{errorSS}</Alert>}
 
             {!loadingSS && !errorSS && (
-            <Paper elevation={0} className='glass-section' sx={{ borderRadius: 2, overflow: 'hidden' }}>
-                <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.14)' }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    Student Scores Overview
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
-                    Click on column headers to sort, click on student names to view details. 
-                    Use the buttons below to select which assignment columns to display.
-                  </Typography>
-                  <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#1976d2', fontWeight: 500 }}>
-                    Totals are final policy scores. Assignment columns are raw per-assignment scores.
-                  </Typography>
+            <Paper elevation={0} className='glass-section' sx={{ borderRadius: 2, overflow: 'hidden', minWidth: 0 }}>
+                <Box sx={{ p: { xs: 2, sm: 3 }, borderBottom: '1px solid rgba(255,255,255,0.14)' }}>
+                  <Stack
+                    direction={{ xs: 'column', md: 'row' }}
+                    alignItems={{ xs: 'stretch', md: 'flex-start' }}
+                    justifyContent="space-between"
+                    spacing={2}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                        Student Scores Overview
+                      </Typography>
+                      <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
+                        Click on column headers to sort, then open a student name to view their report.
+                        Use Raw columns below to choose which assignment columns to display.
+                      </Typography>
+                      <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#1976d2', fontWeight: 500 }}>
+                        Totals are final policy scores. Assignment columns are raw per-assignment scores.
+                      </Typography>
+                    </Box>
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      alignItems={{ xs: 'stretch', sm: 'center' }}
+                      spacing={1}
+                      sx={{ width: { xs: '100%', md: 'auto' }, flex: '0 0 auto' }}
+                    >
+                      <TextField
+                        label="Search students"
+                        placeholder="Name or email"
+                        type="search"
+                        size="small"
+                        value={studentSearchQuery}
+                        onChange={(event) => setStudentSearchQuery(event.target.value)}
+                        sx={{ width: { xs: '100%', sm: 260 } }}
+                      />
+                      <Button
+                        size="small"
+                        variant="contained"
+                        sx={{
+                          minHeight: 40,
+                          textTransform: 'none',
+                          fontWeight: 500,
+                          backgroundColor: '#10b981',
+                          '&:hover': { backgroundColor: '#059669' },
+                        }}
+                        disabled={!sortedStudents.length}
+                        onClick={handleExportCSV}
+                      >
+                        Export CSV
+                      </Button>
+                    </Stack>
+                  </Stack>
                 </Box>
                 
                 {/* Assignment Selector - Buttons for each section */}
-                <Box sx={{ p: 3, bgcolor: isLight ? 'rgba(240, 246, 255, 0.6)' : 'rgba(255,255,255,0.03)' }}>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', md: 'center' }} sx={{ mb: 2 }}>
+                <Box sx={{ p: { xs: 2, sm: 3 }, bgcolor: isLight ? 'rgba(240, 246, 255, 0.6)' : 'rgba(255,255,255,0.03)' }}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ mb: 1.5 }}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                         Score View:
                     </Typography>
@@ -1237,18 +1322,52 @@ export default function Admin() {
                       exclusive
                       value={scoreDisplayMode}
                       onChange={(_, mode) => mode && setScoreDisplayMode(mode)}
+                      aria-label="Score view"
+                      sx={{
+                        width: { xs: '100%', md: 'auto' },
+                        '& .MuiToggleButton-root': {
+                          flex: { xs: '1 1 0', md: '0 0 auto' },
+                          px: { xs: 1, sm: 1.5 },
+                          whiteSpace: 'normal',
+                          lineHeight: 1.2,
+                        },
+                      }}
                     >
                       <ToggleButton value="policy">Policy totals</ToggleButton>
                       <ToggleButton value="raw">Raw assignments</ToggleButton>
                       <ToggleButton value="both">Both</ToggleButton>
                     </ToggleButtonGroup>
-                    <Chip size="small" label="Total = policy final" sx={{ fontWeight: 700 }} />
-                    <Chip size="small" label="Assignment cells = raw" sx={{ fontWeight: 700 }} />
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Chip size="small" label="Total = policy final" sx={{ fontWeight: 700 }} />
+                      <Chip size="small" label="Assignment cells = raw" sx={{ fontWeight: 700 }} />
+                    </Box>
                   </Stack>
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                        Raw Columns:
-                    </Typography>
+                  <Box
+                    component="details"
+                    open={rawColumnsOpen}
+                    onToggle={(event) => setRawColumnsOpen(event.currentTarget.open)}
+                    sx={{
+                      borderTop: '1px solid rgba(0, 0, 0, 0.12)',
+                      pt: 0.5,
+                      '& > summary': {
+                        minHeight: 44,
+                        py: 1,
+                        cursor: 'pointer',
+                        color: 'text.primary',
+                        '&:focus-visible': {
+                          outline: '2px solid #1976d2',
+                          outlineOffset: '2px',
+                          borderRadius: 0.5,
+                        },
+                      },
+                    }}
+                  >
+                    <Box component="summary">
+                      <Typography component="span" variant="subtitle2" sx={{ fontWeight: 600, ml: 0.5 }}>
+                        Raw columns ({selectedRawAssignmentCount} of {assignments.length} selected)
+                      </Typography>
+                    </Box>
+                  <Box sx={{ display: 'flex', gap: 1.25, flexWrap: 'wrap', alignItems: 'center', pt: 1, pb: 0.5 }}>
                     {isPending && (
                         <Typography variant="caption" sx={{ color: '#6366f1', fontStyle: 'italic' }}>
                             Updating table (this may take a moment for large tables)...
@@ -1292,27 +1411,12 @@ export default function Admin() {
                     >
                         {isPending ? 'Deselecting...' : 'Deselect All'}
                     </Button>
-                    <Button
-                        size="small"
-                        variant="contained"
-                        sx={{
-                            textTransform: 'none',
-                            fontWeight: 500,
-                            backgroundColor: '#10b981',
-                            '&:hover': { backgroundColor: '#059669' },
-                        }}
-                        disabled={!sortedStudents.length}
-                        onClick={handleExportCSV}
-                    >
-                        Export CSV
-                    </Button>
 
                     {/* Section Buttons */}
                     {orderedAssignmentSections.map(([section, sectionAssignments]) => {
                         const visibleCount = sectionAssignments.filter(a => visibleAssignments[a.name]).length;
                         const total = sectionAssignments.length;
                         const allVisible = visibleCount === total && total > 0;
-                        const someVisible = visibleCount > 0 && visibleCount < total;
                         
                         return (
                             <Box key={section}>
@@ -1515,6 +1619,7 @@ export default function Admin() {
                     })}
                 </Box>
                 </Box>
+                </Box>
 
                 {/* Main Table with Tree Structure Headers */}
                 <TableContainer 
@@ -1524,8 +1629,12 @@ export default function Admin() {
                     bgcolor: isLight ? '#FAFAFB' : 'rgba(8, 14, 30, 0.74)',
                     overflowX: 'auto',
                     overflowY: 'auto',
+                    width: '100%',
+                    maxWidth: '100%',
+                    minWidth: 0,
+                    overscrollBehaviorX: 'contain',
                     maxHeight: { xs: '70vh', md: 'calc(100vh - 360px)' },
-                    minHeight: sortedStudents.length ? 420 : 'auto',
+                    minHeight: visibleStudents.length ? 420 : 'auto',
                         position: 'relative',
                         '&::-webkit-scrollbar': {
                             height: '14px',
@@ -1606,11 +1715,22 @@ export default function Admin() {
                                     color: hdrColor,
                                     borderRight: `2px solid ${hdrBorderH}`
                                 }} />
-                                      <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, backgroundColor: hdrBg2s, color: hdrColor }}>
+                                      <TableCell
+                                        align="center"
+                                        sortDirection={sortBy === 'total' ? (sortAsc ? 'asc' : 'desc') : false}
+                                        sx={{ borderRight: `1px solid ${hdrBorderV}`, backgroundColor: hdrBg2s, color: hdrColor }}
+                                      >
                                     <Box display="flex" alignItems="center" justifyContent="center">
                                         <strong>Total</strong>
-                                        <IconButton size="small" onClick={() => handleSort('total')}>
-                                            {sortBy === 'total' ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>) : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>}
+                                        <IconButton
+                                          size="small"
+                                          aria-label={getSortButtonAriaLabel('Total', sortBy === 'total', sortAsc)}
+                                          onClick={() => handleSort('total')}
+                                        >
+                                            {sortBy === 'total'
+                                              ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>)
+                                              : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>
+                                            }
                                         </IconButton>
                                     </Box>
                                 </TableCell>
@@ -1622,21 +1742,44 @@ export default function Admin() {
                                 {visibleTableSections.map(({ section, assignments: visibleInSection, showPolicyTotal }) => (
                                         <Fragment key={section}>
                                             {showPolicyTotal && (
-                                            <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}>
+                                            <TableCell
+                                              align="center"
+                                              sortDirection={sortBy === section ? (sortAsc ? 'asc' : 'desc') : false}
+                                              sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}
+                                            >
                                                 <Box display="flex" alignItems="center" justifyContent="center">
                                                     <strong>{section} Policy</strong>
-                                                    <IconButton size="small" onClick={() => handleSort(section)}>
-                                                        {sortBy === section ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>) : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>}
+                                                    <IconButton
+                                                      size="small"
+                                                      aria-label={getSortButtonAriaLabel(`${section} Policy`, sortBy === section, sortAsc)}
+                                                      onClick={() => handleSort(section)}
+                                                    >
+                                                        {sortBy === section
+                                                          ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>)
+                                                          : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>
+                                                        }
                                                     </IconButton>
                                                 </Box>
                                             </TableCell>
                                             )}
                                             {visibleInSection.map(a => (
-                                              <TableCell key={a.name} align="center" sx={{ minWidth: '120px', backgroundColor: hdrBg2s, color: hdrColor }}>
+                                              <TableCell
+                                                key={a.name}
+                                                align="center"
+                                                sortDirection={sortBy === a.name ? (sortAsc ? 'asc' : 'desc') : false}
+                                                sx={{ minWidth: '120px', backgroundColor: hdrBg2s, color: hdrColor }}
+                                              >
                                                     <Box display="flex" alignItems="center" justifyContent="center">
                                                         <strong style={{ fontSize: '11px' }}>{a.name}</strong>
-                                                        <IconButton size="small" onClick={() => handleSort(a.name)}>
-                                                            {sortBy === a.name ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>) : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>}
+                                                        <IconButton
+                                                          size="small"
+                                                          aria-label={getSortButtonAriaLabel(a.name, sortBy === a.name, sortAsc)}
+                                                          onClick={() => handleSort(a.name)}
+                                                        >
+                                                            {sortBy === a.name
+                                                              ? (sortAsc ? <ArrowUpward fontSize="inherit"/> : <ArrowDownward fontSize="inherit"/>)
+                                                              : <ArrowUpward fontSize="inherit" style={{ opacity: 0.3 }}/>
+                                                            }
                                                         </IconButton>
                                                     </Box>
                                                 </TableCell>
@@ -1647,6 +1790,17 @@ export default function Admin() {
                         </TableHead>
                         
                         <TableBody>
+                            {visibleStudents.length === 0 && (
+                                <TableRow>
+                                    <TableCell colSpan={totalStudentScoreColumns} align="center" sx={{ py: 5 }}>
+                                      <Typography role="status" aria-live="polite" color="text.secondary">
+                                        {studentSearchQuery.trim()
+                                          ? `No students match "${studentSearchQuery.trim()}". Try a different name or email.`
+                                          : 'No student scores are available for this course.'}
+                                      </Typography>
+                                    </TableCell>
+                                </TableRow>
+                            )}
                             {virtualStudentWindow.topPadding > 0 && (
                                 <TableRow aria-hidden="true">
                                     <TableCell
@@ -1668,7 +1822,12 @@ export default function Admin() {
                                   isLight={isLight}
                                   hdrBorderH={hdrBorderH}
                                   hdrBorderV={hdrBorderV}
-                                  onOpenProfile={handleOpenStudentProfile}
+                                  studentHref={buildStudentExperiencePath({
+                                    persona: STUDENT_PERSONA.STAFF,
+                                    identifier: stu.email,
+                                    page: 'report',
+                                    search: studentReportSearch,
+                                  })}
                                 />
                             ))}
                             {virtualStudentWindow.bottomPadding > 0 && (
