@@ -33,6 +33,45 @@ function renderAdmin(initialEntry) {
   };
 }
 
+const studentScoreFixture = [
+  {
+    name: 'Avery Chen',
+    email: 'avery.chen@example.edu',
+    scores: { Labs: { 'Lab 1': 9 } },
+    summarySectionTotals: { Labs: 9 },
+    canonicalGrade: { exactScore: 9, displayScore: 9, percentage: 90, letter: 'A' },
+  },
+  {
+    name: 'Zoe Patel',
+    email: 'zoe.patel@example.edu',
+    scores: { Labs: { 'Lab 1': 5 } },
+    summarySectionTotals: { Labs: 5 },
+    canonicalGrade: { exactScore: 5, displayScore: 5, percentage: 50, letter: 'F' },
+  },
+];
+
+function mockStudentScoreData() {
+  localStorage.setItem('selectedCourseId', 'course-101');
+  const pendingCourseRequest = new Promise(() => {});
+  cachedApiGet.mockImplementation((path) => {
+    if (path === '/admin/sync' || path === '/students/courses') {
+      return pendingCourseRequest;
+    }
+    if (path.startsWith('/admin/assignments')) {
+      return Promise.resolve({ data: { Labs: { 'Lab 1': 10 } } });
+    }
+    if (path.startsWith('/admin/studentScores')) {
+      return Promise.resolve({ data: { students: studentScoreFixture } });
+    }
+    if (path.startsWith('/bins')) {
+      return Promise.resolve({
+        data: { assignment_points: { Labs: 10 }, overall_cap_points: 10 },
+      });
+    }
+    return Promise.resolve({ data: {} });
+  });
+}
+
 describe('Class Health tab URL state', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -90,5 +129,155 @@ describe('Class Health tab URL state', () => {
     });
     expect(screen.getByRole('tab', { name: 'Assignments' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByPlaceholderText('Search assignments…')).toBeInTheDocument();
+  });
+
+  test('student names are keyboard-accessible report links scoped to the selected course', async () => {
+    mockStudentScoreData();
+    renderAdmin('/admin?tab=students');
+
+    const studentLink = await screen.findByRole('link', {
+      name: 'View report for Avery Chen (avery.chen@example.edu)',
+    });
+
+    expect(studentLink).toHaveAttribute(
+      'href',
+      '/students/avery.chen%40example.edu/report?course_id=course-101',
+    );
+    studentLink.focus();
+    expect(studentLink).toHaveFocus();
+  });
+
+  test('search filters by name or email and presents a clear empty state', async () => {
+    mockStudentScoreData();
+    const user = userEvent.setup();
+    renderAdmin('/admin?tab=students');
+
+    const search = await screen.findByRole('searchbox', { name: 'Search students' });
+    await screen.findByRole('link', {
+      name: 'View report for Avery Chen (avery.chen@example.edu)',
+    });
+
+    await user.type(search, 'zoe.patel');
+    await waitFor(() => {
+      expect(screen.queryByRole('link', {
+        name: 'View report for Avery Chen (avery.chen@example.edu)',
+      })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('link', {
+      name: 'View report for Zoe Patel (zoe.patel@example.edu)',
+    })).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, 'nobody@example.edu');
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'No students match "nobody@example.edu". Try a different name or email.',
+    );
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+  });
+
+  test('search does not narrow the existing full-roster CSV export', async () => {
+    mockStudentScoreData();
+    const user = userEvent.setup();
+    const NativeBlob = global.Blob;
+    const csvPayloads = [];
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    global.Blob = jest.fn((parts, options) => {
+      csvPayloads.push(parts);
+      return new NativeBlob(parts, options);
+    });
+    URL.createObjectURL = jest.fn(() => 'blob:student-scores');
+    URL.revokeObjectURL = jest.fn();
+
+    try {
+      renderAdmin('/admin?tab=students');
+      const search = await screen.findByRole('searchbox', { name: 'Search students' });
+      await screen.findByRole('link', {
+        name: 'View report for Avery Chen (avery.chen@example.edu)',
+      });
+
+      await user.type(search, 'Avery');
+      await waitFor(() => {
+        expect(screen.queryByRole('link', {
+          name: 'View report for Zoe Patel (zoe.patel@example.edu)',
+        })).not.toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: 'Export CSV' }));
+
+      const csv = csvPayloads.flat().join('');
+      expect(csv).toContain('Avery Chen');
+      expect(csv).toContain('Zoe Patel');
+    } finally {
+      global.Blob = NativeBlob;
+      URL.createObjectURL = originalCreateObjectURL;
+      URL.revokeObjectURL = originalRevokeObjectURL;
+      anchorClick.mockRestore();
+    }
+  });
+
+  test('sort controls expose the current direction and the next action', async () => {
+    mockStudentScoreData();
+    const user = userEvent.setup();
+    renderAdmin('/admin?tab=students');
+    await screen.findByRole('link', {
+      name: 'View report for Avery Chen (avery.chen@example.edu)',
+    });
+
+    const ascendingAction = screen.getByRole('button', { name: 'Sort by Total ascending' });
+    await user.click(ascendingAction);
+
+    const descendingAction = screen.getByRole('button', { name: 'Sort by Total descending' });
+    expect(descendingAction.closest('th')).toHaveAttribute('aria-sort', 'ascending');
+    await user.click(descendingAction);
+
+    expect(screen.getByRole('button', { name: 'Sort by Total ascending' }).closest('th'))
+      .toHaveAttribute('aria-sort', 'descending');
+  });
+
+  test('raw column controls use progressive disclosure without changing their behavior', async () => {
+    mockStudentScoreData();
+    const user = userEvent.setup();
+    renderAdmin('/admin?tab=students');
+    await screen.findByRole('link', {
+      name: 'View report for Avery Chen (avery.chen@example.edu)',
+    });
+
+    const summary = screen.getByText('Raw columns (0 of 1 selected)').closest('summary');
+    const details = summary.closest('details');
+    expect(details).toHaveAttribute('open');
+    expect(screen.getByRole('button', { name: 'Both' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+
+    await user.click(summary);
+    expect(details).not.toHaveAttribute('open');
+    await user.click(summary);
+    expect(details).toHaveAttribute('open');
+    await user.click(screen.getByRole('button', { name: 'Select All' }));
+
+    expect(await screen.findByText('Raw columns (1 of 1 selected)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Labs (1/1)' })).toBeInTheDocument();
+    expect(details).toHaveAttribute('open');
+  });
+
+  test('raw column controls start collapsed on narrow screens', async () => {
+    mockStudentScoreData();
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = jest.fn(() => ({
+      matches: true,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    }));
+
+    try {
+      renderAdmin('/admin?tab=students');
+      await screen.findByRole('link', {
+        name: 'View report for Avery Chen (avery.chen@example.edu)',
+      });
+      expect(screen.getByText('Raw columns (0 of 1 selected)').closest('details'))
+        .not.toHaveAttribute('open');
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });
