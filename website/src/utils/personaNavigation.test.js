@@ -9,6 +9,7 @@ import {
   createInitialPermissionState,
   deriveShellCapabilities,
   getCourseControlModel,
+  isNavigationItemActive,
   parseStoredPermissions,
   persistShellLoginSession,
   permissionStateReducer,
@@ -24,6 +25,21 @@ function createMemoryStorage(initial = {}) {
 }
 
 describe('persona navigation matrix', () => {
+  it('activates only the current first-level Admin section', () => {
+    const capabilities = deriveShellCapabilities({ has_course_admin: true });
+    const adminItems = buildNavigationModel(capabilities, '/admin').sections[1].items;
+
+    expect(adminItems.filter((item) => (
+      isNavigationItemActive(item, '/admin', '?tab=students&filter=missing')
+    )).map((item) => item.name)).toEqual(['Students']);
+    expect(adminItems.filter((item) => (
+      isNavigationItemActive(item, '/admin', '')
+    )).map((item) => item.name)).toEqual(['Assignments']);
+    expect(adminItems.filter((item) => (
+      isNavigationItemActive(item, '/admin', '?tab=not-a-tab')
+    )).map((item) => item.name)).toEqual(['Assignments']);
+  });
+
   it('shows only Student navigation to a student viewing their own workspace', () => {
     const capabilities = deriveShellCapabilities({ has_student: true });
     const model = buildNavigationModel(capabilities, '/profile');
@@ -51,7 +67,12 @@ describe('persona navigation matrix', () => {
     expect(staff.sections[0].items.find((item) => item.name === 'Workspace')?.href).toBe(
       '/students/avery%40example.com/workspace?course_id=demo-cs10',
     );
-    expect(staff.sections[1].items.some((item) => item.name === 'Class Health')).toBe(true);
+    expect(staff.sections[1].items.slice(0, 3)).toEqual([
+      expect.objectContaining({ name: 'Assignments', href: '/admin?tab=assignments' }),
+      expect.objectContaining({ name: 'Students', href: '/admin?tab=students' }),
+      expect.objectContaining({ name: 'AI Analytics', href: '/admin?tab=analytics' }),
+    ]);
+    expect(staff.sections[1].items.some((item) => item.name === 'Class Health')).toBe(false);
     expect(demo.sections.map((section) => section.title)).toEqual(['STUDENT', 'ADMIN']);
   });
 
@@ -75,7 +96,7 @@ describe('persona navigation matrix', () => {
     expect(model.sections[0].items.some((item) => item.href.includes('old%40example.com'))).toBe(false);
   });
 
-  it('provides an explained Class Health fallback instead of staff self-profile links', () => {
+  it('provides an explained Students fallback instead of staff self-profile links', () => {
     const model = buildNavigationModel(
       deriveShellCapabilities({ has_instructor: true }),
       '/admin',

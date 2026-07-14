@@ -217,4 +217,20 @@ describe('AI Analytics live request states', () => {
     await waitFor(() => expect(mockInitialize).not.toHaveBeenCalled());
     expect(document.body.textContent).not.toMatch(/Zhang San|Li Si|example\.com|Memory Management|Pointer usage|Binary Tree/i);
   });
+
+  it('uses the shared compact card and neutral status treatment', () => {
+    render(<AIAnalytics selectedCourseId="1" courses={COURSES} />);
+
+    const primarySection = screen
+      .getByRole('heading', { name: 'Semantic Data Detective' })
+      .closest('section');
+    const unavailableStatus = screen
+      .getByText(/does not currently provide a knowledge-gap dataset/i)
+      .closest('[role="status"]');
+
+    expect(window.getComputedStyle(primarySection).borderRadius).toBe('8px');
+    expect(window.getComputedStyle(primarySection).boxShadow).toBe('none');
+    expect(window.getComputedStyle(unavailableStatus).backgroundColor).toBe('rgb(249, 250, 251)');
+    expect(window.getComputedStyle(unavailableStatus).borderRadius).toBe('8px');
+  });
 });

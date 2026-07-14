@@ -153,7 +153,11 @@ describe('route-authoritative staff shell navigation', () => {
       '/students/avery%40example.com/workspace?course_id=demo-cs61c',
     );
     expect(screen.getByRole('link', { name: 'Report' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('link', { name: 'Class Health' })).toHaveAttribute('href', '/admin');
+    expect(screen.getByRole('link', { name: 'Students' })).toHaveAttribute(
+      'href',
+      '/admin?tab=students',
+    );
+    expect(screen.queryByRole('link', { name: 'Class Health' })).not.toBeInTheDocument();
 
     const courseSelector = await screen.findByRole('combobox', { name: /Current course/ });
     expect(courseSelector).toHaveTextContent('2027 Fall Systems Course B');
@@ -183,11 +187,11 @@ describe('route-authoritative staff shell navigation', () => {
     expect(screen.getByText('ADMIN')).toBeInTheDocument();
     expect(screen.getAllByRole('menuitem', { name: 'Settings' })).toHaveLength(1);
     expect(screen.getByRole('menuitem', { name: 'Workspace' })).toBeInTheDocument();
-    await user.click(screen.getByRole('menuitem', { name: 'Class Health' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Students' }));
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/admin');
-      expect(router.state.location.search).toBe('');
+      expect(router.state.location.search).toBe('?tab=students');
     });
   });
 
@@ -202,6 +206,17 @@ describe('route-authoritative staff shell navigation', () => {
         '/students/old%40example.com/workspace?course_id=demo-cs10',
       );
     });
+  });
+
+  test('keeps the support contact at the bottom of the desktop sidebar', async () => {
+    renderWithNavigation('/admin', jest.fn(), false, 'old@example.com');
+
+    const sidebar = await screen.findByRole('complementary', { name: /sidebar/i });
+    const supportLink = screen.getByRole('link', { name: 'gradeview@lists.berkeley.edu' });
+
+    expect(sidebar).toContainElement(supportLink);
+    expect(supportLink).toHaveAttribute('href', 'mailto:gradeview@lists.berkeley.edu');
+    expect(sidebar.querySelector('footer')).toBe(sidebar.querySelector('footer:last-child'));
   });
 
   test('updates selected-student links when the class course changes', async () => {
@@ -241,7 +256,7 @@ describe('route-authoritative staff shell navigation', () => {
 
     renderWithNavigation('/admin', jest.fn(), false, '');
 
-    expect(await screen.findByText(/Select a student in Class Health/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Select a student in Students/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Select student' })).toHaveAttribute(
       'href',
       '/admin?tab=students',
@@ -266,7 +281,7 @@ describe('route-authoritative staff shell navigation', () => {
     expect(await screen.findByRole('heading', { name: 'STUDENT' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute('href', '/profile');
     expect(screen.queryByRole('heading', { name: 'ADMIN' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Class Health' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Students' })).not.toBeInTheDocument();
   });
 
   test('shows one low-interruption Demo status chip without a sidebar notice', async () => {

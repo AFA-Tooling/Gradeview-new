@@ -10,8 +10,6 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Tabs,
-  Tab,
   Table,
   TableHead,
   TableBody,
@@ -22,12 +20,11 @@ import {
   IconButton,
   ToggleButtonGroup,
   ToggleButton,
-  Chip,
   Stack,
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import Grid from '@mui/material/Grid';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import StudentProfile from '../components/StudentProfile';
 import AIAnalytics from './aiAnalytics';
@@ -59,10 +56,20 @@ ChartJS.register(
   Legend
 );
 
-const STUDENT_SCORE_ROW_HEIGHT = 58;
+const STUDENT_SCORE_ROW_HEIGHT = 52;
 const STUDENT_SCORE_OVERSCAN_ROWS = 8;
 const ADMIN_TAB_QUERY_VALUES = ['assignments', 'students', 'analytics'];
 const sectionOrderCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const scoreTableSortButtonSx = {
+  width: 28,
+  height: 28,
+  ml: 0.25,
+  color: '#64748B',
+  '&:hover': {
+    color: '#315E9B',
+    backgroundColor: '#EAF2FF',
+  },
+};
 
 function getAdminTabIndex(search = '') {
   const requestedTab = new URLSearchParams(search).get('tab');
@@ -142,7 +149,6 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
   student,
   visibleTableSections,
   totalMaxPoints,
-  isLight,
   hdrBorderH,
   hdrBorderV,
   onOpenStudentReport,
@@ -152,15 +158,22 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
     : '0.00';
 
   return (
-    <TableRow sx={{ height: STUDENT_SCORE_ROW_HEIGHT }}>
-      <TableCell sx={{
+    <TableRow
+      sx={{
+        height: STUDENT_SCORE_ROW_HEIGHT,
+        backgroundColor: '#FFFFFF',
+        transition: 'background-color 120ms ease',
+        '&:hover': { backgroundColor: '#F3F7FD' },
+      }}
+    >
+      <TableCell className="student-sticky-cell" sx={{
         position: 'sticky',
         left: 0,
         zIndex: 10,
-        backgroundColor: isLight ? '#FAFAFB' : 'rgba(18, 28, 55, 0.94)',
-        borderRight: `2px solid ${hdrBorderH}`,
-        minWidth: '200px',
-        maxWidth: '250px',
+        backgroundColor: 'inherit',
+        borderRight: `1px solid ${hdrBorderH}`,
+        minWidth: '180px',
+        maxWidth: '220px',
       }}>
         <Box
           component="button"
@@ -176,13 +189,24 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
             background: 'none',
             font: 'inherit',
             textAlign: 'left',
-            color: 'inherit',
+            color: '#24324A',
             cursor: 'pointer',
             borderRadius: 0.5,
             textDecoration: 'none',
+            '& strong': {
+              fontSize: 14,
+              fontWeight: 700,
+              lineHeight: 1.3,
+            },
+            '& small': {
+              marginTop: '2px',
+              color: '#738096',
+              fontSize: 12,
+              lineHeight: 1.25,
+            },
             '&:hover': {
-              color: '#1976d2',
-              textDecoration: 'underline',
+              color: '#315E9B',
+              '& strong': { textDecoration: 'underline' },
             },
             '&:focus-visible': {
               outline: '2px solid #1976d2',
@@ -195,11 +219,27 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
         </Box>
       </TableCell>
 
-      <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}` }}>
+      <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, color: '#334155', fontWeight: 650 }}>
         {student.total.toFixed(2)}
       </TableCell>
-      <TableCell align="center" sx={{ borderRight: `2px solid ${hdrBorderH}` }}>
-        {finalPercentage}%
+      <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderH}` }}>
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-flex',
+            justifyContent: 'center',
+            minWidth: 66,
+            px: 1,
+            py: 0.35,
+            borderRadius: 999,
+            backgroundColor: '#EDF4FF',
+            color: '#315E9B',
+            fontSize: 12.5,
+            fontWeight: 700,
+          }}
+        >
+          {finalPercentage}%
+        </Box>
       </TableCell>
 
       {visibleTableSections.map(({ section, assignments: visibleInSection, showPolicyTotal }) => (
@@ -228,14 +268,14 @@ const RowSectionCells = memo(function RowSectionCells({
   return (
     <>
       {showPolicyTotal && (
-        <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, fontWeight: 'bold' }}>
+        <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `1px solid ${hdrBorderH}`, color: '#315E9B', fontWeight: 700 }}>
           {student.sectionTotals[section]?.toFixed(2) || '0.00'}
         </TableCell>
       )}
       {assignments.map((assignment) => {
         const rawScore = student.scores[assignment.name];
         return (
-          <TableCell key={assignment.name} align="center" sx={{ minWidth: '120px' }}>
+          <TableCell key={assignment.name} align="center" sx={{ minWidth: '108px', color: '#475569' }}>
             {(rawScore != null && rawScore !== '') ? Number(rawScore).toFixed(2) : 'N/A'}
           </TableCell>
         );
@@ -245,18 +285,17 @@ const RowSectionCells = memo(function RowSectionCells({
 });
 
 export default function Admin() {
-  const navigate = useNavigate();
   const location = useLocation();
   const isLight = true;
 
   // Adaptive palette — use once, ref everywhere
-  const hdrBg1        = '#EDEEF1';
-  const hdrBg1s       = '#E5E7EA';
-  const hdrBg2        = '#F4F5F7';
-  const hdrBg2s       = '#EDEEF1';
-  const hdrColor      = '#111111';
-  const hdrBorderH    = 'rgba(0, 0, 0, 0.18)';
-  const hdrBorderV    = 'rgba(0, 0, 0, 0.18)';
+  const hdrBg1        = '#F4F7FB';
+  const hdrBg1s       = '#EEF3F9';
+  const hdrBg2        = '#FFFFFF';
+  const hdrBg2s       = '#FAFCFF';
+  const hdrColor      = '#334155';
+  const hdrBorderH    = '#D8E2EE';
+  const hdrBorderV    = '#E8EDF4';
   const chartTick     = 'rgba(0, 0, 0, 0.75)';
   const chartTitle    = 'rgba(0, 0, 0, 0.85)';
   const chartGrid     = 'rgba(0, 0, 0, 0.08)';
@@ -692,22 +731,6 @@ export default function Admin() {
   }, [sortBy, sortAsc, scoreDisplayMode, visibleAssignments, selectedCourse, deferredStudentSearchQuery]);
 
   // Handlers
-  const handleTabChange = (_, newTab) => {
-    const nextSearchParams = new URLSearchParams(location.search);
-    nextSearchParams.set('tab', ADMIN_TAB_QUERY_VALUES[newTab] || ADMIN_TAB_QUERY_VALUES[0]);
-    navigate({
-      pathname: location.pathname,
-      search: `?${nextSearchParams.toString()}`,
-      hash: location.hash,
-    });
-    if (newTab !== 0) {
-      setSelected(null);
-      setStats(null);
-      setDistribution(null);
-      setStatsError(null);
-    }
-  };
-
   const handleAssignClick = item => {
     setSelected(item);
     setScoreSelected([]);  // Clear previous selection
@@ -878,33 +901,6 @@ export default function Admin() {
 
   return (
     <Box className='admin-shell' sx={{ minHeight: '100vh' }}>
-      {/* Tabs */}
-      <Box className='glass-section' sx={{ px: { xs: 1, sm: 4 }, py: 1, mb: 2, borderRadius: 2, minWidth: 0 }}>
-        <Tabs 
-          value={tab} 
-          onChange={handleTabChange}
-          variant="scrollable"
-          scrollButtons={false}
-          aria-label="Class health sections"
-          sx={{
-            minWidth: 0,
-            '& .MuiTab-root': {
-              textTransform: 'none',
-              fontSize: '0.95rem',
-              fontWeight: 500,
-              minHeight: 48,
-              minWidth: { xs: 'auto', sm: 90 },
-              px: { xs: 1.5, sm: 2 },
-              whiteSpace: 'nowrap',
-            }
-          }}
-        >
-          <Tab label="Assignments" />
-          <Tab label="Students" />
-          <Tab label="AI Analytics" />
-        </Tabs>
-      </Box>
-
       {/* ASSIGNMENTS TAB */}
     {tab === 0 && (
     <Box px={4} py={4}>
@@ -1254,7 +1250,7 @@ export default function Admin() {
 
       {/* STUDENTS × ASSIGNMENTS TAB */}
         {tab === 1 && (
-        <Box sx={{ px: { xs: 1.5, sm: 4 }, pt: { xs: 2, sm: 4 }, pb: { xs: 9, sm: 7 }, minWidth: 0 }}>
+        <Box sx={{ px: 0, pt: { xs: 1.5, sm: 2 }, pb: { xs: 9, sm: 5 }, minWidth: 0 }}>
             {loadingSS && (
               <Box display="flex" justifyContent="center" p={4}>
                 <Typography>Loading student scores…</Typography>
@@ -1263,24 +1259,20 @@ export default function Admin() {
             {errorSS && <Alert severity="error" sx={{ mb: 3 }}>{errorSS}</Alert>}
 
             {!loadingSS && !errorSS && (
-            <Paper elevation={0} className='glass-section' sx={{ borderRadius: 2, overflow: 'hidden', minWidth: 0 }}>
-                <Box sx={{ p: { xs: 2, sm: 3 }, borderBottom: '1px solid rgba(255,255,255,0.14)' }}>
+            <Paper elevation={0} className='glass-section' sx={{ borderRadius: 1.5, overflow: 'hidden', minWidth: 0 }}>
+                <Box sx={{ p: { xs: 1.5, sm: 2 }, borderBottom: '1px solid #E5E7EB' }}>
                   <Stack
                     direction={{ xs: 'column', md: 'row' }}
-                    alignItems={{ xs: 'stretch', md: 'flex-start' }}
+                    alignItems={{ xs: 'stretch', md: 'center' }}
                     justifyContent="space-between"
-                    spacing={2}
+                    spacing={1.5}
                   >
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      <Typography variant="h6" sx={{ color: '#111827', fontSize: 20, fontWeight: 750, lineHeight: 1.25 }}>
                         Student Scores Overview
                       </Typography>
-                      <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
-                        Click on column headers to sort, then open a student name to view their report.
-                        Use Raw columns below to choose which assignment columns to display.
-                      </Typography>
-                      <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#1976d2', fontWeight: 500 }}>
-                        Totals are final policy scores. Assignment columns are raw per-assignment scores.
+                      <Typography sx={{ mt: 0.35, color: '#6B7280', fontSize: 13.5, lineHeight: 1.45 }}>
+                        Sort columns or select a student to open their report. Totals use final policy scores; assignments show raw scores.
                       </Typography>
                     </Box>
                     <Stack
@@ -1296,7 +1288,7 @@ export default function Admin() {
                         size="small"
                         value={studentSearchQuery}
                         onChange={(event) => setStudentSearchQuery(event.target.value)}
-                        sx={{ width: { xs: '100%', sm: 260 } }}
+                        sx={{ width: { xs: '100%', sm: 240 } }}
                       />
                       <Button
                         size="small"
@@ -1304,9 +1296,10 @@ export default function Admin() {
                         sx={{
                           minHeight: 40,
                           textTransform: 'none',
-                          fontWeight: 500,
-                          backgroundColor: '#10b981',
-                          '&:hover': { backgroundColor: '#059669' },
+                          px: 1.75,
+                          fontWeight: 650,
+                          backgroundColor: '#111827',
+                          '&:hover': { backgroundColor: '#030712' },
                         }}
                         disabled={!sortedStudents.length}
                         onClick={handleExportCSV}
@@ -1318,9 +1311,9 @@ export default function Admin() {
                 </Box>
                 
                 {/* Assignment Selector - Buttons for each section */}
-                <Box sx={{ p: { xs: 2, sm: 3 }, bgcolor: isLight ? 'rgba(240, 246, 255, 0.6)' : 'rgba(255,255,255,0.03)' }}>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ mb: 1.5 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                <Box sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: '#FFFFFF', borderBottom: '1px solid #E5E7EB' }}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2" sx={{ color: '#374151', fontSize: 13, fontWeight: 700 }}>
                         Score View:
                     </Typography>
                     <ToggleButtonGroup
@@ -1334,8 +1327,19 @@ export default function Admin() {
                         '& .MuiToggleButton-root': {
                           flex: { xs: '1 1 0', md: '0 0 auto' },
                           px: { xs: 1, sm: 1.5 },
-                          whiteSpace: 'normal',
+                          minHeight: 34,
+                          color: '#4B5563',
+                          borderColor: '#D1D5DB',
+                          fontSize: 12.5,
+                          fontWeight: 650,
+                          textTransform: 'none',
+                          whiteSpace: 'nowrap',
                           lineHeight: 1.2,
+                          '&.Mui-selected': {
+                            color: '#FFFFFF',
+                            backgroundColor: '#111827',
+                            '&:hover': { backgroundColor: '#030712' },
+                          },
                         },
                       }}
                     >
@@ -1343,10 +1347,6 @@ export default function Admin() {
                       <ToggleButton value="raw">Raw assignments</ToggleButton>
                       <ToggleButton value="both">Both</ToggleButton>
                     </ToggleButtonGroup>
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <Chip size="small" label="Total = policy final" sx={{ fontWeight: 700 }} />
-                      <Chip size="small" label="Assignment cells = raw" sx={{ fontWeight: 700 }} />
-                    </Box>
                   </Stack>
                   <Box
                     component="details"
@@ -1354,10 +1354,10 @@ export default function Admin() {
                     onToggle={(event) => setRawColumnsOpen(event.currentTarget.open)}
                     sx={{
                       borderTop: '1px solid rgba(0, 0, 0, 0.12)',
-                      pt: 0.5,
+                      pt: 0.25,
                       '& > summary': {
-                        minHeight: 44,
-                        py: 1,
+                        minHeight: 38,
+                        py: 0.75,
                         cursor: 'pointer',
                         color: 'text.primary',
                         '&:focus-visible': {
@@ -1369,11 +1369,11 @@ export default function Admin() {
                     }}
                   >
                     <Box component="summary">
-                      <Typography component="span" variant="subtitle2" sx={{ fontWeight: 600, ml: 0.5 }}>
+                      <Typography component="span" variant="subtitle2" sx={{ color: '#374151', fontSize: 13, fontWeight: 700, ml: 0.25 }}>
                         Raw columns ({selectedRawAssignmentCount} of {assignments.length} selected)
                       </Typography>
                     </Box>
-                  <Box sx={{ display: 'flex', gap: 1.25, flexWrap: 'wrap', alignItems: 'center', pt: 1, pb: 0.5 }}>
+                  <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', alignItems: 'center', pt: 0.75, pb: 0.25 }}>
                     {isPending && (
                         <Typography variant="caption" sx={{ color: '#6366f1', fontStyle: 'italic' }}>
                             Updating table (this may take a moment for large tables)...
@@ -1632,34 +1632,34 @@ export default function Admin() {
                     ref={studentsTableRef}
                     onScroll={handleStudentsTableScroll}
                     sx={{ 
-                    bgcolor: isLight ? '#FAFAFB' : 'rgba(8, 14, 30, 0.74)',
+                    bgcolor: '#FFFFFF',
                     overflowX: 'auto',
                     overflowY: 'auto',
                     width: '100%',
                     maxWidth: '100%',
                     minWidth: 0,
                     overscrollBehaviorX: 'contain',
-                    maxHeight: { xs: '70vh', md: 'calc(100vh - 360px)' },
-                    minHeight: visibleStudents.length ? 420 : 'auto',
+                    maxHeight: { xs: '70vh', md: 'calc(100vh - 270px)' },
+                    minHeight: visibleStudents.length ? 360 : 'auto',
                         position: 'relative',
                         '&::-webkit-scrollbar': {
-                            height: '14px',
-                            width: '14px'
+                            height: '10px',
+                            width: '10px'
                         },
                         '&::-webkit-scrollbar-track': {
-                          backgroundColor: isLight ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255,255,255,0.12)',
-                            borderRadius: '8px'
+                          backgroundColor: '#F4F7FA',
+                            borderRadius: '10px'
                         },
                         '&::-webkit-scrollbar-thumb': {
-                          backgroundColor: 'rgba(0, 0, 0, 0.35)',
-                            borderRadius: '8px',
-                          border: '2px solid rgba(0, 0, 0, 0.08)',
+                          backgroundColor: '#C4D0DD',
+                            borderRadius: '10px',
+                          border: '2px solid #F4F7FA',
                             '&:hover': {
-                            backgroundColor: 'rgba(0, 0, 0, 0.55)'
+                            backgroundColor: '#94A6B8'
                             }
                         },
                         '&::-webkit-scrollbar-corner': {
-                          backgroundColor: isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255,255,255,0.12)'
+                          backgroundColor: '#F4F7FA'
                         }
                     }}
                 >
@@ -1670,9 +1670,12 @@ export default function Admin() {
                             minWidth: 'max-content', // Allow table to exceed container
                             '& .MuiTableCell-root': { 
                                 fontSize: '0.875rem',
-                                minWidth: '100px', // Increase minimum width for more spacious layout
-                                padding: '10px 16px', // Increase padding
-                                whiteSpace: 'nowrap'
+                                minWidth: '84px',
+                                padding: '8px 10px',
+                                whiteSpace: 'nowrap',
+                                color: '#475569',
+                                borderBottom: '1px solid #E8EDF4',
+                                fontVariantNumeric: 'tabular-nums',
                             },
                             '& .MuiTableCell-head': {
                               backgroundColor: hdrBg1,
@@ -1680,7 +1683,11 @@ export default function Admin() {
                                 position: 'sticky',
                                 top: 0,
                                 zIndex: 100,
-                                fontWeight: 600
+                                fontWeight: 650,
+                                borderBottom: `1px solid ${hdrBorderH}`,
+                            },
+                            '& .MuiTableBody-root .MuiTableRow-root:last-of-type .MuiTableCell-root': {
+                              borderBottom: 0,
                             }
                         }}
                     >
@@ -1692,21 +1699,30 @@ export default function Admin() {
                                     left: 0, 
                                     zIndex: 101, 
                                     backgroundColor: hdrBg1s,
-                                    color: hdrColor,
-                                    borderRight: `2px solid ${hdrBorderH}`,
-                                    minWidth: '200px',
-                                    maxWidth: '250px'
+                                    borderRight: `1px solid ${hdrBorderH}`,
+                                    minWidth: '180px',
+                                    maxWidth: '220px',
+                                    color: '#24324A',
+                                    fontSize: 13,
+                                    letterSpacing: '-0.01em',
                                 }}>
                                     <strong>Student</strong>
                                 </TableCell>
-                              <TableCell align="center" colSpan={2} sx={{ borderRight: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
-                                    <strong>Summary</strong>
+                              <TableCell align="center" colSpan={2} sx={{ borderRight: `1px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
+                                    <Typography component="span" sx={{ fontSize: 11.5, fontWeight: 750, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                                      Summary
+                                    </Typography>
                                 </TableCell>
                                 
                                 {/* Section Headers */}
                                 {visibleTableSections.map(({ section, colSpan }) => (
-                                        <TableCell key={section} colSpan={colSpan} align="center" sx={{ borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
-                                            <strong>{section}</strong> (Max: {sectionMaxPoints[section] || 0})
+                                        <TableCell key={section} colSpan={colSpan} align="center" sx={{ borderLeft: `1px solid ${hdrBorderH}`, backgroundColor: hdrBg1s, color: hdrColor }}>
+                                            <Typography component="span" sx={{ fontSize: 11.5, fontWeight: 750, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                                              {section}
+                                            </Typography>
+                                            <Typography component="span" sx={{ ml: 0.6, color: '#7B8BA1', fontSize: 11.5, fontWeight: 600 }}>
+                                              Max {sectionMaxPoints[section] || 0}
+                                            </Typography>
                                         </TableCell>
                                 ))}
                             </TableRow>
@@ -1719,7 +1735,7 @@ export default function Admin() {
                                     zIndex: 101,
                                     backgroundColor: hdrBg2s,
                                     color: hdrColor,
-                                    borderRight: `2px solid ${hdrBorderH}`
+                                    borderRight: `1px solid ${hdrBorderH}`
                                 }} />
                                       <TableCell
                                         align="center"
@@ -1727,9 +1743,10 @@ export default function Admin() {
                                         sx={{ borderRight: `1px solid ${hdrBorderV}`, backgroundColor: hdrBg2s, color: hdrColor }}
                                       >
                                     <Box display="flex" alignItems="center" justifyContent="center">
-                                        <strong>Total</strong>
+                                        <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 700 }}>Total</Typography>
                                         <IconButton
                                           size="small"
+                                          sx={scoreTableSortButtonSx}
                                           aria-label={getSortButtonAriaLabel('Total', sortBy === 'total', sortAsc)}
                                           onClick={() => handleSort('total')}
                                         >
@@ -1740,8 +1757,8 @@ export default function Admin() {
                                         </IconButton>
                                     </Box>
                                 </TableCell>
-                                    <TableCell align="center" sx={{ borderRight: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}>
-                                    <strong>Final %</strong>
+                                    <TableCell align="center" sx={{ borderRight: `1px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}>
+                                    <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 700 }}>Final %</Typography>
                                 </TableCell>
                                 
                                 {/* Section Total + Assignment Sub-headers */}
@@ -1751,12 +1768,13 @@ export default function Admin() {
                                             <TableCell
                                               align="center"
                                               sortDirection={sortBy === section ? (sortAsc ? 'asc' : 'desc') : false}
-                                              sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `2px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}
+                                              sx={{ borderRight: `1px solid ${hdrBorderV}`, borderLeft: `1px solid ${hdrBorderH}`, backgroundColor: hdrBg2s, color: hdrColor }}
                                             >
                                                 <Box display="flex" alignItems="center" justifyContent="center">
-                                                    <strong>{section} Policy</strong>
+                                                    <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 700 }}>{section} Policy</Typography>
                                                     <IconButton
                                                       size="small"
+                                                      sx={scoreTableSortButtonSx}
                                                       aria-label={getSortButtonAriaLabel(`${section} Policy`, sortBy === section, sortAsc)}
                                                       onClick={() => handleSort(section)}
                                                     >
@@ -1773,12 +1791,13 @@ export default function Admin() {
                                                 key={a.name}
                                                 align="center"
                                                 sortDirection={sortBy === a.name ? (sortAsc ? 'asc' : 'desc') : false}
-                                                sx={{ minWidth: '120px', backgroundColor: hdrBg2s, color: hdrColor }}
+                                                sx={{ minWidth: '108px', backgroundColor: hdrBg2s, color: hdrColor }}
                                               >
                                                     <Box display="flex" alignItems="center" justifyContent="center">
-                                                        <strong style={{ fontSize: '11px' }}>{a.name}</strong>
+                                                        <Typography component="span" sx={{ fontSize: 11.5, fontWeight: 700 }}>{a.name}</Typography>
                                                         <IconButton
                                                           size="small"
+                                                          sx={scoreTableSortButtonSx}
                                                           aria-label={getSortButtonAriaLabel(a.name, sortBy === a.name, sortAsc)}
                                                           onClick={() => handleSort(a.name)}
                                                         >
@@ -1825,7 +1844,6 @@ export default function Admin() {
                                   student={stu}
                                   visibleTableSections={visibleTableSections}
                                   totalMaxPoints={totalMaxPoints}
-                                  isLight={isLight}
                                   hdrBorderH={hdrBorderH}
                                   hdrBorderV={hdrBorderV}
                                   onOpenStudentReport={setStudentReportStudent}

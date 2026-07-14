@@ -83,7 +83,7 @@ import {
   getExamTrend as getContractExamTrend,
   getGradeSnapshot as getCanonicalGradeSnapshot,
   getLedgerGroupLabel,
-  getMostImportantCategory,
+  getProgressAnalysis,
   mergeExperienceQuery,
   optionalNumber,
   parseCategoryPageQuery,
@@ -206,10 +206,6 @@ function getRecentSignals(studentData) {
   return buildRecentSignals(studentData);
 }
 
-function getImportantCategory(blocks = []) {
-  return getMostImportantCategory(blocks);
-}
-
 function getTopActions(studentData) {
   return buildTopActions(studentData);
 }
@@ -269,7 +265,7 @@ function ContractStateNotice({ state, sx }) {
   );
 }
 
-function PageFrame({ title, subtitle, actions, children }) {
+function PageFrame({ title, subtitle, actions, children, hideHeading = false }) {
   return (
     <Box sx={{ maxWidth: 1240, mx: 'auto', width: '100%', pb: { xs: 10, md: 8 } }}>
       <Stack spacing={2.5}>
@@ -280,18 +276,29 @@ function PageFrame({ title, subtitle, actions, children }) {
             alignItems={{ xs: 'stretch', md: 'flex-start' }}
             justifyContent="space-between"
           >
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h5" component="h1" sx={sectionTitleSx}>
-                {title}
-              </Typography>
-              {subtitle && (
-                <Typography sx={{ mt: 0.5, color: colors.muted, fontSize: 14, lineHeight: 1.5 }}>
-                  {subtitle}
-                </Typography>
-              )}
-            </Box>
+            {!hideHeading && (title || subtitle) ? (
+              <Box sx={{ minWidth: 0 }}>
+                {title && (
+                  <Typography variant="h5" component="h1" sx={sectionTitleSx}>
+                    {title}
+                  </Typography>
+                )}
+                {subtitle && (
+                  <Typography sx={{ mt: title ? 0.5 : 0, color: colors.muted, fontSize: 14, lineHeight: 1.5 }}>
+                    {subtitle}
+                  </Typography>
+                )}
+              </Box>
+            ) : null}
             {actions && (
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent={{ xs: 'flex-start', md: 'flex-end' }}>
+              <Stack
+                direction="row"
+                spacing={1}
+                flexWrap="wrap"
+                useFlexGap
+                justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
+                sx={{ ml: { md: 'auto' } }}
+              >
                 {actions}
               </Stack>
             )}
@@ -453,15 +460,64 @@ function CategoryNavigationCard({ block, to }) {
   );
 }
 
-export function StudentWorkspaceHome({ studentData }) {
+export function ProgressAnalysisCards({ studentData, resolveLink = null }) {
+  const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
+  const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
+  const progress = useMemo(() => getProgressAnalysis(studentData), [studentData]);
+  const explainHref = resolveLink ? resolveLink('/profile/explain') : undefined;
+
+  return (
+    <Grid container spacing={2} data-testid="progress-analysis-cards">
+      <Grid item xs={12} md={4}>
+        <MetricTile
+          label="Overall score"
+          value={gradeSnapshot.exactScore == null || gradeSnapshot.cap == null
+            ? 'Unavailable'
+            : `${formatContractPoints(gradeSnapshot.exactScore)} / ${formatContractPoints(gradeSnapshot.cap)}`}
+          caption={progress.pointsLost == null
+            ? 'Current deductions are unavailable until due assignment evidence is complete.'
+            : `${formatContractPoints(progress.pointsLost)} pts lost from ${formatContractPoints(progress.dueCap)} currently due points`}
+          to={explainHref}
+          icon={<TrendingUp fontSize="small" />}
+          notice={contractState}
+        />
+      </Grid>
+      <Grid item xs={12} md={4}>
+        <MetricTile
+          label="Happy score"
+          value={progress.happyScore == null || progress.courseCap == null
+            ? 'Unavailable'
+            : `${formatContractPoints(progress.happyScore)} / ${formatContractPoints(progress.courseCap)}`}
+          caption={progress.happyScore == null
+            ? 'Needs usable due-work evidence.'
+            : `Highest possible finish if all remaining work earns full credit${progress.happyGrade ? ` · ${progress.happyGrade}` : ''}`}
+          to={explainHref}
+          icon={<TimelineOutlined fontSize="small" />}
+        />
+      </Grid>
+      <Grid item xs={12} md={4}>
+        <MetricTile
+          label="Grade safety margin"
+          value={progress.gradeTolerance == null ? 'Unavailable' : `${formatContractPoints(progress.gradeTolerance)} pts`}
+          caption={progress.gradeTolerance == null
+            ? 'Configured grade thresholds are required to calculate a safety margin.'
+            : progress.lowerGrade
+              ? `Can lose this much and stay at ${progress.happyGrade}; below ${formatContractPoints(progress.happyGradeFloor)} moves to ${progress.lowerGrade}`
+              : `Can lose this much and remain in the ${progress.happyGrade} range`}
+          to={explainHref}
+          icon={<InsightsOutlined fontSize="small" />}
+        />
+      </Grid>
+    </Grid>
+  );
+}
+
+export function StudentWorkspaceHome({ studentData, compactHeader = false }) {
   const resolveLink = useExperienceLinkResolver();
   const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
-  const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
-  const importantCategory = useMemo(() => getImportantCategory(blocks), [blocks]);
   const actions = useMemo(() => getTopActions(studentData), [studentData]);
   const signals = useMemo(() => getRecentSignals(studentData), [studentData]);
   const evidenceRows = useMemo(() => getAssignmentEvidence(studentData), [studentData]);
-  const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
 
   if (!studentData) return <LoadingStudentPage title="Student Workspace" />;
 
@@ -469,46 +525,10 @@ export function StudentWorkspaceHome({ studentData }) {
     <PageFrame
       active="workspace"
       title="Student Workspace"
-      subtitle="Current standing, the grading area with the highest impact, and the next few things to do."
+      subtitle="Current deductions, best possible finish, grade safety margin, and the next few things to do."
+      hideHeading={compactHeader}
     >
-      <Grid container spacing={2}>
-        <Grid item xs={12} md={4}>
-          <MetricTile
-            label="Final standing"
-            value={gradeSnapshot.exactScore == null || gradeSnapshot.cap == null
-              ? 'Unavailable'
-              : `${formatContractPoints(gradeSnapshot.exactScore)} / ${formatContractPoints(gradeSnapshot.cap)}`}
-            caption={gradeSnapshot.currentGrade
-              ? `Current grade: ${gradeSnapshot.currentGrade}${gradeSnapshot.currentRange ? ` (${gradeSnapshot.currentRange})` : ''}`
-              : 'Canonical policy-final standing is unavailable.'}
-            to={resolveLink('/profile/explain')}
-            icon={<TrendingUp fontSize="small" />}
-            notice={contractState}
-          />
-        </Grid>
-        <Grid item xs={12} md={4}>
-          <MetricTile
-            label="Next grade gap"
-            value={gradeSnapshot.pointsToNext == null ? 'Unavailable' : (gradeSnapshot.nextGrade ? `${formatContractPoints(gradeSnapshot.pointsToNext)} pts` : 'Top bin')}
-            caption={gradeSnapshot.pointsToNext == null
-              ? 'A canonical display score is required before calculating a gap.'
-              : gradeSnapshot.nextGrade
-                ? `Needed for ${gradeSnapshot.nextGrade} at ${formatContractPoints(gradeSnapshot.nextThreshold)} pts`
-                : 'No higher grade bin is currently configured.'}
-            to={resolveLink('/profile/explain')}
-            icon={<TimelineOutlined fontSize="small" />}
-          />
-        </Grid>
-        <Grid item xs={12} md={4}>
-          <MetricTile
-            label="Most important area"
-            value={importantCategory?.label || 'No category data'}
-            caption={importantCategory?.importanceReason || 'Canonical category summaries are unavailable.'}
-            to={resolveLink(importantCategory?.route || '/profile/assignments')}
-            icon={<InsightsOutlined fontSize="small" />}
-          />
-        </Grid>
-      </Grid>
+      <ProgressAnalysisCards studentData={studentData} resolveLink={resolveLink} />
 
       <SectionPanel title="Category Summary" subtitle="Use these cards as the main route into focused grading pages.">
         <Grid container spacing={2}>
@@ -599,28 +619,31 @@ export function StudentWorkspaceHome({ studentData }) {
 }
 
 function buildReportSummary(studentData, studentEmail, currentCourse) {
-  const blocks = getWorkspaceBlocks(studentData);
   const grade = getGradeSnapshot(studentData);
-  const weak = getImportantCategory(blocks);
+  const progress = getProgressAnalysis(studentData);
   return [
     `Student: ${studentData?.studentName || studentData?.name || studentEmail || 'Unknown'}`,
     currentCourse ? `Course: ${currentCourse}` : '',
     grade.exactScore == null || grade.cap == null
-      ? 'Current standing: unavailable'
-      : `Current standing: ${formatContractPoints(grade.exactScore)} / ${formatContractPoints(grade.cap)} (${grade.currentGrade || 'letter unavailable'})`,
-    grade.nextGrade ? `Next grade gap: ${grade.pointsToNext} pts to ${grade.nextGrade}` : 'Next grade gap: top configured bin',
-    weak ? `Highest-impact area: ${weak.label}` : '',
+      ? 'Overall score: unavailable'
+      : `Overall score: ${formatContractPoints(grade.exactScore)} / ${formatContractPoints(grade.cap)}`,
+    progress.pointsLost == null
+      ? 'Current deductions: unavailable'
+      : `Current deductions: ${formatContractPoints(progress.pointsLost)} points lost from ${formatContractPoints(progress.dueCap)} currently due points`,
+    progress.happyScore == null || progress.courseCap == null
+      ? 'Happy score: unavailable'
+      : `Happy score: ${formatContractPoints(progress.happyScore)} / ${formatContractPoints(progress.courseCap)}${progress.happyGrade ? ` (${progress.happyGrade})` : ''}`,
+    progress.gradeTolerance == null
+      ? 'Grade safety margin: unavailable'
+      : `Grade safety margin: ${formatContractPoints(progress.gradeTolerance)} points to remain at ${progress.happyGrade}`,
   ].filter(Boolean).join('\n');
 }
 
-export function StudentReportContent({ studentData, studentEmail, currentCourse, staffMode = false }) {
+export function StudentReportContent({ studentData, studentEmail, currentCourse, staffMode = false, compactHeader = false }) {
   const [reviewed, setReviewed] = useState(false);
   const [notes, setNotes] = useState('');
   const [copied, setCopied] = useState(false);
-  const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
-  const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
   const summary = useMemo(() => buildReportSummary(studentData, studentEmail, currentCourse), [studentData, studentEmail, currentCourse]);
-  const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
 
   const copySummary = useCallback(async () => {
     try {
@@ -637,11 +660,12 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
   return (
     <PageFrame
       active="report"
-      title="Student Report"
+      title={staffMode ? null : 'Student Report'}
       subtitle={staffMode
-        ? 'One-page staff review of the canonical policy-final standing and assignment evidence.'
+        ? null
         : 'Your canonical policy-final standing, category evidence, exam diagnostics, and assignment catalog.'}
       staffMode={staffMode}
+      hideHeading={compactHeader}
       actions={(
         <>
           <Button variant="outlined" size="small" startIcon={<Print />} onClick={() => window.print()}>
@@ -663,43 +687,15 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
         </>
       )}
     >
-      <SectionPanel>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="overline" sx={{ color: colors.muted, fontWeight: 800, letterSpacing: 0 }}>
-              Final Policy Snapshot
-            </Typography>
-            <Typography sx={{ color: colors.ink, fontWeight: 850, fontSize: { xs: 28, md: 34 }, lineHeight: 1.05 }}>
-              {gradeSnapshot.exactScore == null || gradeSnapshot.cap == null
-                ? 'Canonical standing unavailable'
-                : `${formatContractPoints(gradeSnapshot.exactScore)} / ${formatContractPoints(gradeSnapshot.cap)} · ${gradeSnapshot.currentGrade || 'Letter unavailable'}`}
-            </Typography>
-            <Typography sx={{ color: colors.muted, fontSize: 13, mt: 1 }}>
-              {studentData?.studentName || studentData?.name || studentEmail || 'Student'}
-              {studentEmail ? ` · ${studentEmail}` : ''}
-              {currentCourse ? ` · ${currentCourse}` : ''}
-            </Typography>
-            <ContractStateNotice state={contractState} sx={{ mt: 1 }} />
-          </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="flex-start">
-            {EXAM_DEFS.map((def) => {
-              const block = blocks.find((item) => item.key === def.key);
-              return (
-                <Chip
-                  key={def.key}
-                  label={`${def.shortLabel}: ${block?.exactScore == null || block?.cap == null
-                    ? 'Unavailable'
-                    : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}`}
-                  sx={{ fontWeight: 750, backgroundColor: colors.band, color: colors.ink }}
-                />
-              );
-            })}
-            <Chip
-              label={gradeSnapshot.nextGrade ? `${formatContractPoints(gradeSnapshot.pointsToNext)} pts to ${gradeSnapshot.nextGrade}` : 'Top grade bin'}
-              sx={{ fontWeight: 750, backgroundColor: colors.greenBg, color: colors.green }}
-            />
-          </Stack>
-        </Stack>
+      <SectionPanel
+        title="Progress Analysis"
+        subtitle={[
+          studentData?.studentName || studentData?.name || studentEmail || 'Student',
+          studentEmail,
+          currentCourse,
+        ].filter(Boolean).join(' · ')}
+      >
+        <ProgressAnalysisCards studentData={studentData} />
         {staffMode && (
           <TextField
             multiline
@@ -852,7 +848,7 @@ function CategoryDomainOverview({ pageKey, block }) {
   );
 }
 
-export function CategoryDetailPage({ studentData, pageKey }) {
+export function CategoryDetailPage({ studentData, pageKey, compactHeader = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [selectedAssignment, setSelectedAssignment] = useState(null);
@@ -892,6 +888,7 @@ export function CategoryDetailPage({ studentData, pageKey }) {
       active={pageKey === 'quest' || pageKey === 'midterm' || pageKey === 'postterm' ? 'exams' : pageKey}
       title={block?.label || def?.label || 'Category'}
       subtitle="Summary, evidence, policy applied, impact, and action for this grading area."
+      hideHeading={compactHeader}
       actions={<Button component={RouterLink} to={relatedHref} size="small" variant="outlined" startIcon={<AssignmentOutlined />}>Open catalog rows</Button>}
     >
       <CategoryFilterControls
@@ -1064,7 +1061,7 @@ function ExamScoreSummary({ studentData, mode, selectedExam, onSelectExam }) {
   );
 }
 
-export function ExamsOverviewPage({ studentData }) {
+export function ExamsOverviewPage({ studentData, compactHeader = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const resolveLink = useExperienceLinkResolver();
@@ -1100,6 +1097,7 @@ export function ExamsOverviewPage({ studentData }) {
       active="exams"
       title="Exams And Clobber"
       subtitle="Choose one evidence mode. Diagnostic attempt data stays separate from canonical policy-final exam scores."
+      hideHeading={compactHeader}
       actions={(
         <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_event, value) => value && setMode(value)}>
           <ToggleButton value="raw">Raw</ToggleButton>
@@ -1180,7 +1178,7 @@ export function ExamsOverviewPage({ studentData }) {
   );
 }
 
-export function SingleExamPage({ studentData, examKey }) {
+export function SingleExamPage({ studentData, examKey, compactHeader = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const def = CATEGORY_BY_KEY.get(examKey) || CATEGORY_BY_KEY.get('quest');
@@ -1201,6 +1199,7 @@ export function SingleExamPage({ studentData, examKey }) {
       active="exams"
       title={`${def.label} ${block?.exactScore == null || block?.cap == null ? 'Unavailable' : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}`}
       subtitle="The title always uses the canonical policy-final category value. Choose one diagnostic structure below."
+      hideHeading={compactHeader}
       actions={(
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_event, value) => value && setMode(value)}>
@@ -1483,7 +1482,7 @@ function QuestionBestMatrix({ trend, compact = false }) {
   );
 }
 
-export function AssignmentLedger({ studentData }) {
+export function AssignmentLedger({ studentData, compactHeader = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [selectedAssignment, setSelectedAssignment] = useState(null);
@@ -1522,6 +1521,7 @@ export function AssignmentLedger({ studentData }) {
       active="assignments"
       title="Assignment Ledger"
       subtitle="Authoritative assignment catalog joined with per-student evidence. Unknown, unsynced, and error states remain distinct from a true zero."
+      hideHeading={compactHeader}
       actions={(
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Button disabled={controlsDisabled || visibleRows.length === 0} variant="outlined" size="small" startIcon={<DownloadOutlined />} onClick={() => exportRows('current')}>
@@ -1680,7 +1680,7 @@ function AssignmentDrawer({ assignment, onClose }) {
   );
 }
 
-export function ExplainScorePage({ studentData, gradeFlowLoading, gradeFlowError }) {
+export function ExplainScorePage({ studentData, gradeFlowLoading, gradeFlowError, compactHeader = false }) {
   const steps = ['Raw scores', 'Policy transformations', 'Category final', 'Course total', 'Rounding', 'Grade bin'];
   const hasGradeFlow = Boolean(studentData?.gradeFlow);
   const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
@@ -1689,6 +1689,7 @@ export function ExplainScorePage({ studentData, gradeFlowLoading, gradeFlowError
       active="explain"
       title="Explain Score"
       subtitle="A student-facing policy flow from raw scores to the current grade bin."
+      hideHeading={compactHeader}
     >
       <SectionPanel title="Default Flow">
         <PolicyFlow steps={steps} />
@@ -1718,7 +1719,7 @@ export function ExplainScorePage({ studentData, gradeFlowLoading, gradeFlowError
   );
 }
 
-export function ConceptsPage({ studentData }) {
+export function ConceptsPage({ studentData, compactHeader = false }) {
   const weakBlocks = useMemo(() => (
     getWorkspaceBlocks(studentData)
       .filter((block) => safeNumber(block.percentage) < 75)
@@ -1731,6 +1732,7 @@ export function ConceptsPage({ studentData }) {
       active="concepts"
       title="Concept Diagnosis"
       subtitle="Connect grade outcomes to learning topics, related exams, and related assignments."
+      hideHeading={compactHeader}
     >
       <SectionPanel title="Weak Topics Summary" subtitle="Mapped from low-scoring grade areas until concept-level evidence is available.">
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -1748,7 +1750,7 @@ export function ConceptsPage({ studentData }) {
   );
 }
 
-export function PolicyReference({ studentData }) {
+export function PolicyReference({ studentData, compactHeader = false }) {
   const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
   const grade = useMemo(() => getGradeSnapshot(studentData), [studentData]);
   return (
@@ -1756,6 +1758,7 @@ export function PolicyReference({ studentData }) {
       active="policy"
       title="Policy Reference"
       subtitle="Course policy stays separate from personal assignment analysis."
+      hideHeading={compactHeader}
     >
       <Grid container spacing={2}>
         <Grid item xs={12} md={6}>

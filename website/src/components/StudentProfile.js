@@ -70,6 +70,7 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
     <Dialog 
       open={open} 
       onClose={onClose} 
+      aria-labelledby="student-report-dialog-title"
       maxWidth="xl"
       fullWidth
       PaperProps={{
@@ -80,16 +81,16 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
         }
       }}
     >
-      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider', px: 2.5, py: 1.75 }}>
-        <Box>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>Student Report</Typography>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2.5, py: 1.75 }}>
+        <DialogTitle id="student-report-dialog-title" sx={{ p: 0, fontWeight: 600 }}>
+          Student Report
+        </DialogTitle>
           {studentName && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {studentName} ({studentEmail})
             </Typography>
           )}
-        </Box>
-      </DialogTitle>
+      </Box>
 
       <DialogContent
         dividers

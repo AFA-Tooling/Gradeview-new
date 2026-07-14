@@ -7,6 +7,14 @@
 - Closing the Student Report must return the user to the unchanged Class Health Students view, preserving its tab, filters, sorting, and scroll context.
 - Treat this as a product interaction invariant. Add or update a regression test whenever this interaction is changed.
 
+## Student report surface synchronization
+
+- `StudentReportContent` is the canonical report body for both standalone Student Report routes and the **Class Health → Students** modal. Do not create a modal-only or route-only copy of report cards, metrics, formulas, labels, or status handling.
+- Shared report metrics must come from shared selectors and shared presentation components. In particular, keep progress calculations in `getProgressAnalysis` and render the Overall score / Happy score / Grade safety margin cards through `ProgressAnalysisCards`; do not duplicate that JSX or recompute those values from the Class Health table row.
+- The Class Health student row is only an identity/selection source. The modal must fetch the selected student's full profile through `fetchStudentProfileData`, using the same student and course identity as standalone report routes.
+- When changing Student Report content, audit every consumer: the self report, staff `/students/:studentId/report`, and the Class Health modal. Also update derived surfaces such as Copy summary and print content when their displayed metrics change.
+- Add or update regression coverage that renders the shared report content and verifies the same metric labels and values in standalone and modal contexts. Keep the existing modal URL/state-preservation regression test as part of that coverage.
+
 ## Information density and responsive layout
 
 - At 100% browser zoom, do not compress a content block until labels, table columns, or controls become crowded, excessively wrapped, clipped, or visually noisy just to keep more content in the first viewport.

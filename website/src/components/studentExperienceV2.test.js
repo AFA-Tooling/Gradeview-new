@@ -109,8 +109,12 @@ const studentData = {
     subtotals: { exams: { basis: 'policy_final', exactScore: 100.5, cap: 150 } },
   },
   gradeBins: [
+    { grade: 'C+', range: '310-319', minScore: 310, maxScore: 319 },
     { grade: 'B-', range: '320-329', minScore: 320, maxScore: 329 },
     { grade: 'B', range: '330-339', minScore: 330, maxScore: 339 },
+    { grade: 'B+', range: '340-349', minScore: 340, maxScore: 349 },
+    { grade: 'A-', range: '350-369', minScore: 350, maxScore: 369 },
+    { grade: 'A', range: '370-400', minScore: 370, maxScore: 400 },
   ],
   assignmentEvidence: [
     evidence('attendance-1', 'Attendance / Participation', 'Lecture 1', 'submitted'),
@@ -194,9 +198,13 @@ describe('student experience canonical contract surfaces', () => {
     ], '/profile');
 
     expect(screen.getByText('321.37 / 400')).toBeInTheDocument();
+    expect(screen.getByText('368 / 400')).toBeInTheDocument();
+    expect(screen.getByText('18 pts')).toBeInTheDocument();
+    expect(screen.getByText(/32 pts lost from 40 currently due points/)).toBeInTheDocument();
+    expect(screen.getByText(/Highest possible finish if all remaining work earns full credit · A-/)).toBeInTheDocument();
+    expect(screen.getByText(/below 350 moves to B\+/)).toBeInTheDocument();
     expect(screen.queryByText('321.4 / 400')).not.toBeInTheDocument();
     expect(screen.queryByText('1 / 150')).not.toBeInTheDocument();
-    expect(screen.getByText('Most important area').parentElement).toHaveTextContent('Labs');
     await user.click(screen.getByRole('link', { name: /Resolve Lab Missing/i }));
 
     expect(screen.getByRole('heading', { name: 'Assignment Ledger' })).toBeInTheDocument();
@@ -227,6 +235,36 @@ describe('student experience canonical contract surfaces', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('status=missing');
   });
 
+  test('staff report removes the redundant page heading while keeping report actions', () => {
+    render(<StudentReportContent studentData={studentData} staffMode />);
+
+    expect(screen.queryByRole('heading', { name: 'Student Report' })).not.toBeInTheDocument();
+    expect(screen.queryByText('One-page staff review of the canonical policy-final standing and assignment evidence.')).not.toBeInTheDocument();
+    const progressCards = screen.getByTestId('progress-analysis-cards');
+    expect(within(progressCards).getByText('Overall score')).toBeInTheDocument();
+    expect(within(progressCards).getByText('Happy score')).toBeInTheDocument();
+    expect(within(progressCards).getByText('Grade safety margin')).toBeInTheDocument();
+    expect(within(progressCards).getByText('321.37 / 400')).toBeInTheDocument();
+    expect(within(progressCards).getByText('368 / 400')).toBeInTheDocument();
+    expect(within(progressCards).getByText('18 pts')).toBeInTheDocument();
+    expect(screen.queryByText('Final Policy Snapshot')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Print' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy summary' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark reviewed' })).toBeInTheDocument();
+  });
+
+  test('compact staff category pages hide the contextual heading but retain actions', () => {
+    renderRoutes([{
+      path: '/students/:studentId/projects',
+      element: <CategoryDetailPage studentData={studentData} pageKey="projects" compactHeader />,
+    }], '/students/avery%40example.com/projects?course_id=demo-cs10');
+
+    expect(screen.queryByRole('heading', { name: 'Projects' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Summary, evidence, policy applied, impact, and action for this grading area.')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open catalog rows' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Projects Evidence' })).toBeInTheDocument();
+  });
+
   test('Report, category page, and exam title repeat canonical values without legacy fallbacks', () => {
     const report = renderRoutes([{ path: '/profile/report', element: <StudentReportContent studentData={studentData} /> }], '/profile/report');
     expect(screen.getAllByText(/321\.37 \/ 400/).length).toBeGreaterThan(0);
@@ -241,9 +279,9 @@ describe('student experience canonical contract surfaces', () => {
       minWidth: '1120px',
       tableLayout: 'fixed',
     });
-    expect(screen.queryByText('lab-duplicate-a')).not.toBeInTheDocument();
+    expect(screen.getByText('lab-duplicate-a')).toBeInTheDocument();
     expect(screen.getByText('lab-duplicate-b')).toBeInTheDocument();
-    expect(screen.queryByText('quest-future')).not.toBeInTheDocument();
+    expect(screen.getByText('quest-future')).toBeInTheDocument();
     expect(screen.getAllByText('3 attempts').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 attempt').length).toBeGreaterThanOrEqual(2);
     report.unmount();

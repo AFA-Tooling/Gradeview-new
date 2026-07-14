@@ -295,8 +295,8 @@ export function formatEvidenceScore(row) {
   if (!['earned_zero', 'submitted'].includes(status)) {
     if (status === 'missing') {
       return row.maxPoints == null
-        ? 'No submission'
-        : `No submission · ${formatPoints(row.maxPoints)} pts possible`;
+        ? '0 pts'
+        : `0 / ${formatPoints(row.maxPoints)}`;
     }
     return getEvidenceStatusMeta(status, row).label;
   }
@@ -387,6 +387,42 @@ function parseGradeBins(rawBins = []) {
     })
     .filter(Boolean)
     .sort((left, right) => left.low - right.low);
+}
+
+export function getProgressAnalysis(studentData) {
+  const standing = getCanonicalStanding(studentData);
+  const evidence = summarizeEvidence(getAssignmentEvidence(studentData));
+  const courseCap = standing.cap;
+  const hasCatalogEvidence = evidence.totalItems > 0;
+  const dueScore = hasCatalogEvidence ? evidence.dueScore : null;
+  const dueCap = hasCatalogEvidence ? evidence.dueMax : null;
+  const pointsLost = dueScore == null || dueCap == null
+    ? null
+    : Math.max(0, dueCap - dueScore);
+  const happyScore = courseCap == null || pointsLost == null
+    ? null
+    : Math.max(0, Math.min(courseCap, courseCap - pointsLost));
+  const bins = parseGradeBins(studentData?.gradeBins);
+  const happyBinIndex = happyScore == null
+    ? -1
+    : bins.reduce((match, bin, index) => (bin.low <= happyScore ? index : match), -1);
+  const happyBin = happyBinIndex >= 0 ? bins[happyBinIndex] : null;
+  const lowerBin = happyBinIndex > 0 ? bins[happyBinIndex - 1] : null;
+
+  return {
+    exactScore: standing.exactScore,
+    courseCap,
+    dueScore,
+    dueCap,
+    dueItemCount: evidence.dueItemCount,
+    pointsLost,
+    happyScore,
+    happyGrade: happyBin?.grade || null,
+    happyGradeFloor: happyBin?.low ?? null,
+    lowerGrade: lowerBin?.grade || null,
+    gradeTolerance: happyBin ? Math.max(0, happyScore - happyBin.low) : null,
+    evidenceStatus: evidence.status,
+  };
 }
 
 export function getGradeSnapshot(studentData) {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Query GradeView Course"
+  short_description: "Query live course grades through a safe semantic layer"
+  default_prompt: "Use $query-gradeview-course to analyze the selected GradeView course."

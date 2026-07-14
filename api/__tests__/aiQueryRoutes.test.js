@@ -3,10 +3,7 @@ import request from 'supertest';
 import { __mockQuery as mockQuery } from '../lib/dbHelper.mjs';
 import { IAM_ROLE } from '../lib/iam.mjs';
 import { buildPermissionTokenResponse } from '../lib/sessionToken.mjs';
-import {
-    COURSE_QUERY_PLAN_ID,
-    getCourseScopedQueryPlan,
-} from '../v2/Routes/admin/ai-query/courseScope.js';
+import { compileSemanticQuery } from '../v2/Routes/admin/ai-query/semanticQuery.js';
 import AdminRouter from '../v2/Routes/admin/index.js';
 
 jest.mock('../lib/dbHelper.mjs', () => {
@@ -66,12 +63,12 @@ function createApp() {
     return app;
 }
 
-function openAiResponse(content) {
+function openAiResponse(spec) {
     return {
         ok: true,
         status: 200,
         json: jest.fn().mockResolvedValue({
-            choices: [{ message: { content } }],
+            output: [{ content: [{ type: 'output_text', text: JSON.stringify(spec) }] }],
         }),
     };
 }
@@ -83,13 +80,21 @@ describe('course-scoped AI analytics routes', () => {
     beforeEach(() => {
         app = createApp();
         mockQuery.mockReset();
-        mockQuery.mockResolvedValue({
-            rows: [{
-                total_students: '32',
-                total_assignments: '24',
-                total_submissions: '512',
-                overall_avg: '88.50',
-            }],
+        mockQuery.mockImplementation(async (text) => {
+            if (text.includes('FROM information_schema.columns')) {
+                return { rows: [{ table_name: 'assignments', column_name: 'id', data_type: 'integer' }] };
+            }
+            if (text.includes('SELECT c.id, c.gradescope_course_id')) {
+                return { rows: [{ id: 1, gradescope_course_id: COURSE_ID, name: 'Test Course' }] };
+            }
+            return {
+                rows: [{
+                    total_students: 32,
+                    total_assignments: 24,
+                    total_submissions: 512,
+                    average_score: '88.50',
+                }],
+            };
         });
         originalApiKey = process.env.OPENAI_API_KEY;
         delete process.env.OPENAI_API_KEY;
@@ -130,12 +135,11 @@ describe('course-scoped AI analytics routes', () => {
 
         expect(response.body).toMatchObject({
             type: 'rule_based',
+            querySpec: { view: 'course_summary' },
             source: { type: 'live_course', course_id: COURSE_ID },
         });
         expect(mockQuery).toHaveBeenCalledTimes(1);
-        expect(mockQuery.mock.calls[0][0]).toBe(
-            getCourseScopedQueryPlan(COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW).sql,
-        );
+        expect(mockQuery.mock.calls[0][0]).toContain('WITH analytics AS');
         expect(mockQuery.mock.calls[0][1]).toEqual([COURSE_ID]);
         expect(global.fetch).not.toHaveBeenCalled();
     });
@@ -147,16 +151,16 @@ describe('course-scoped AI analytics routes', () => {
             .expect(200);
 
         expect(response.body.source).toEqual({ type: 'live_course', course_id: COURSE_ID });
-        expect(mockQuery).not.toHaveBeenCalled();
+        expect(response.body.course).toMatchObject({ gradescope_course_id: COURSE_ID });
+        expect(response.body.catalog.views.students.fields).not.toHaveProperty('email');
+        expect(mockQuery).toHaveBeenCalledTimes(2);
         expect(global.fetch).not.toHaveBeenCalled();
     });
 
-    test('generated path executes only a re-resolved trusted plan with the authorized $1 bind', async () => {
+    test('generated path executes only a validated semantic spec with the authorized $1 bind', async () => {
         process.env.OPENAI_API_KEY = 'test-key';
-        const approvedSql = getCourseScopedQueryPlan(COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW).sql.trim();
-        global.fetch
-            .mockResolvedValueOnce(openAiResponse(approvedSql))
-            .mockResolvedValueOnce(openAiResponse('Authorized course overview.'));
+        const spec = { view: 'course_summary', select: [], filters: [], order_by: [], limit: 50 };
+        global.fetch.mockResolvedValueOnce(openAiResponse(spec));
 
         const response = await request(app)
             .post(`/admin/ai-query?course_id=${COURSE_ID}`)
@@ -166,30 +170,27 @@ describe('course-scoped AI analytics routes', () => {
 
         expect(response.body).toMatchObject({
             type: 'ai_generated',
-            queryPlan: COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW,
+            querySpec: { view: 'course_summary' },
             source: { type: 'live_course', course_id: COURSE_ID },
         });
         expect(mockQuery).toHaveBeenCalledTimes(1);
-        expect(mockQuery.mock.calls[0]).toEqual([
-            getCourseScopedQueryPlan(COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW).sql,
-            [COURSE_ID],
-        ]);
-        expect(global.fetch).toHaveBeenCalledTimes(2);
+        expect(mockQuery.mock.calls[0][0]).toContain('WITH analytics AS');
+        expect(mockQuery.mock.calls[0][1]).toEqual([COURSE_ID]);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
+            text: { format: { type: 'json_schema', strict: true } },
+        });
     });
 
-    const approved = getCourseScopedQueryPlan(COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW).sql.trim();
     test.each([
-        ['comment', `${approved} -- pretend scoped`],
-        ['UNION', `${approved} UNION SELECT * FROM students`],
-        ['OR tautology', approved.replace('WHERE (c.id::text = $1 OR c.gradescope_course_id::text = $1)', 'WHERE (c.id::text = $1 OR c.gradescope_course_id::text = $1 OR TRUE)')],
-        ['unused CTE', `WITH scoped AS (SELECT 1 FROM courses c WHERE (c.id::text = $1 OR c.gradescope_course_id::text = $1)) SELECT * FROM students`],
-        ['subquery', `SELECT * FROM (${approved}) scoped CROSS JOIN students`],
-        ['second statement', `${approved}; SELECT * FROM students`],
-        ['$2 course', approved.replace(/\$1/g, '$2')],
-        ['multiple course params', approved.replace('c.gradescope_course_id::text = $1', 'c.gradescope_course_id::text = $2')],
-    ])('rejects generated %s bypass before pool.query', async (_, generatedSql) => {
+        ['unknown view', { view: 'users', select: [], filters: [], order_by: [], limit: 10 }],
+        ['private field', { view: 'students', select: ['email'], filters: [], order_by: [], limit: 10 }],
+        ['select injection', { view: 'students', select: ['student_name; DROP TABLE students'], filters: [], order_by: [], limit: 10 }],
+        ['filter injection', { view: 'students', select: ['student_name'], filters: [{ field: 'average_score OR TRUE', operator: 'gt', value: 0 }], order_by: [], limit: 10 }],
+        ['operator injection', { view: 'students', select: ['student_name'], filters: [{ field: 'average_score', operator: '> 0; DROP TABLE students', value: 0 }], order_by: [], limit: 10 }],
+    ])('rejects generated %s bypass before pool.query', async (_, generatedSpec) => {
         process.env.OPENAI_API_KEY = 'test-key';
-        global.fetch.mockResolvedValueOnce(openAiResponse(generatedSql));
+        global.fetch.mockResolvedValueOnce(openAiResponse(generatedSpec));
 
         const response = await request(app)
             .post(`/admin/ai-query?course_id=${COURSE_ID}`)
@@ -198,9 +199,35 @@ describe('course-scoped AI analytics routes', () => {
             .expect(422);
 
         expect(response.body).toMatchObject({
-            code: 'AI_QUERY_SCOPE_REJECTED',
+            code: 'SEMANTIC_QUERY_INVALID',
         });
         expect(mockQuery).not.toHaveBeenCalled();
         expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    test('structured endpoint compiles client specs and binds course scope', async () => {
+        const spec = {
+            view: 'students',
+            select: ['student_name', 'average_score'],
+            filters: [{ field: 'average_score', operator: 'lt', value: 60 }],
+            order_by: [{ field: 'average_score', direction: 'asc' }],
+            limit: 10,
+        };
+        const response = await request(app)
+            .post(`/admin/ai-query/execute?course_id=${COURSE_ID}`)
+            .set('Authorization', courseAdminToken())
+            .send(spec)
+            .expect(200);
+
+        expect(response.body).toMatchObject({
+            type: 'semantic_query',
+            querySpec: spec,
+            source: { type: 'live_course', course_id: COURSE_ID },
+        });
+        expect(mockQuery.mock.calls[0]).toEqual([
+            compileSemanticQuery(spec, COURSE_ID).text,
+            [COURSE_ID, 60],
+        ]);
+        expect(global.fetch).not.toHaveBeenCalled();
     });
 });

@@ -22,6 +22,7 @@ import {
 import {
   Assessment,
   AutoAwesome,
+  InfoOutlined,
   Psychology,
   Search,
   Send,
@@ -46,6 +47,36 @@ const LIVE_COURSE_ALERT_SX = {
   mb: 3,
   minWidth: 0,
   maxWidth: '100%',
+};
+
+const SECTION_SX = {
+  p: { xs: 2, sm: 3 },
+  borderRadius: '8px',
+  boxShadow: 'none',
+};
+
+const MODULE_ICON_SX = {
+  width: 36,
+  height: 36,
+  display: 'grid',
+  placeItems: 'center',
+  flexShrink: 0,
+  color: 'text.primary',
+  bgcolor: '#F3F4F6',
+  borderRadius: '8px',
+};
+
+const STATUS_NOTICE_SX = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 1.25,
+  px: 2,
+  py: 1.5,
+  color: 'text.secondary',
+  bgcolor: '#F9FAFB',
+  border: '1px solid',
+  borderColor: 'divider',
+  borderRadius: '8px',
 };
 
 const LIVE_COURSE_ALERT_SLOT_PROPS = {
@@ -156,9 +187,39 @@ function LiveResultTable({ rows }) {
 
 function UnavailableLiveModule({ description }) {
   return (
-    <Alert severity="info" role="status">
-      {description} This page will not substitute sample students or cross-course records for live data.
-    </Alert>
+    <Box role="status" sx={STATUS_NOTICE_SX}>
+      <InfoOutlined aria-hidden="true" sx={{ fontSize: 20, mt: '1px', flexShrink: 0 }} />
+      <Typography variant="body2">
+        {description} This page will not substitute sample students or cross-course records for live data.
+      </Typography>
+    </Box>
+  );
+}
+
+function ModuleHeader({ id, icon, title, description, headingLevel = 'h2', action = null }) {
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: 2,
+        mb: 2.5,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, minWidth: 0 }}>
+        <Box sx={MODULE_ICON_SX}>{icon}</Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography id={id} component={headingLevel} variant="h6" sx={{ fontWeight: 650, lineHeight: 1.3 }}>
+            {title}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+            {description}
+          </Typography>
+        </Box>
+      </Box>
+      {action}
+    </Box>
   );
 }
 
@@ -233,7 +294,7 @@ function AIAnalyticsCourse({ courseContext }) {
   }, [courseId, courseLabel, queryInput]);
 
   return (
-    <Box sx={{ minHeight: '100%', p: { xs: 2, md: 4 } }}>
+    <Box sx={{ minHeight: '100%', px: { xs: 1.5, sm: 4 }, pt: { xs: 2, sm: 4 }, pb: { xs: 8, sm: 6 } }}>
       <AIAgentSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <Paper
@@ -242,54 +303,36 @@ function AIAnalyticsCourse({ courseContext }) {
         elevation={0}
         className="glass-section"
         sx={{
-          p: { xs: 2.5, md: 4 },
+          ...SECTION_SX,
           mb: 3,
-          borderRadius: 3,
-          boxShadow: '0 14px 34px rgba(3, 8, 24, 0.32)',
         }}
       >
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: { xs: 1, sm: 2 },
-            mb: 3,
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
-            <Search
-              aria-hidden="true"
-              sx={{ display: { xs: 'none', sm: 'block' }, fontSize: 32, color: '#4f46e5', flexShrink: 0 }}
-            />
-            <Box>
-              <Typography
-                id="semantic-data-heading"
-                component="h1"
-                variant="h5"
-                sx={{ fontSize: { xs: '1.25rem', sm: '1.5rem' }, fontWeight: 600 }}
+        <ModuleHeader
+          id="semantic-data-heading"
+          headingLevel="h1"
+          icon={<Search aria-hidden="true" sx={{ fontSize: 21 }} />}
+          title="Semantic Data Detective"
+          description="Natural Language Query Engine - Query live grade data for the current course"
+          action={(
+            <Tooltip title="AI Agent Settings">
+              <IconButton
+                aria-label="Open AI Agent settings"
+                onClick={() => setSettingsOpen(true)}
+                size="small"
+                sx={{
+                  flexShrink: 0,
+                  color: 'text.secondary',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: '6px',
+                  '&:hover': { color: 'text.primary', bgcolor: '#F9FAFB' },
+                }}
               >
-                Semantic Data Detective
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Natural Language Query Engine - Query live grade data for the current course
-              </Typography>
-            </Box>
-          </Box>
-          <Tooltip title="AI Agent Settings">
-            <IconButton
-              aria-label="Open AI Agent settings"
-              onClick={() => setSettingsOpen(true)}
-              sx={{
-                flexShrink: 0,
-                bgcolor: 'rgba(104, 145, 255, 0.16)',
-                '&:hover': { bgcolor: 'rgba(104, 145, 255, 0.26)' },
-              }}
-            >
-              <Settings sx={{ color: '#4f46e5' }} />
-            </IconButton>
-          </Tooltip>
-        </Box>
+                <Settings fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+        />
 
         {courseId ? (
           <Alert
@@ -321,7 +364,6 @@ function AIAnalyticsCourse({ courseContext }) {
               if (event.key === 'Enter') handleQuery();
             }}
             disabled={queryLoading || !courseId}
-            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
           />
           <Button
             variant="contained"
@@ -329,9 +371,6 @@ function AIAnalyticsCourse({ courseContext }) {
             disabled={queryLoading || !courseId || !queryInput.trim()}
             startIcon={<Send />}
             sx={{
-              bgcolor: '#4f46e5',
-              '&:hover': { bgcolor: '#4338ca' },
-              textTransform: 'none',
               minWidth: 120,
               minHeight: 44,
             }}
@@ -360,7 +399,7 @@ function AIAnalyticsCourse({ courseContext }) {
                     py: { xs: 0.75, sm: 0 },
                     whiteSpace: { xs: 'normal', sm: 'nowrap' },
                   },
-                  '&:hover': { bgcolor: 'rgba(103, 148, 255, 0.24)' },
+                  '&:hover': { bgcolor: '#E5E7EB' },
                 }}
               />
             ))}
@@ -368,9 +407,12 @@ function AIAnalyticsCourse({ courseContext }) {
         </Box>
 
         {queryState.status === AI_QUERY_STATUS.IDLE && courseId && (
-          <Alert severity="info" role="status">
-            No live query has run for this course yet. Enter a question or choose an example.
-          </Alert>
+          <Box role="status" sx={STATUS_NOTICE_SX}>
+            <InfoOutlined aria-hidden="true" sx={{ fontSize: 20, mt: '1px', flexShrink: 0 }} />
+            <Typography variant="body2">
+              No live query has run for this course yet. Enter a question or choose an example.
+            </Typography>
+          </Box>
         )}
 
         {queryLoading && (
@@ -409,16 +451,17 @@ function AIAnalyticsCourse({ courseContext }) {
           <Paper
             component="section"
             aria-labelledby="live-result-heading"
-            elevation={2}
+            elevation={0}
             sx={{
               p: { xs: 2, md: 3 },
-              bgcolor: 'rgba(79, 118, 255, 0.14)',
-              borderRadius: 2,
-              border: '1px solid rgba(122, 214, 255, 0.5)',
+              bgcolor: '#F9FAFB',
+              borderRadius: '8px',
+              border: '1px solid',
+              borderColor: 'divider',
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-              <AutoAwesome aria-hidden="true" sx={{ color: '#0ea5e9' }} />
+              <AutoAwesome aria-hidden="true" sx={{ color: 'text.primary' }} />
               <Typography id="live-result-heading" component="h2" variant="subtitle1" sx={{ fontWeight: 600 }}>
                 Live analysis result
               </Typography>
@@ -447,19 +490,14 @@ function AIAnalyticsCourse({ courseContext }) {
         aria-labelledby="knowledge-gap-heading"
         elevation={0}
         className="glass-section"
-        sx={{ p: { xs: 2.5, md: 4 }, mb: 3, borderRadius: 3, boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
+        sx={{ ...SECTION_SX, mb: 3 }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-          <Psychology aria-hidden="true" sx={{ fontSize: 32, color: '#ec4899', flexShrink: 0 }} />
-          <Box>
-            <Typography id="knowledge-gap-heading" component="h2" variant="h5" sx={{ fontWeight: 600 }}>
-              Knowledge Gap Diagnosis
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Automated Knowledge Gap Discovery - Identify teaching weak points from live evidence
-            </Typography>
-          </Box>
-        </Box>
+        <ModuleHeader
+          id="knowledge-gap-heading"
+          icon={<Psychology aria-hidden="true" sx={{ fontSize: 21 }} />}
+          title="Knowledge Gap Diagnosis"
+          description="Automated Knowledge Gap Discovery - Identify teaching weak points from live evidence"
+        />
         <UnavailableLiveModule description="The live API does not currently provide a knowledge-gap dataset." />
       </Paper>
 
@@ -470,19 +508,14 @@ function AIAnalyticsCourse({ courseContext }) {
             aria-labelledby="student-success-heading"
             elevation={0}
             className="glass-section"
-            sx={{ p: { xs: 2.5, md: 4 }, borderRadius: 3, height: '100%', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
+            sx={{ ...SECTION_SX, height: '100%' }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-              <Warning aria-hidden="true" sx={{ fontSize: 32, color: '#f59e0b', flexShrink: 0 }} />
-              <Box>
-                <Typography id="student-success-heading" component="h2" variant="h5" sx={{ fontWeight: 600 }}>
-                  Student Success Alert
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Early identification of at-risk students from live course evidence
-                </Typography>
-              </Box>
-            </Box>
+            <ModuleHeader
+              id="student-success-heading"
+              icon={<Warning aria-hidden="true" sx={{ fontSize: 21 }} />}
+              title="Student Success Alert"
+              description="Early identification of at-risk students from live course evidence"
+            />
             <UnavailableLiveModule description="The live API does not currently provide a student-risk dataset for this module." />
           </Paper>
         </Grid>
@@ -493,19 +526,14 @@ function AIAnalyticsCourse({ courseContext }) {
             aria-labelledby="question-quality-heading"
             elevation={0}
             className="glass-section"
-            sx={{ p: { xs: 2.5, md: 4 }, borderRadius: 3, height: '100%', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
+            sx={{ ...SECTION_SX, height: '100%' }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-              <Assessment aria-hidden="true" sx={{ fontSize: 32, color: '#06b6d4', flexShrink: 0 }} />
-              <Box>
-                <Typography id="question-quality-heading" component="h2" variant="h5" sx={{ fontWeight: 600 }}>
-                  Question Quality Analysis
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Item Analysis & Exam Audit - Evaluate exam quality using live evidence
-                </Typography>
-              </Box>
-            </Box>
+            <ModuleHeader
+              id="question-quality-heading"
+              icon={<Assessment aria-hidden="true" sx={{ fontSize: 21 }} />}
+              title="Question Quality Analysis"
+              description="Item Analysis & Exam Audit - Evaluate exam quality using live evidence"
+            />
             <UnavailableLiveModule description="The live API does not currently provide item-analysis evidence for this module." />
           </Paper>
         </Grid>

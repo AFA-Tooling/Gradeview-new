@@ -2,16 +2,12 @@ import React, { useMemo } from 'react';
 import {
   Autocomplete,
   Box,
-  Button,
-  Chip,
   Skeleton,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
-import { ArrowBack } from '@mui/icons-material';
-import { Link as RouterLink } from 'react-router-dom';
-import { STUDENT_PERSONA, getClassHealthStudentsPath } from '../utils/studentRoutes';
+import { STUDENT_PERSONA } from '../utils/studentRoutes';
 
 function optionLabel(option) {
   if (!option) return '';
@@ -48,20 +44,6 @@ export default function StudentReviewHeader({
       }}
       data-persona={persona}
     >
-      {isStaff && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.25 }}>
-          <Button
-            component={RouterLink}
-            to={getClassHealthStudentsPath()}
-            size="small"
-            startIcon={<ArrowBack />}
-          >
-            Back to Class Health / Students
-          </Button>
-          <Chip size="small" label="Staff student review" color="primary" variant="outlined" />
-        </Stack>
-      )}
-
       <Stack
         direction={{ xs: 'column', md: 'row' }}
         spacing={1.5}

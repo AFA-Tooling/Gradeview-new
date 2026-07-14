@@ -28,6 +28,10 @@ describe('AIAgent course-scoped requests', () => {
       '/api/v2/admin/ai-query?course_id=GS%2042',
       expect.objectContaining({ method: 'POST' }),
     );
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      query: 'Show statistics',
+      useAI: true,
+    });
     expect(result.source).toEqual({ type: 'live_course', course_id: 'GS 42' });
   });
 

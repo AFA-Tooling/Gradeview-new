@@ -5,87 +5,23 @@ import {
     createAccessPolicyError,
 } from '../../../../lib/iam.mjs';
 import {
-    COURSE_QUERY_PLAN_ID,
     addLiveCourseSource,
-    buildCourseScopedExecution,
-    buildGeneratedCourseScopedExecution,
-    listCourseScopedQueryPlans,
     normalizeCourseId,
 } from './courseScope.js';
+import {
+    compileSemanticQuery,
+    describeLiveCourseAnalytics,
+    getSemanticCatalog,
+    planNaturalLanguageQuery,
+    summarizeSemanticResult,
+} from './semanticQuery.js';
 
 const router = Router({ mergeParams: true });
 
 // Use shared pool
 const getDbPool = () => getPool();
 
-/**
- * Database Schema Information
- * Database structure information provided to AI
- */
-const DATABASE_SCHEMA = {
-    tables: {
-        students: {
-            description: "Student information table",
-            columns: {
-                id: "Integer, primary key",
-                course_id: "Integer, enrolled course ID (foreign key)",
-                sid: "String, student ID",
-                email: "String, email address",
-                legal_name: "String, full name"
-            }
-        },
-        assignments: {
-            description: "Assignment/Exam table",
-            columns: {
-                id: "Integer, primary key",
-                assignment_id: "String, assignment ID",
-                course_id: "Integer, course ID (foreign key)",
-                title: "String, assignment title",
-                category: "String, category (e.g., Projects, Labs, Exams)",
-                max_points: "Numeric, maximum score"
-            }
-        },
-        submissions: {
-            description: "Submission records table",
-            columns: {
-                id: "Integer, primary key",
-                assignment_id: "Integer, assignment ID (foreign key)",
-                student_id: "Integer, student ID (foreign key)",
-                total_score: "Numeric, score earned",
-                max_points: "Numeric, maximum score",
-                status: "String, submission status",
-                submission_time: "Timestamp, submission time"
-            }
-        },
-        courses: {
-            description: "Course information table",
-            columns: {
-                id: "Integer, primary key",
-                name: "String, course name",
-                semester: "String, semester",
-                year: "String, year"
-            }
-        }
-    },
-    relationships: {
-        "submissions.student_id -> students.id": "Submission record linked to student",
-        "submissions.assignment_id -> assignments.id": "Submission record linked to assignment",
-        "assignments.course_id -> courses.id": "Assignment linked to course",
-        "students.course_id -> courses.id": "Student enrollment linked to course"
-    },
-    common_patterns: [
-        "Calculate average score: AVG(total_score / NULLIF(max_points, 0) * 100)",
-        "Calculate standard deviation: STDDEV(total_score / NULLIF(max_points, 0) * 100)",
-        "Calculate error rate: 100 - AVG(total_score / NULLIF(max_points, 0) * 100)",
-        "Group statistics: GROUP BY student_id or assignment_id",
-        "Time analysis: DATE_TRUNC('day', submission_time) or DATE_TRUNC('week', submission_time)"
-    ]
-};
-
-/**
- * AI Query Endpoint - Dynamic SQL Generation
- * POST /admin/ai-query
- */
+/** Natural-language entry point used by the GradeView web client. */
 router.post('/', async (req, res, next) => {
     try {
         const { query, useAI = true } = req.body || {};
@@ -105,10 +41,8 @@ router.post('/', async (req, res, next) => {
         let result;
         
         if (useAI && process.env.OPENAI_API_KEY) {
-            // 使用AI生成SQL并执行
             result = await processWithAI(query, courseId);
         } else {
-            // Fall back to rule-based queries
             result = await processWithRules(query, courseId);
         }
 
@@ -126,227 +60,148 @@ router.post('/', async (req, res, next) => {
     }
 });
 
-/**
- * Generate SQL with AI and execute
- */
+/** Structured entry point used by the MCP server and other trusted clients. */
+router.post('/execute', async (req, res, next) => {
+    try {
+        const courseId = normalizeCourseId(req.query?.course_id);
+        if (!courseId) {
+            return next(createAccessPolicyError(ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED));
+        }
+        const execution = compileSemanticQuery(req.body, courseId);
+        const result = await executeCourseScopedQuery(execution);
+        return res.json(addLiveCourseSource({
+            type: 'semantic_query',
+            answer: summarizeSemanticResult(execution.spec, result.rows),
+            data: result.rows,
+            querySpec: execution.spec,
+            visualizationType: inferVisualizationType(result.rows),
+        }, courseId));
+    } catch (error) {
+        if (error?.isControlledApiError === true) return next(error);
+        return next(error);
+    }
+});
+
 async function processWithAI(userQuery, courseId) {
     const apiKey = process.env.OPENAI_API_KEY;
-    
-    if (!apiKey) {
-        throw new Error('OpenAI API key not configured');
-    }
-
-    // 1. Generate SQL using AI
-    const sqlQuery = await generateSQLWithAI(userQuery, apiKey);
-    
-    console.log(`[AI Agent] Generated SQL:`, sqlQuery);
-
-    // 2. Resolve the generated text to a server-owned plan, then bind course scope.
-    const execution = buildGeneratedCourseScopedExecution(sqlQuery, courseId);
-
-    // 3. Execute only the server-owned SQL with the authorized course as $1.
+    const querySpec = await generateSemanticSpecWithAI(userQuery, apiKey);
+    const execution = compileSemanticQuery(querySpec, courseId);
     const queryResult = await executeCourseScopedQuery(execution);
-
-    // 4. Explain results using AI
-    const explanation = await explainResultsWithAI(userQuery, queryResult.rows, apiKey);
 
     return {
         type: 'ai_generated',
-        answer: explanation,
+        answer: summarizeSemanticResult(execution.spec, queryResult.rows),
         data: queryResult.rows,
-        sqlQuery: execution.text,
-        queryPlan: execution.planId,
+        querySpec: execution.spec,
         suggestions: generateSuggestions(userQuery, queryResult.rows),
         visualizationType: inferVisualizationType(queryResult.rows)
     };
 }
 
-/**
- * Generate SQL query using OpenAI
- */
-async function generateSQLWithAI(userQuery, apiKey) {
-    const approvedPlans = listCourseScopedQueryPlans();
-    const prompt = `You are a PostgreSQL database expert. Generate SQL queries based on user questions.
+const QUERY_SPEC_SCHEMA = Object.freeze({
+    type: 'object',
+    properties: {
+        view: { type: 'string', enum: Object.keys(getSemanticCatalog().views) },
+        select: { type: 'array', items: { type: 'string' }, maxItems: 12 },
+        filters: {
+            type: 'array',
+            maxItems: 8,
+            items: {
+                type: 'object',
+                properties: {
+                    field: { type: 'string' },
+                    operator: { type: 'string', enum: [...getSemanticCatalog().operators, 'in'] },
+                    value: {
+                        anyOf: [
+                            { type: 'string' },
+                            { type: 'number' },
+                            { type: 'array', items: { type: 'string' }, maxItems: 50 },
+                        ],
+                    },
+                },
+                required: ['field', 'operator', 'value'],
+                additionalProperties: false,
+            },
+        },
+        order_by: {
+            type: 'array',
+            maxItems: 4,
+            items: {
+                type: 'object',
+                properties: {
+                    field: { type: 'string' },
+                    direction: { type: 'string', enum: ['asc', 'desc'] },
+                },
+                required: ['field', 'direction'],
+                additionalProperties: false,
+            },
+        },
+        limit: { type: 'integer', minimum: 1, maximum: 100 },
+    },
+    required: ['view', 'select', 'filters', 'order_by', 'limit'],
+    additionalProperties: false,
+});
 
-Database Structure:
-${JSON.stringify(DATABASE_SCHEMA, null, 2)}
+function extractResponseText(data) {
+    if (typeof data?.output_text === 'string') return data.output_text;
+    for (const item of Array.isArray(data?.output) ? data.output : []) {
+        for (const content of Array.isArray(item?.content) ? item.content : []) {
+            if (content?.type === 'output_text' && typeof content.text === 'string') return content.text;
+        }
+    }
+    throw new Error('OpenAI response did not contain a query specification.');
+}
 
-User Question: ${userQuery}
-
-Requirements:
-1. Return exactly one SQL statement from the approved plans below, with no explanations.
-2. Do not add, remove, reorder, or rewrite any clause.
-3. Pick the plan that best matches the user's question.
-
-Approved plans:
-${JSON.stringify(approvedPlans, null, 2)}
-
-SQL Query:`;
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+async function generateSemanticSpecWithAI(userQuery, apiKey) {
+    const catalog = getSemanticCatalog();
+    const response = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: 'gpt-4',
-            messages: [
-                { 
-                    role: 'system', 
-                    content: 'You are a PostgreSQL expert. Generate only SQL queries, no explanations.' 
+            model: process.env.OPENAI_QUERY_MODEL || 'gpt-5.6-luna',
+            input: [
+                {
+                    role: 'system',
+                    content: `Map the user's course analytics question to the supplied semantic catalog. Never produce SQL. Use only fields that belong to the selected view. Catalog: ${JSON.stringify(catalog)}`,
                 },
-                { role: 'user', content: prompt }
+                { role: 'user', content: userQuery },
             ],
-            temperature: 0.3,
-            max_tokens: 500
+            max_output_tokens: 800,
+            text: {
+                format: {
+                    type: 'json_schema',
+                    name: 'gradeview_semantic_query',
+                    strict: true,
+                    schema: QUERY_SPEC_SCHEMA,
+                },
+            },
         })
     });
 
     if (!response.ok) {
         throw new Error(`OpenAI API error: ${response.status}`);
     }
-
     const data = await response.json();
-    let sqlQuery = data.choices[0].message.content.trim();
-
-    // Clean SQL (remove markdown code block markers)
-    sqlQuery = sqlQuery.replace(/```sql\n?/g, '').replace(/```\n?/g, '').trim();
-    
-    // Remove trailing semicolon
-    sqlQuery = sqlQuery.replace(/;$/, '');
-
-    return sqlQuery;
-}
-
-/**
- * Explain query results using AI
- */
-async function explainResultsWithAI(userQuery, results, apiKey) {
-    if (!results || results.length === 0) {
-        return 'Query completed, but no matching data was found.';
-    }
-
-    const prompt = `User Question: ${userQuery}
-
-Query returned ${results.length} records.
-
-Data Sample (first 3):
-${JSON.stringify(results.slice(0, 3), null, 2)}
-
-Please summarize this query result in 1-2 concise sentences, in English.`;
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            model: 'gpt-4',
-            messages: [
-                { 
-                    role: 'system', 
-                    content: 'You are a helpful data analyst. Provide concise summaries in English.' 
-                },
-                { role: 'user', content: prompt }
-            ],
-            temperature: 0.7,
-            max_tokens: 200
-        })
-    });
-
-    if (!response.ok) {
-        return `Query returned ${results.length} records.`;
-    }
-
-    const data = await response.json();
-    return data.choices[0].message.content.trim();
+    return JSON.parse(extractResponseText(data));
 }
 
 async function executeCourseScopedQuery(execution) {
     return getDbPool().query(execution.text, execution.values);
 }
 
-async function executeCourseScopedPlan(planId, courseId) {
-    return executeCourseScopedQuery(buildCourseScopedExecution(planId, courseId));
-}
-
-/**
- * Rule-based query processing (fallback mode)
- */
 async function processWithRules(userQuery, courseId) {
-    const queryLower = userQuery.toLowerCase();
-    
-    // Simple keyword matching
-    if (queryLower.includes('学生') || queryLower.includes('student') || queryLower.includes('波动') || queryLower.includes('variance')) {
-        return await getStudentAnalysis(courseId);
-    } else if (queryLower.includes('作业') || queryLower.includes('assignment') || queryLower.includes('题目')) {
-        return await getAssignmentAnalysis(courseId);
-    } else if (queryLower.includes('统计') || queryLower.includes('平均') || queryLower.includes('average') || queryLower.includes('statistics')) {
-        return await getStatistics(courseId);
-    } else {
-        return await getGeneralOverview(courseId);
-    }
-}
-
-/**
- * Student analysis (fallback mode)
- */
-async function getStudentAnalysis(courseId) {
-    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.STUDENT_VARIANCE, courseId);
-
+    const execution = compileSemanticQuery(planNaturalLanguageQuery(userQuery), courseId);
+    const result = await executeCourseScopedQuery(execution);
     return {
         type: 'rule_based',
-        answer: 'Based on rule matching, here are the student performance analysis results:',
+        answer: summarizeSemanticResult(execution.spec, result.rows),
         data: result.rows,
-        suggestions: ['Try more specific questions', 'View detailed student performance'],
-        visualizationType: 'table'
-    };
-}
-
-/**
- * Assignment analysis (fallback mode)
- */
-async function getAssignmentAnalysis(courseId) {
-    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.ASSIGNMENT_DIFFICULTY, courseId);
-
-    return {
-        type: 'rule_based',
-        answer: 'Here are the assignment difficulty analysis results:',
-        data: result.rows,
-        suggestions: ['View specific assignment details', 'Analyze error patterns'],
-        visualizationType: 'table'
-    };
-}
-
-/**
- * Statistical analysis (fallback mode)
- */
-async function getStatistics(courseId) {
-    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.SCORE_STATISTICS, courseId);
-
-    return {
-        type: 'rule_based',
-        answer: 'Overall statistics are as follows:',
-        data: result.rows[0],
-        suggestions: ['View detailed distribution', 'Compare different categories'],
-        visualizationType: 'statistics'
-    };
-}
-
-/**
- * General overview (fallback mode)
- */
-async function getGeneralOverview(courseId) {
-    const result = await executeCourseScopedPlan(COURSE_QUERY_PLAN_ID.COURSE_OVERVIEW, courseId);
-
-    return {
-        type: 'rule_based',
-        answer: 'Course overview:',
-        data: result.rows[0],
-        suggestions: ['View student performance', 'Analyze assignment difficulty', 'View submission trends'],
-        visualizationType: 'statistics'
+        querySpec: execution.spec,
+        suggestions: generateSuggestions(userQuery, result.rows),
+        visualizationType: inferVisualizationType(result.rows),
     };
 }
 
@@ -362,10 +217,10 @@ function generateSuggestions(query, results) {
 
     if (results && results.length > 0) {
         const firstRow = results[0];
-        if ('name' in firstRow || 'legal_name' in firstRow) {
+        if ('student_name' in firstRow) {
             suggestions.push('查看这些学生的具体作业表现');
         }
-        if ('title' in firstRow || 'assignment' in firstRow) {
+        if ('assignment_title' in firstRow) {
             suggestions.push('分析这些作业的错误模式');
         }
     }
@@ -385,7 +240,7 @@ function inferVisualizationType(results) {
     const keys = Object.keys(firstRow);
 
     // 统计数据（mean, median等）
-    if (keys.includes('mean') || keys.includes('median') || keys.includes('avg')) {
+    if (keys.includes('total_students') || keys.includes('minimum_score') || keys.includes('maximum_score')) {
         return 'statistics';
     }
 
@@ -403,23 +258,26 @@ function inferVisualizationType(results) {
     return 'table';
 }
 
-/**
- * GET /admin/ai-query/schema
- * 返回数据库schema信息
- */
 router.get('/schema', async (req, res, next) => {
-    const courseId = normalizeCourseId(req.query?.course_id);
-    if (!courseId) {
-        return next(createAccessPolicyError(ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED));
+    try {
+        const courseId = normalizeCourseId(req.query?.course_id);
+        if (!courseId) {
+            return next(createAccessPolicyError(ACCESS_ERROR_CODE.COURSE_SCOPE_REQUIRED));
+        }
+        const description = await describeLiveCourseAnalytics(getDbPool(), courseId);
+        return res.json({
+            ...description,
+            schema: description.catalog,
+            note: 'Live database shape plus the safe semantic analytics catalog.',
+            source: {
+                type: 'live_course',
+                course_id: courseId,
+            },
+        });
+    } catch (error) {
+        if (error?.isControlledApiError === true) return next(error);
+        return next(error);
     }
-    res.json({
-        schema: DATABASE_SCHEMA,
-        note: 'Use this schema to understand the database structure',
-        source: {
-            type: 'live_course',
-            course_id: courseId,
-        },
-    });
 });
 
 export default router;

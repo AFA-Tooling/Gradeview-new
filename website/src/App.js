@@ -10,7 +10,6 @@ import { Route, BrowserRouter, Routes, Navigate } from 'react-router-dom';
 import PrivateRoutes from './components/privateRoutes';
 import AdminRoutes from './components/AdminRoutes';
 import NavBar from './components/NavBar';
-import Footer from './components/Footer';
 import Home from './views/home';
 import Dashboard from './views/dashboard';
 import StudentProfile from './views/studentProfile';
@@ -226,7 +225,7 @@ export default function App() {
 			<CssBaseline />
 			<StudentSelectionWrapper>
 				<BrowserRouter>
-					<AppShell navigation={<NavBar />} footer={<Footer />}>
+					<AppShell navigation={<NavBar />}>
 							<Routes>
 								<Route exact path='/login' element={localStorage.getItem('token') ? <Navigate to='/' /> : <Login />} />
 								<Route element={<PrivateRoutes />}>

@@ -27,7 +27,6 @@ import {
   getEvidenceStatusMeta,
   getExamRows,
   getExamTrend,
-  isDueWorkStatus,
   optionalNumber,
 } from './studentExperienceModel';
 import {
@@ -228,6 +227,29 @@ function getSubmissionTimestamp(dateString) {
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
+function getReportScore(row) {
+  if (row?.applicable === false || row?.evidenceStatus === 'not_applicable') return null;
+  return ['earned_zero', 'submitted'].includes(row?.evidenceStatus) ? row?.score : 0;
+}
+
+function getReportPercentage(row) {
+  const score = getReportScore(row);
+  if (score == null) return null;
+  if (row?.percentage != null && ['earned_zero', 'submitted'].includes(row?.evidenceStatus)) {
+    return row.percentage;
+  }
+  return row?.maxPoints > 0 ? 0 : null;
+}
+
+function formatReportEvidenceScore(row) {
+  if (row?.reportScore !== 0 || ['earned_zero', 'submitted', 'missing'].includes(row?.evidenceStatus)) {
+    return formatEvidenceScore(row);
+  }
+  return row?.maxPoints == null
+    ? '0 pts'
+    : `0 / ${formatContractPoints(row.maxPoints)}`;
+}
+
 function formatRadarAxisLabel(label) {
   const text = String(label || '').trim();
   if (text.length <= 16) return text;
@@ -402,8 +424,6 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
       },
     };
   }), [studentData]);
-  const trendData = useMemo(() => assignmentEvidence.filter((row) => row.percentage != null), [assignmentEvidence]);
-
   const displayCategoriesData = useMemo(() => (
     Object.fromEntries(
       categoryBlocks
@@ -468,27 +488,17 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
 
   const hoveredDonutCategoryRef = useRef(null);
 
-  // Score trend is always chronological by submission time.
-  const sortedTrendData = useMemo(() => {
-    if (trendData.length === 0) return [];
-    return trendData
-      .map((item, index) => ({
-        item,
-        index,
-        timestamp: getSubmissionTimestamp(item.submissionTime),
-      }))
-      .sort((a, b) => (a.timestamp - b.timestamp) || (a.index - b.index))
-      .map(({ item }) => item);
-  }, [trendData]);
-
-  // Keep the detail table in the same chronological order as the trend.
+  // The report is catalog-authoritative: every catalog assignment remains
+  // visible. Applicable rows without usable submission evidence display as
+  // zero while retaining their precise evidence status for diagnosis.
   const sortedAssignments = useMemo(() => {
     if (assignmentEvidence.length === 0) return [];
     return assignmentEvidence
-      .filter((assignment) => isDueWorkStatus(assignment.evidenceStatus))
       .map((assignment, index) => ({
         item: {
           ...assignment,
+          reportScore: getReportScore(assignment),
+          reportPercentage: getReportPercentage(assignment),
           formattedSubmissionTime: formatDate(assignment.submissionTime),
         },
         index,
@@ -499,6 +509,16 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
       .sort((a, b) => (a.timestamp - b.timestamp) || (a.index - b.index))
       .map(({ item }) => item);
   }, [assignmentEvidence]);
+
+  const sortedTrendData = useMemo(() => (
+    sortedAssignments
+      .filter((assignment) => assignment.reportPercentage != null)
+      .map((assignment) => ({
+        ...assignment,
+        score: assignment.reportScore,
+        percentage: assignment.reportPercentage,
+      }))
+  ), [sortedAssignments]);
 
   const examComponentTrends = useMemo(() => {
     const normalizeTrend = (trend) => ({
@@ -837,7 +857,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
         },
         title: {
           display: true,
-          text: 'Submission Order',
+          text: 'Assignment Order',
           color: chartColors.muted,
           font: {
             size: 12,
@@ -1227,7 +1247,7 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
           Detailed Assignment Scores
         </Typography>
         <Typography variant="caption" sx={{ color: chartColors.muted, display: 'block', mb: 1.5 }}>
-          Showing {sortedAssignments.length} past-due or submitted assignments from {assignmentEvidence.length} authoritative catalog rows. Dates use America/Los_Angeles.
+          Showing all {sortedAssignments.length} authoritative catalog assignments. Applicable rows without submission evidence display as 0 points. Dates use America/Los_Angeles.
         </Typography>
         <TableContainer sx={{ mt: 1, borderRadius: 1.5, overflowX: 'auto', overflowY: 'visible' }}>
           <Table
@@ -1266,8 +1286,8 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                     <TableCell>{assignment.assignmentId || `Row ${idx + 1}`}</TableCell>
                     <TableCell>{assignment.category}</TableCell>
                     <TableCell>{assignment.name}</TableCell>
-                    <TableCell align="center">{formatEvidenceScore(assignment)}</TableCell>
-                    <TableCell align="center"><ProgressBattery value={assignment.percentage} segmentCount={5} compact /></TableCell>
+                    <TableCell align="center">{formatReportEvidenceScore(assignment)}</TableCell>
+                    <TableCell align="center"><ProgressBattery value={assignment.reportPercentage} segmentCount={5} compact /></TableCell>
                     <TableCell align="center"><EvidenceStatusChip row={assignment} /></TableCell>
                     <TableCell align="center">
                       {formatDate(assignment.dueAt)}

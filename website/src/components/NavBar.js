@@ -73,6 +73,7 @@ import {
     resolveCourseSelection,
 } from '../utils/studentRoutes';
 import NavMenuItem from './NavMenuItem';
+import Footer from './Footer';
 import { StudentSelectionContext } from './StudentSelectionWrapper';
 
 const SIDEBAR_WIDTH = 244;
@@ -89,7 +90,8 @@ const NAV_ICONS = Object.freeze({
     explain: <HelpOutlineOutlined />,
     concepts: <SchoolOutlined />,
     policy: <PolicyOutlined />,
-    'class-health': <AdminPanelSettingsOutlined />,
+    students: <SchoolOutlined />,
+    'ai-analytics': <AdminPanelSettingsOutlined />,
     'grade-sync': <SyncOutlined />,
     alerts: <WarningAmberOutlined />,
     settings: <SettingsIcon />,
@@ -180,7 +182,7 @@ function SidebarNavItem({ item, active }) {
     );
 }
 
-function SidebarSection({ section, pathname }) {
+function SidebarSection({ section, pathname, search }) {
     return (
         <Box>
             <Typography
@@ -201,7 +203,7 @@ function SidebarSection({ section, pathname }) {
                     <SidebarNavItem
                         key={item.name}
                         item={{ ...item, indent: section.title === 'STUDENT' }}
-                        active={isNavigationItemActive(item, pathname)}
+                        active={isNavigationItemActive(item, pathname, search)}
                     />
                 ))}
             </Stack>
@@ -529,7 +531,7 @@ export default function ButtonAppBar() {
                             key={`${section.title}-${item.name}`}
                             icon={navIcon(item, 20)}
                             text={item.name}
-                            selected={isNavigationItemActive(item, location.pathname)}
+                            selected={isNavigationItemActive(item, location.pathname, location.search)}
                             onClick={() => navigateFromMenu(item.href)}
                         />
                     ))}
@@ -682,11 +684,16 @@ export default function ButtonAppBar() {
                                     {shellModel.navigation.sections.map((section, index) => (
                                         <React.Fragment key={section.title}>
                                             {index > 0 && <Divider sx={{ my: 1.05, borderColor: '#ECEEF2' }} />}
-                                            <SidebarSection section={section} pathname={location.pathname} />
+                                            <SidebarSection
+                                                section={section}
+                                                pathname={location.pathname}
+                                                search={location.search}
+                                            />
                                         </React.Fragment>
                                     ))}
                                 </Stack>
                             )}
+                            <Footer />
                         </Toolbar>
                     </AppBar>
                 )}

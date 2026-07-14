@@ -46,7 +46,9 @@ export const STUDENT_NAV_ITEMS = Object.freeze([
 ]);
 
 export const STAFF_NAV_ITEMS = Object.freeze([
-  { name: 'Class Health', href: '/admin', icon: 'class-health' },
+  { name: 'Assignments', href: '/admin?tab=assignments', icon: 'assignments', activeTab: 'assignments' },
+  { name: 'Students', href: '/admin?tab=students', icon: 'students', activeTab: 'students' },
+  { name: 'AI Analytics', href: '/admin?tab=analytics', icon: 'ai-analytics', activeTab: 'analytics' },
   { name: 'Grade Sync', href: '/gradesync', icon: 'grade-sync', exact: true },
   { name: 'Alerts', href: '/alerts', icon: 'alerts', exact: true },
   { name: 'Settings', href: '/settings', icon: 'settings', exact: true },
@@ -239,7 +241,7 @@ function buildStaffStudentSection(pathname, {
   if (!identifier) {
     return {
       title: 'STUDENT',
-      description: 'Select a student in Class Health to open student views.',
+      description: 'Select a student in Students to open student views.',
       items: [{
         name: 'Select student',
         href: '/admin?tab=students',
@@ -373,10 +375,20 @@ export function getCourseControlModel(courses, selectedCourseId) {
   };
 }
 
-export function isNavigationItemActive(item, pathname) {
+export function isNavigationItemActive(item, pathname, search = '') {
   if (item.active === false) return false;
   const hrefPath = String(item.href || '').split('?')[0] || '/';
-  if (hrefPath === '/') return pathname === '/';
-  if (item.exact) return pathname === hrefPath;
-  return pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
+  const pathMatches = hrefPath === '/'
+    ? pathname === '/'
+    : item.exact
+      ? pathname === hrefPath
+      : pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
+  if (!pathMatches) return false;
+  if (!item.activeTab) return true;
+
+  const requestedTab = new URLSearchParams(search).get('tab');
+  const activeTab = ['students', 'analytics'].includes(requestedTab)
+    ? requestedTab
+    : 'assignments';
+  return activeTab === item.activeTab;
 }

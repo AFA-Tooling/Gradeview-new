@@ -88,7 +88,7 @@ function mockStudentScoreData() {
   });
 }
 
-describe('Class Health tab URL state', () => {
+describe('Admin section URL state', () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('selectedCourseId', '1');
@@ -109,7 +109,7 @@ describe('Class Health tab URL state', () => {
     renderAdmin('/admin?tab=students');
 
     expect(await screen.findByRole('heading', { name: 'Student Scores Overview' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Students' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Search assignments…')).not.toBeInTheDocument();
   });
 
@@ -117,34 +117,15 @@ describe('Class Health tab URL state', () => {
     renderAdmin('/admin?tab=analytics');
 
     expect(await screen.findByText('AI analytics panel')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'AI Analytics' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
 
   test('falls back safely to Assignments for an invalid tab value', () => {
     renderAdmin('/admin?tab=not-a-tab');
 
-    expect(screen.getByRole('tab', { name: 'Assignments' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByPlaceholderText('Search assignments…')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Student Scores Overview' })).not.toBeInTheDocument();
-  });
-
-  test('tab actions update the URL and preserve unrelated query parameters', async () => {
-    const user = userEvent.setup();
-    const { router } = renderAdmin(
-      '/admin?tab=students&course_id=demo-cs10&filter=missing',
-    );
-    await screen.findByRole('heading', { name: 'Student Scores Overview' });
-
-    await user.click(screen.getByRole('tab', { name: 'Assignments' }));
-
-    await waitFor(() => {
-      const params = new URLSearchParams(router.state.location.search);
-      expect(params.get('tab')).toBe('assignments');
-      expect(params.get('course_id')).toBe('demo-cs10');
-      expect(params.get('filter')).toBe('missing');
-    });
-    expect(screen.getByRole('tab', { name: 'Assignments' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByPlaceholderText('Search assignments…')).toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
 
   test('student names open a report dialog without leaving Class Health', async () => {

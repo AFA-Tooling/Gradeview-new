@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gradeview-course-analytics": {
+      "command": "node",
+      "args": ["./mcp/server.mjs"],
+      "cwd": "."
+    }
+  }
+}

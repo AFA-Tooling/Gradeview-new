@@ -14,6 +14,7 @@ import {
   getCanonicalContractState,
   getCanonicalStanding,
   getMostImportantCategory,
+  getProgressAnalysis,
   isDueWorkStatus,
   mergeExperienceQuery,
   parseCategoryPageQuery,
@@ -110,7 +111,7 @@ describe('student experience A1/A2 presentation contract', () => {
     expect(presentation.evidenceRows[0].score).toBe(
       status === 'earned_zero' ? 0 : (status === 'submitted' ? 7 : null),
     );
-    if (status === 'earned_zero') {
+    if (['earned_zero', 'missing'].includes(status)) {
       expect(formatEvidenceScore(presentation.evidenceRows[0])).toBe('0 / 10');
     } else if (!['submitted'].includes(status)) {
       expect(formatEvidenceScore(presentation.evidenceRows[0])).not.toBe('0 / 10');
@@ -213,6 +214,36 @@ describe('student experience A1/A2 presentation contract', () => {
     expect(summary.statusCounts).toEqual(Object.fromEntries(
       EVIDENCE_STATUSES.map((status) => [status, 1]),
     ));
+  });
+
+  test('progress analysis focuses on points already lost and the best possible finish', () => {
+    const definition = CATEGORY_DEFINITIONS[1];
+    const analysis = getProgressAnalysis({
+      canonicalGrade: canonicalGrade(),
+      gradeBins: [
+        { grade: 'B+', minScore: 340 },
+        { grade: 'A-', minScore: 350 },
+        { grade: 'A', minScore: 370 },
+      ],
+      assignmentEvidence: [
+        evidenceRow(definition, 'submitted'),
+        evidenceRow(definition, 'missing', { assignmentId: 'lab-missing' }),
+        evidenceRow(definition, 'not_due', { assignmentId: 'lab-future', maxPoints: 100 }),
+        evidenceRow(definition, 'due_unknown', { assignmentId: 'lab-unknown', maxPoints: 100 }),
+      ],
+    });
+
+    expect(analysis).toMatchObject({
+      courseCap: 400,
+      dueScore: 7,
+      dueCap: 20,
+      pointsLost: 13,
+      happyScore: 387,
+      happyGrade: 'A',
+      happyGradeFloor: 370,
+      lowerGrade: 'A-',
+      gradeTolerance: 17,
+    });
   });
 
   test('Top Actions are concrete, timezone-aware, point-specific Ledger deep links', () => {

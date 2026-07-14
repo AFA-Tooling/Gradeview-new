@@ -24,21 +24,22 @@ jest.mock('../utils/studentProfileData', () => ({
 }));
 
 jest.mock('../components/studentExperienceV2', () => ({
-  StudentWorkspaceHome: ({ studentData }) => <><h1>Student Workspace</h1><div>{studentData.marker}</div></>,
-  StudentReportContent: ({ studentData, staffMode }) => (
+  StudentWorkspaceHome: ({ studentData, compactHeader }) => <><h1>Student Workspace</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  StudentReportContent: ({ studentData, staffMode, compactHeader }) => (
     <>
       <h1>Student Report</h1>
       <div data-testid="report-mode">{staffMode ? 'staff' : 'self'}</div>
+      <div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div>
       <div>{studentData.marker}</div>
     </>
   ),
-  CategoryDetailPage: ({ studentData, pageKey }) => <><h1>{pageKey} page</h1><div>{studentData.marker}</div></>,
-  ExamsOverviewPage: ({ studentData }) => <><h1>Exams</h1><div>{studentData.marker}</div></>,
-  SingleExamPage: ({ studentData, examKey }) => <><h1>{examKey}</h1><div>{studentData.marker}</div></>,
-  AssignmentLedger: ({ studentData }) => <><h1>Assignment Ledger</h1><div>{studentData.marker}</div></>,
-  ExplainScorePage: ({ studentData }) => <><h1>Explain Score</h1><div>{studentData.marker}</div></>,
-  ConceptsPage: ({ studentData }) => <><h1>Concepts</h1><div>{studentData.marker}</div></>,
-  PolicyReference: () => <h1>Policy Reference</h1>,
+  CategoryDetailPage: ({ studentData, pageKey, compactHeader }) => <><h1>{pageKey} page</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  ExamsOverviewPage: ({ studentData, compactHeader }) => <><h1>Exams</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  SingleExamPage: ({ studentData, examKey, compactHeader }) => <><h1>{examKey}</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  AssignmentLedger: ({ studentData, compactHeader }) => <><h1>Assignment Ledger</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  ExplainScorePage: ({ studentData, compactHeader }) => <><h1>Explain Score</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  ConceptsPage: ({ studentData, compactHeader }) => <><h1>Concepts</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div><div>{studentData.marker}</div></>,
+  PolicyReference: ({ compactHeader }) => <><h1>Policy Reference</h1><div data-testid="compact-header">{compactHeader ? 'compact' : 'full'}</div></>,
   UnknownStudentExperienceRoute: () => <h1>Unknown student page</h1>,
 }));
 
@@ -116,11 +117,9 @@ describe('route-driven student profile', () => {
 
     expect(await screen.findByRole('heading', { name: 'labs page' })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(screen.getByText('Staff student review')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Back to Class Health/ })).toHaveAttribute(
-      'href',
-      '/admin?tab=students',
-    );
+    expect(screen.queryByText('Staff student review')).not.toBeInTheDocument();
+    expect(screen.getByTestId('compact-header')).toHaveTextContent('compact');
+    expect(screen.queryByRole('link', { name: /Back to Class Health/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Search students by name or email')).toBeInTheDocument();
     expect(fetchStudentProfileData).toHaveBeenCalledWith(expect.objectContaining({
       studentEmail: 'avery@example.com',
@@ -138,6 +137,7 @@ describe('route-driven student profile', () => {
     expect(await screen.findByRole('heading', { name: 'Student Report' })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByTestId('report-mode')).toHaveTextContent('self');
+    expect(screen.getByTestId('compact-header')).toHaveTextContent('full');
     expect(screen.queryByText('Staff student review')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Search students by name or email')).not.toBeInTheDocument();
     expect(fetchStudentProfileData).toHaveBeenCalledWith(expect.objectContaining({

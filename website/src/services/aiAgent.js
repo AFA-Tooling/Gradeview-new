@@ -218,7 +218,8 @@ export class AIAgent {
         },
         body: JSON.stringify({
           query: query,
-          useAI: !!this.apiKey  // Use AI if API key exists, otherwise use rules
+          // The server owns the OpenAI credential and falls back to its local planner.
+          useAI: true
         }),
         signal: request.signal,
       });

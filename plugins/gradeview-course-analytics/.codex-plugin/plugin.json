@@ -1,0 +1,19 @@
+{
+  "name": "gradeview-course-analytics",
+  "version": "0.1.0",
+  "description": "Safely query live, course-scoped GradeView analytics through a semantic MCP API.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Gradeview Course Analytics",
+    "shortDescription": "Query live GradeView course analytics safely.",
+    "longDescription": "Inspect the live GradeView analytics catalog and run read-only, course-scoped semantic queries without generating SQL.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": ["MCP tools", "Course analytics"],
+    "defaultPrompt": "Analyze a live GradeView course while preserving course scope and data access controls."
+  },
+  "mcpServers": "./.mcp.json"
+}

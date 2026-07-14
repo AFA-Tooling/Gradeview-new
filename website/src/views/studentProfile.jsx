@@ -69,7 +69,7 @@ function renderExperiencePage({
   gradeFlowError,
 }) {
   if (page.kind === 'workspace') {
-    return <StudentWorkspaceHome studentData={studentData} />;
+    return <StudentWorkspaceHome studentData={studentData} compactHeader={isStaffReview} />;
   }
   if (page.kind === 'report') {
     return (
@@ -78,20 +78,21 @@ function renderExperiencePage({
         studentEmail={fetchEmail}
         currentCourse={currentCourseLabel}
         staffMode={isStaffReview}
+        compactHeader={isStaffReview}
       />
     );
   }
   if (page.kind === 'category') {
-    return <CategoryDetailPage studentData={studentData} pageKey={page.pageKey} />;
+    return <CategoryDetailPage studentData={studentData} pageKey={page.pageKey} compactHeader={isStaffReview} />;
   }
   if (page.kind === 'exams') {
-    return <ExamsOverviewPage studentData={studentData} />;
+    return <ExamsOverviewPage studentData={studentData} compactHeader={isStaffReview} />;
   }
   if (page.kind === 'singleExam') {
-    return <SingleExamPage studentData={studentData} examKey={page.examKey} />;
+    return <SingleExamPage studentData={studentData} examKey={page.examKey} compactHeader={isStaffReview} />;
   }
   if (page.kind === 'assignments') {
-    return <AssignmentLedger studentData={studentData} />;
+    return <AssignmentLedger studentData={studentData} compactHeader={isStaffReview} />;
   }
   if (page.kind === 'explain') {
     return (
@@ -99,14 +100,15 @@ function renderExperiencePage({
         studentData={studentData}
         gradeFlowLoading={gradeFlowLoading}
         gradeFlowError={gradeFlowError}
+        compactHeader={isStaffReview}
       />
     );
   }
   if (page.kind === 'concepts') {
-    return <ConceptsPage studentData={studentData} />;
+    return <ConceptsPage studentData={studentData} compactHeader={isStaffReview} />;
   }
   if (page.kind === 'policy') {
-    return <PolicyReference studentData={studentData} />;
+    return <PolicyReference studentData={studentData} compactHeader={isStaffReview} />;
   }
   return <UnknownStudentExperienceRoute />;
 }
