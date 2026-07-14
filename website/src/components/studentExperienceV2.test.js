@@ -1,10 +1,11 @@
 import React from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import {
   AssignmentLedger,
   CategoryDetailPage,
+  ExplainScorePage,
   ExamsOverviewPage,
   SingleExamPage,
   StudentReportContent,
@@ -18,10 +19,33 @@ import {
 } from './studentExperienceModel';
 
 jest.mock('react-chartjs-2', () => ({
-  Radar: ({ data }) => (
+  Radar: ({ data, options }) => (
     <div data-testid="radar-chart">
       {data.labels.join(', ')}
       <output>{JSON.stringify(data.datasets.map((dataset) => dataset.data))}</output>
+      <output data-testid="radar-tooltip">
+        {data.labels.map((_label, index) => {
+          const dataset = data.datasets[0] || {};
+          const result = options?.plugins?.tooltip?.callbacks?.label?.({
+            dataIndex: index,
+            parsed: { r: dataset.data?.[index] },
+            dataset,
+          });
+          return Array.isArray(result) ? result.join(' ') : result;
+        }).filter(Boolean).join(' | ')}
+      </output>
+    </div>
+  ),
+  Line: ({ data }) => <div data-testid="line-chart">{data.labels.join(', ')}</div>,
+  Doughnut: ({ data, options }) => (
+    <div data-testid="doughnut-chart">
+      {data.labels.join(', ')}
+      <output data-testid="doughnut-tooltip">
+        {data.labels.map((_label, index) => {
+          const result = options?.plugins?.tooltip?.callbacks?.label?.({ dataIndex: index });
+          return Array.isArray(result) ? result.join(' ') : result;
+        }).filter(Boolean).join(' | ')}
+      </output>
     </div>
   ),
 }));
@@ -101,6 +125,7 @@ const studentData = {
   examPolicyRows: [
     { examType: 'quest', attemptNo: 1, assignmentId: 'quest-1', assignmentTitle: 'Quest 1', rawPercentage: 70, questionBestPercentage: 75, finalPercentage: 75 },
     { examType: 'quest', attemptNo: 2, assignmentId: 'quest-2', assignmentTitle: 'Quest 2', rawPercentage: 80, questionBestPercentage: 82, clobberedPercentage: 90, finalPercentage: 90, clobberSourceTitle: 'Postterm' },
+    { examType: 'quest', attemptNo: 3, assignmentId: 'quest-3', assignmentTitle: 'Quest 3', rawPercentage: 88, questionBestPercentage: 89, finalPercentage: 89 },
     { examType: 'midterm', attemptNo: 1, assignmentId: 'midterm-1', assignmentTitle: 'Midterm', rawPercentage: 78, questionBestPercentage: 78, finalPercentage: 78 },
     { examType: 'postterm', attemptNo: 1, assignmentId: 'postterm-1', assignmentTitle: 'Postterm', rawPercentage: 88, questionBestPercentage: 89, finalPercentage: 89 },
   ],
@@ -152,7 +177,8 @@ describe('student experience canonical contract surfaces', () => {
       { path: '/profile/assignments', element: <AssignmentLedger studentData={studentData} /> },
     ], '/profile');
 
-    expect(screen.getByText('321.4 / 400')).toBeInTheDocument();
+    expect(screen.getByText('321.37 / 400')).toBeInTheDocument();
+    expect(screen.queryByText('321.4 / 400')).not.toBeInTheDocument();
     expect(screen.queryByText('1 / 150')).not.toBeInTheDocument();
     expect(screen.getByText('Most important area').parentElement).toHaveTextContent('Labs');
     await user.click(screen.getByRole('link', { name: /Resolve Lab Missing/i }));
@@ -165,12 +191,40 @@ describe('student experience canonical contract surfaces', () => {
 
     await act(async () => router.navigate(-1));
     expect(await screen.findByRole('heading', { name: 'Student Workspace' })).toBeInTheDocument();
+    expect(screen.queryByText(/Partial data ·/)).not.toBeInTheDocument();
+  });
+
+  test('staff-view Workspace actions keep the reviewed student and course context', async () => {
+    const user = userEvent.setup();
+    renderRoutes([
+      { path: '/students/:studentId/workspace', element: <StudentWorkspaceHome studentData={studentData} /> },
+      { path: '/students/:studentId/assignments', element: <AssignmentLedger studentData={studentData} /> },
+    ], '/students/avery%40example.com/workspace?course_id=demo-cs10');
+
+    expect(screen.queryAllByRole('link').some((link) => link.getAttribute('href')?.startsWith('/profile'))).toBe(false);
+    await user.click(screen.getByRole('link', { name: /Resolve Lab Missing/i }));
+
+    expect(screen.getByRole('heading', { name: 'Assignment Ledger' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/students/avery%40example.com/assignments');
+    expect(screen.getByTestId('location')).toHaveTextContent('course_id=demo-cs10');
+    expect(screen.getByTestId('location')).toHaveTextContent('category=Labs');
+    expect(screen.getByTestId('location')).toHaveTextContent('status=missing');
   });
 
   test('Report, category page, and exam title repeat canonical values without legacy fallbacks', () => {
     const report = renderRoutes([{ path: '/profile/report', element: <StudentReportContent studentData={studentData} /> }], '/profile/report');
-    expect(screen.getAllByText(/321\.4 \/ 400/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/321\.37 \/ 400/).length).toBeGreaterThan(0);
     expect(screen.getAllByText('53.3').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Partial data ·/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Overall Summary' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Category Performance Radar' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Score Trend' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Detailed Assignment Scores' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Assignment ID' })).toBeInTheDocument();
+    expect(screen.getByText('lab-duplicate-a')).toBeInTheDocument();
+    expect(screen.getByText('lab-duplicate-b')).toBeInTheDocument();
+    expect(screen.getAllByText('3 attempts').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1 attempt').length).toBeGreaterThanOrEqual(2);
     report.unmount();
 
     const labs = renderRoutes([{ path: '/profile/labs', element: <CategoryDetailPage studentData={studentData} pageKey="labs" /> }], '/profile/labs?tab=overview');
@@ -179,6 +233,83 @@ describe('student experience canonical contract surfaces', () => {
 
     renderRoutes([{ path: '/profile/exams/quest', element: <SingleExamPage studentData={studentData} examKey="quest" /> }], '/profile/exams/quest?mode=raw');
     expect(screen.getByRole('heading', { name: 'Quest 24.5 / 25' })).toBeInTheDocument();
+  });
+
+  test('restored report keeps canonical decimal precision in the snapshot, chart tooltips, and tables', () => {
+    const precisionStudent = {
+      ...studentData,
+      totalScore: 999,
+      totalCapPoints: 141,
+      canonicalGrade: {
+        ...studentData.canonicalGrade,
+        exactScore: 317.13,
+        displayScore: 317,
+        percentage: 79.2825,
+        categories: {
+          ...studentData.canonicalGrade.categories,
+          labs: {
+            ...studentData.canonicalGrade.categories.labs,
+            exactScore: 26.67,
+            cap: 80,
+            percentage: 33.3375,
+          },
+        },
+      },
+    };
+
+    renderRoutes([{ path: '/profile/report', element: <StudentReportContent studentData={precisionStudent} /> }], '/profile/report');
+
+    expect(screen.getAllByText(/317\.13 \/ 400/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/317 \/ 400/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/999 \/ 141/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('26.67').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('doughnut-tooltip')).toHaveTextContent('Earned : 26.67 / 80');
+    expect(screen.getAllByTestId('radar-tooltip').some((tooltip) => tooltip.textContent.includes('(26.67/80)'))).toBe(true);
+    expect(screen.queryByText(/27 \/ 80/)).not.toBeInTheDocument();
+  });
+
+  test('unavailable canonical category zero stays unavailable while nonzero evidence remains visible', () => {
+    const unavailableStudent = {
+      ...studentData,
+      canonicalGrade: {
+        ...studentData.canonicalGrade,
+        categories: {
+          ...studentData.canonicalGrade.categories,
+          labs: {
+            ...studentData.canonicalGrade.categories.labs,
+            exactScore: 0,
+            cap: 80,
+            percentage: 0,
+            status: 'unavailable',
+            source: 'labs_policy_unavailable',
+          },
+        },
+      },
+      assignmentEvidence: [
+        ...studentData.assignmentEvidence,
+        evidence('lab-real-evidence', 'Labs', 'Lab with real evidence', 'submitted', { score: 8, recordedScore: 8, maxPoints: 10, percentage: 80 }),
+      ],
+    };
+
+    const partialMessage = 'Partial data · Labs unavailable; total/letter may be incomplete';
+    const report = renderRoutes([{ path: '/profile/report', element: <StudentReportContent studentData={unavailableStudent} /> }], '/profile/report');
+
+    expect(screen.queryByText('0 / 80')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.0% final policy')).not.toBeInTheDocument();
+    expect(screen.getByText('lab-real-evidence')).toBeInTheDocument();
+    expect(screen.getAllByText('8 / 10').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('doughnut-tooltip')).toHaveTextContent('Earned : Unavailable / 80');
+    expect(screen.getByText(partialMessage)).toBeInTheDocument();
+    const performancePanel = screen.getByRole('heading', { name: 'Performance by Category' }).closest('.MuiPaper-root');
+    expect(within(performancePanel).getByRole('row', { name: /Labs Unavailable 80 Unavailable Unavailable/i })).toBeInTheDocument();
+    report.unmount();
+
+    const workspace = renderRoutes([{ path: '/profile', element: <StudentWorkspaceHome studentData={unavailableStudent} /> }], '/profile');
+    expect(screen.getByText(partialMessage)).toBeInTheDocument();
+    workspace.unmount();
+
+    renderRoutes([{ path: '/profile/explain', element: <ExplainScorePage studentData={unavailableStudent} /> }], '/profile/explain');
+    expect(screen.getByText(partialMessage)).toBeInTheDocument();
   });
 
   test('Labs URL restores a distinct Policy tab and preserves unrelated query state', async () => {
@@ -208,7 +339,7 @@ describe('student experience canonical contract surfaces', () => {
     const user = userEvent.setup();
     const { router } = renderRoutes([{ path: '/profile/exams', element: <ExamsOverviewPage studentData={studentData} /> }], '/profile/exams?mode=raw&exam=midterm&keep=1');
     expect(screen.getByText('Midterm Raw Attempts')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Quest.*2 attempts/i }));
+    await user.click(screen.getByRole('button', { name: /Quest.*3 attempts/i }));
     expect(screen.getByText('Quest Raw Attempts')).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('exam=quest');
     expect(screen.getByTestId('location')).toHaveTextContent('keep=1');

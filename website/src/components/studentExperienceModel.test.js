@@ -11,6 +11,7 @@ import {
   formatEvidenceScore,
   getActualClobberRows,
   getAssignmentEvidence,
+  getCanonicalContractState,
   getCanonicalStanding,
   getMostImportantCategory,
   isDueWorkStatus,
@@ -150,6 +151,55 @@ describe('student experience A1/A2 presentation contract', () => {
       cap: 80,
       basis: 'policy_final',
     });
+  });
+
+  test('category status keeps an unavailable placeholder zero distinct from real evidence', () => {
+    const grade = canonicalGrade();
+    grade.categories.labs = {
+      ...grade.categories.labs,
+      exactScore: 0,
+      cap: 80,
+      percentage: 0,
+      status: 'unavailable',
+      source: 'labs_policy_unavailable',
+    };
+    const labEvidence = evidenceRow(CATEGORY_DEFINITIONS[1], 'submitted', {
+      assignmentId: 'lab-real-evidence',
+      score: 8,
+      recordedScore: 8,
+      maxPoints: 10,
+      percentage: 80,
+    });
+
+    const labs = buildCategoryPresentations({ canonicalGrade: grade, assignmentEvidence: [labEvidence] })
+      .find((block) => block.key === 'labs');
+
+    expect(labs).toMatchObject({
+      exactScore: null,
+      cap: 80,
+      percentage: null,
+      canonicalStatus: 'unavailable',
+      source: 'labs_policy_unavailable',
+      summary: {
+        submittedItems: 1,
+        rawScore: 8,
+        rawMax: 10,
+      },
+    });
+
+    expect(getCanonicalContractState({ canonicalGrade: grade })).toEqual(expect.objectContaining({
+      partial: true,
+      unavailableCategories: ['Labs'],
+      message: 'Partial data · Labs unavailable; total/letter may be incomplete',
+    }));
+  });
+
+  test('complete canonical data does not produce a partial-data warning', () => {
+    expect(getCanonicalContractState({ canonicalGrade: canonicalGrade() })).toEqual(expect.objectContaining({
+      partial: false,
+      unavailableCategories: [],
+      message: '',
+    }));
   });
 
   test('due-work denominator excludes unknown, unsynced, not-due, N/A, and error rows', () => {

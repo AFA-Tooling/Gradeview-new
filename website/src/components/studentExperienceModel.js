@@ -71,6 +71,8 @@ export const LEDGER_GROUPS = Object.freeze(['category', 'status', 'time', 'none'
 
 const CATEGORY_BY_KEY = new Map(CATEGORY_DEFINITIONS.map((definition) => [definition.key, definition]));
 const STATUS_SET = new Set(EVIDENCE_STATUSES);
+const UNUSABLE_CANONICAL_CATEGORY_STATUSES = new Set(['unavailable', 'not_synced', 'request_error', 'error']);
+const COMPLETE_CANONICAL_STANDING_STATUSES = new Set(['available', 'complete', 'legacy']);
 
 const STATUS_META = Object.freeze({
   earned_zero: {
@@ -204,11 +206,47 @@ export function getCanonicalCategory(studentData, categoryKey) {
   const grade = getCanonicalGrade(studentData);
   const category = grade?.categories?.[categoryKey];
   if (!category || category.basis !== GRADE_BASIS) return null;
+  const status = String(category.status || 'legacy').trim().toLowerCase();
+  const hasUsablePolicyValue = !UNUSABLE_CANONICAL_CATEGORY_STATUSES.has(status);
   return {
     ...category,
-    exactScore: optionalNumber(category.exactScore),
+    status,
+    exactScore: hasUsablePolicyValue ? optionalNumber(category.exactScore) : null,
     cap: optionalNumber(category.cap),
-    percentage: optionalNumber(category.percentage),
+    percentage: hasUsablePolicyValue ? optionalNumber(category.percentage) : null,
+  };
+}
+
+export function getCanonicalContractState(studentData) {
+  const grade = getCanonicalGrade(studentData);
+  const standing = getCanonicalStanding(studentData);
+  const standingStatus = String(standing.status || 'partial').trim().toLowerCase();
+  if (!grade) {
+    return {
+      partial: true,
+      standingStatus,
+      unavailableCategories: [],
+      message: 'Partial data · canonical standing unavailable; total/letter may be incomplete',
+    };
+  }
+
+  const unavailableCategories = CATEGORY_DEFINITIONS.flatMap((definition) => {
+    const category = getCanonicalCategory(studentData, definition.key);
+    return !category || UNUSABLE_CANONICAL_CATEGORY_STATUSES.has(category.status)
+      ? [category?.label || definition.label]
+      : [];
+  });
+  const partial = !COMPLETE_CANONICAL_STANDING_STATUSES.has(standingStatus)
+    || unavailableCategories.length > 0;
+  const reason = unavailableCategories.length > 0
+    ? `${unavailableCategories.join(', ')} unavailable`
+    : `canonical standing is ${standingStatus.replace(/_/g, ' ')}`;
+
+  return {
+    partial,
+    standingStatus,
+    unavailableCategories,
+    message: partial ? `Partial data · ${reason}; total/letter may be incomplete` : '',
   };
 }
 

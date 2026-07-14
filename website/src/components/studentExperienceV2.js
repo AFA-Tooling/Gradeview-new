@@ -75,6 +75,7 @@ import {
   getActualClobberRows,
   getAssignmentEvidence,
   getBestExamRow as getContractBestExamRow,
+  getCanonicalContractState,
   getCanonicalStanding,
   getEvidenceStatusMeta,
   getExamDiagnosticPercentage,
@@ -151,6 +152,32 @@ function formatPercentage(value, digits = 1) {
   return `${safeNumber(value).toFixed(digits)}%`;
 }
 
+function resolveExperienceLink(target, location) {
+  const rawTarget = String(target || '');
+  if (!rawTarget.startsWith('/profile')) return rawTarget;
+
+  const [targetWithoutHash, hash = ''] = rawTarget.split('#', 2);
+  const queryIndex = targetWithoutHash.indexOf('?');
+  const targetPath = queryIndex >= 0 ? targetWithoutHash.slice(0, queryIndex) : targetWithoutHash;
+  const targetSearch = queryIndex >= 0 ? targetWithoutHash.slice(queryIndex + 1) : '';
+  const staffBase = String(location?.pathname || '').match(/^\/students\/[^/]+/)?.[0] || '';
+  const mappedPath = staffBase
+    ? (targetPath === '/profile' ? `${staffBase}/workspace` : `${staffBase}${targetPath.slice('/profile'.length)}`)
+    : targetPath;
+  const params = new URLSearchParams(location?.search || '');
+  new URLSearchParams(targetSearch).forEach((value, key) => params.set(key, value));
+  const search = params.toString();
+  return `${mappedPath}${search ? `?${search}` : ''}${hash ? `#${hash}` : ''}`;
+}
+
+function useExperienceLinkResolver() {
+  const location = useLocation();
+  return useCallback(
+    (target) => resolveExperienceLink(target, location),
+    [location.pathname, location.search],
+  );
+}
+
 function getGradeSnapshot(studentData) {
   return {
     ...getCanonicalGradeSnapshot(studentData),
@@ -218,9 +245,33 @@ function StatusChip({ status }) {
   return <Chip size="small" label={meta.label} sx={{ backgroundColor: tone.bg, color: tone.color, fontWeight: 700 }} />;
 }
 
+function ContractStateNotice({ state, sx }) {
+  if (!state?.partial || !state.message) return null;
+  return (
+    <Box
+      role="status"
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        maxWidth: '100%',
+        px: 1,
+        py: 0.5,
+        borderRadius: 1,
+        border: `1px solid ${colors.amber}`,
+        backgroundColor: colors.amberBg,
+        ...sx,
+      }}
+    >
+      <Typography sx={{ color: colors.amber, fontSize: 12.5, fontWeight: 700, lineHeight: 1.35 }}>
+        {state.message}
+      </Typography>
+    </Box>
+  );
+}
+
 function PageFrame({ title, subtitle, actions, children }) {
   return (
-    <Box sx={{ maxWidth: 1240, mx: 'auto', width: '100%' }}>
+    <Box sx={{ maxWidth: 1240, mx: 'auto', width: '100%', pb: { xs: 10, md: 8 } }}>
       <Stack spacing={2.5}>
         <Stack spacing={1.5}>
           <Stack
@@ -279,7 +330,7 @@ function LoadingStudentPage({ title }) {
   );
 }
 
-function MetricTile({ label, value, caption, to, icon, emphasized = false }) {
+function MetricTile({ label, value, caption, to, icon, notice }) {
   const content = (
     <Paper
       elevation={0}
@@ -288,8 +339,6 @@ function MetricTile({ label, value, caption, to, icon, emphasized = false }) {
         p: 2,
         height: '100%',
         color: colors.ink,
-        borderColor: emphasized ? colors.borderStrong : colors.border,
-        backgroundColor: emphasized ? colors.band : colors.surface,
         textDecoration: 'none',
         transition: 'border-color 140ms ease, background-color 140ms ease',
         '&:hover': to ? { borderColor: colors.borderStrong, backgroundColor: colors.band } : undefined,
@@ -298,10 +347,11 @@ function MetricTile({ label, value, caption, to, icon, emphasized = false }) {
       <Stack direction="row" spacing={1.2} justifyContent="space-between" alignItems="flex-start">
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ color: colors.muted, fontSize: 12, fontWeight: 750 }}>{label}</Typography>
-          <Typography sx={{ color: colors.ink, fontSize: emphasized ? 30 : 24, fontWeight: 800, lineHeight: 1.15, mt: 0.5 }}>
+          <Typography sx={{ color: colors.ink, fontSize: 24, fontWeight: 800, lineHeight: 1.15, mt: 0.5 }}>
             {value}
           </Typography>
           {caption && <Typography sx={{ color: colors.muted, fontSize: 12.5, mt: 0.75 }}>{caption}</Typography>}
+          {notice && <ContractStateNotice state={notice} sx={{ mt: 1 }} />}
         </Box>
         {icon && (
           <Box sx={{ color: colors.muted, flexShrink: 0, mt: 0.25 }}>
@@ -320,7 +370,7 @@ function MetricTile({ label, value, caption, to, icon, emphasized = false }) {
   );
 }
 
-function CategoryNavigationCard({ block }) {
+function CategoryNavigationCard({ block, to }) {
   const score = block.exactScore;
   const cap = block.cap;
   const percentage = block.percentage;
@@ -331,7 +381,7 @@ function CategoryNavigationCard({ block }) {
   const incompleteItems = (statusCounts.due_unknown || 0)
     + (statusCounts.not_synced || 0)
     + (statusCounts.request_error || 0);
-  const route = block.route || CATEGORY_BY_KEY.get(block.key)?.route || '/profile/assignments';
+  const route = to || block.route || CATEGORY_BY_KEY.get(block.key)?.route || '/profile/assignments';
   return (
     <Paper
       component={RouterLink}
@@ -403,12 +453,14 @@ function CategoryNavigationCard({ block }) {
 }
 
 export function StudentWorkspaceHome({ studentData }) {
+  const resolveLink = useExperienceLinkResolver();
   const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
   const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
   const importantCategory = useMemo(() => getImportantCategory(blocks), [blocks]);
   const actions = useMemo(() => getTopActions(studentData), [studentData]);
   const signals = useMemo(() => getRecentSignals(studentData), [studentData]);
   const evidenceRows = useMemo(() => getAssignmentEvidence(studentData), [studentData]);
+  const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
 
   if (!studentData) return <LoadingStudentPage title="Student Workspace" />;
 
@@ -419,21 +471,21 @@ export function StudentWorkspaceHome({ studentData }) {
       subtitle="Current standing, the grading area with the highest impact, and the next few things to do."
     >
       <Grid container spacing={2}>
-        <Grid item xs={12} md={5}>
+        <Grid item xs={12} md={4}>
           <MetricTile
-            emphasized
             label="Final standing"
-            value={gradeSnapshot.displayScore == null || gradeSnapshot.cap == null
+            value={gradeSnapshot.exactScore == null || gradeSnapshot.cap == null
               ? 'Unavailable'
-              : `${formatContractPoints(gradeSnapshot.displayScore)} / ${formatContractPoints(gradeSnapshot.cap)}`}
+              : `${formatContractPoints(gradeSnapshot.exactScore)} / ${formatContractPoints(gradeSnapshot.cap)}`}
             caption={gradeSnapshot.currentGrade
               ? `Current grade: ${gradeSnapshot.currentGrade}${gradeSnapshot.currentRange ? ` (${gradeSnapshot.currentRange})` : ''}`
               : 'Canonical policy-final standing is unavailable.'}
-            to="/profile/explain"
+            to={resolveLink('/profile/explain')}
             icon={<TrendingUp fontSize="small" />}
+            notice={contractState}
           />
         </Grid>
-        <Grid item xs={12} md={3}>
+        <Grid item xs={12} md={4}>
           <MetricTile
             label="Next grade gap"
             value={gradeSnapshot.pointsToNext == null ? 'Unavailable' : (gradeSnapshot.nextGrade ? `${formatContractPoints(gradeSnapshot.pointsToNext)} pts` : 'Top bin')}
@@ -442,7 +494,7 @@ export function StudentWorkspaceHome({ studentData }) {
               : gradeSnapshot.nextGrade
                 ? `Needed for ${gradeSnapshot.nextGrade} at ${formatContractPoints(gradeSnapshot.nextThreshold)} pts`
                 : 'No higher grade bin is currently configured.'}
-            to="/profile/explain"
+            to={resolveLink('/profile/explain')}
             icon={<TimelineOutlined fontSize="small" />}
           />
         </Grid>
@@ -451,7 +503,7 @@ export function StudentWorkspaceHome({ studentData }) {
             label="Most important area"
             value={importantCategory?.label || 'No category data'}
             caption={importantCategory?.importanceReason || 'Canonical category summaries are unavailable.'}
-            to={importantCategory?.route || '/profile/assignments'}
+            to={resolveLink(importantCategory?.route || '/profile/assignments')}
             icon={<InsightsOutlined fontSize="small" />}
           />
         </Grid>
@@ -461,7 +513,7 @@ export function StudentWorkspaceHome({ studentData }) {
         <Grid container spacing={2}>
           {blocks.map((block) => (
             <Grid key={block.key} item xs={12} sm={6} lg={4}>
-              <CategoryNavigationCard block={block} />
+              <CategoryNavigationCard block={block} to={resolveLink(block.route || CATEGORY_BY_KEY.get(block.key)?.route || '/profile/assignments')} />
             </Grid>
           ))}
         </Grid>
@@ -481,7 +533,7 @@ export function StudentWorkspaceHome({ studentData }) {
                 <Paper
                   key={action.key}
                   component={RouterLink}
-                  to={action.to}
+                  to={resolveLink(action.to)}
                   elevation={0}
                   sx={{
                     p: 1.5,
@@ -552,9 +604,9 @@ function buildReportSummary(studentData, studentEmail, currentCourse) {
   return [
     `Student: ${studentData?.studentName || studentData?.name || studentEmail || 'Unknown'}`,
     currentCourse ? `Course: ${currentCourse}` : '',
-    grade.displayScore == null || grade.cap == null
+    grade.exactScore == null || grade.cap == null
       ? 'Current standing: unavailable'
-      : `Current standing: ${formatContractPoints(grade.displayScore)} / ${formatContractPoints(grade.cap)} (${grade.currentGrade || 'letter unavailable'})`,
+      : `Current standing: ${formatContractPoints(grade.exactScore)} / ${formatContractPoints(grade.cap)} (${grade.currentGrade || 'letter unavailable'})`,
     grade.nextGrade ? `Next grade gap: ${grade.pointsToNext} pts to ${grade.nextGrade}` : 'Next grade gap: top configured bin',
     weak ? `Highest-impact area: ${weak.label}` : '',
   ].filter(Boolean).join('\n');
@@ -564,8 +616,10 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
   const [reviewed, setReviewed] = useState(false);
   const [notes, setNotes] = useState('');
   const [copied, setCopied] = useState(false);
+  const blocks = useMemo(() => getWorkspaceBlocks(studentData), [studentData]);
   const gradeSnapshot = useMemo(() => getGradeSnapshot(studentData), [studentData]);
   const summary = useMemo(() => buildReportSummary(studentData, studentEmail, currentCourse), [studentData, studentEmail, currentCourse]);
+  const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
 
   const copySummary = useCallback(async () => {
     try {
@@ -609,22 +663,41 @@ export function StudentReportContent({ studentData, studentEmail, currentCourse,
       )}
     >
       <SectionPanel>
-        <Stack spacing={1.25}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="overline" sx={{ color: colors.muted, fontWeight: 800, letterSpacing: 0 }}>
               Final Policy Snapshot
             </Typography>
             <Typography sx={{ color: colors.ink, fontWeight: 850, fontSize: { xs: 28, md: 34 }, lineHeight: 1.05 }}>
-              {gradeSnapshot.displayScore == null || gradeSnapshot.cap == null
+              {gradeSnapshot.exactScore == null || gradeSnapshot.cap == null
                 ? 'Canonical standing unavailable'
-                : `${formatContractPoints(gradeSnapshot.displayScore)} / ${formatContractPoints(gradeSnapshot.cap)} · ${gradeSnapshot.currentGrade || 'Letter unavailable'}`}
+                : `${formatContractPoints(gradeSnapshot.exactScore)} / ${formatContractPoints(gradeSnapshot.cap)} · ${gradeSnapshot.currentGrade || 'Letter unavailable'}`}
             </Typography>
             <Typography sx={{ color: colors.muted, fontSize: 13, mt: 1 }}>
               {studentData?.studentName || studentData?.name || studentEmail || 'Student'}
               {studentEmail ? ` · ${studentEmail}` : ''}
               {currentCourse ? ` · ${currentCourse}` : ''}
             </Typography>
+            <ContractStateNotice state={contractState} sx={{ mt: 1 }} />
           </Box>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="flex-start">
+            {EXAM_DEFS.map((def) => {
+              const block = blocks.find((item) => item.key === def.key);
+              return (
+                <Chip
+                  key={def.key}
+                  label={`${def.shortLabel}: ${block?.exactScore == null || block?.cap == null
+                    ? 'Unavailable'
+                    : `${formatContractPoints(block.exactScore)} / ${formatContractPoints(block.cap)}`}`}
+                  sx={{ fontWeight: 750, backgroundColor: colors.band, color: colors.ink }}
+                />
+              );
+            })}
+            <Chip
+              label={gradeSnapshot.nextGrade ? `${formatContractPoints(gradeSnapshot.pointsToNext)} pts to ${gradeSnapshot.nextGrade}` : 'Top grade bin'}
+              sx={{ fontWeight: 750, backgroundColor: colors.greenBg, color: colors.green }}
+            />
+          </Stack>
         </Stack>
         {staffMode && (
           <TextField
@@ -993,6 +1066,7 @@ function ExamScoreSummary({ studentData, mode, selectedExam, onSelectExam }) {
 export function ExamsOverviewPage({ studentData }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const resolveLink = useExperienceLinkResolver();
   const mode = useMemo(() => parseExamMode(location.search), [location.search]);
   const selectedExam = useMemo(() => parseExamSelection(location.search), [location.search]);
   const selectedDef = CATEGORY_BY_KEY.get(selectedExam);
@@ -1047,9 +1121,9 @@ export function ExamsOverviewPage({ studentData }) {
           <Grid item xs={12} md={6}>
             <MetricTile
               label="Canonical course standing"
-              value={canonicalGrade.displayScore == null || canonicalGrade.cap == null
+              value={canonicalGrade.exactScore == null || canonicalGrade.cap == null
                 ? 'Unavailable'
-                : `${formatContractPoints(canonicalGrade.displayScore)} / ${formatContractPoints(canonicalGrade.cap)}`}
+                : `${formatContractPoints(canonicalGrade.exactScore)} / ${formatContractPoints(canonicalGrade.cap)}`}
               caption="Shown for context; it is never recomputed from diagnostic exam rows."
             />
           </Grid>
@@ -1098,7 +1172,7 @@ export function ExamsOverviewPage({ studentData }) {
         </SectionPanel>
       )}
 
-      <Button component={RouterLink} to={selectedDef?.route || '/profile/exams/quest'} variant="outlined" sx={{ alignSelf: 'flex-start' }} endIcon={<ArrowForward />}>
+      <Button component={RouterLink} to={resolveLink(selectedDef?.route || '/profile/exams/quest')} variant="outlined" sx={{ alignSelf: 'flex-start' }} endIcon={<ArrowForward />}>
         Open {selectedDef?.label || 'exam'} detail
       </Button>
     </PageFrame>
@@ -1608,6 +1682,7 @@ function AssignmentDrawer({ assignment, onClose }) {
 export function ExplainScorePage({ studentData, gradeFlowLoading, gradeFlowError }) {
   const steps = ['Raw scores', 'Policy transformations', 'Category final', 'Course total', 'Rounding', 'Grade bin'];
   const hasGradeFlow = Boolean(studentData?.gradeFlow);
+  const contractState = useMemo(() => getCanonicalContractState(studentData), [studentData]);
   return (
     <PageFrame
       active="explain"
@@ -1617,6 +1692,7 @@ export function ExplainScorePage({ studentData, gradeFlowLoading, gradeFlowError
       <SectionPanel title="Default Flow">
         <PolicyFlow steps={steps} />
       </SectionPanel>
+      <ContractStateNotice state={contractState} />
       {gradeFlowError && <Alert severity="error">{gradeFlowError}</Alert>}
       {gradeFlowLoading && <Alert severity="info">Loading detailed grade flow...</Alert>}
       {hasGradeFlow ? (
@@ -1744,9 +1820,10 @@ export function PolicyReference({ studentData }) {
 }
 
 export function UnknownStudentExperienceRoute() {
+  const resolveLink = useExperienceLinkResolver();
   return (
     <PageFrame active="workspace" title="Page Not Found" subtitle="This student workspace route is not available.">
-      <Button component={RouterLink} to="/profile" variant="contained">Back to workspace</Button>
+      <Button component={RouterLink} to={resolveLink('/profile')} variant="contained">Back to workspace</Button>
     </PageFrame>
   );
 }
