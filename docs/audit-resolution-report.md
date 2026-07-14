@@ -11,7 +11,7 @@
 
 管理员现在按用户最新要求，在同一个紧凑左侧栏中同时看到 `STUDENT` 和 `ADMIN` 两组入口，以便管理员查看学生视图；普通学生只看到 `STUDENT`。这项要求取代了原审计 #21、#168 中“管理员不应同时看到两组导航”的旧判断，因此这两个编号不能继续按旧验收口径直接标记为关闭，后续审计应以“分组清楚、目标学生清楚、空间占用可接受”为准。
 
-本报告不是“180 项全部解决”的声明。180 项已全部记录和映射，但当前没有逐编号完成最终集成环境复验，也没有覆盖所有真实数据库、外部 GradeSync、所有角色、所有 viewport 和全部键盘/屏幕阅读器路径。可以确认的是：下述修复已进入主线，相关 contract/component 测试资产存在，恢复分支经过主代理逐分支审阅后才合并；最终主线的 Website、API、build 和 Browser 汇总结果仍须由主代理在第 7 节填写。
+本报告不是“180 项全部解决”的声明。180 项已全部记录和映射，但当前没有逐编号完成最终集成环境复验，也没有覆盖所有真实数据库、外部 GradeSync、所有角色、所有 viewport 和全部键盘/屏幕阅读器路径。可以确认的是：下述修复已进入主线，相关 contract/component 测试资产存在，恢复分支经过主代理逐分支审阅后才合并；最终主线的 Website、API、build 和目标 Browser 汇总结果已记录在第 7 节。
 
 Concept Map 不在本次审计和本报告范围内，本报告不提供其解决方案。
 
@@ -22,7 +22,7 @@ Concept Map 不在本次审计和本报告范围内，本报告不提供其解�
 - **已合并**：对应提交已存在于 `main@9a33472`。
 - **有持久测试资产**：仓库中存在针对该 contract 或交互的自动化断言；这不等同于本报告已重新执行全部测试。
 - **已做分支验收**：主代理在开发分支合并前审阅范围、实现与浏览器表现，并在发现问题时退回原 agent 继续修改。
-- **待最终集成证据**：所有分支合并后，在最终 `main` 上重新运行的完整结果；本报告不虚构这些结果。
+- **最终集成证据**：所有分支合并后，在 `main@9a33472` 上重新运行的结果，逐项记录在第 7 节；这些结果只证明已执行的门禁和场景。
 - **关闭审计项**：必须有目标编号、可观察结果、自动化或浏览器证据及最终集成回归结果。仅有共享根因修复或页面看起来正常，均不足以关闭编号。
 
 ## 3. 此前已合并并保留的数据、API 与 CI 修复
@@ -31,7 +31,7 @@ Concept Map 不在本次审计和本报告范围内，本报告不提供其解�
 
 | 主线提交 | 已合并内容 | 仓库中的持久证据 | 当前可以下的结论与限制 |
 | --- | --- | --- | --- |
-| `41ed498` | AI Analytics 请求按选中课程携带并约束 `course_id` | AI service、course-scope route 与测试 | 已有 course scope 实现与断言；真实 AI/数据库环境仍需最终集成验证。 |
+| `41ed498` | AI Analytics 请求按选中课程携带并约束 `course_id` | AI service、course-scope route 与测试 | 已有 course scope 实现与断言，最终 Browser 的真实查询返回统计表；生产 AI/数据库环境仍需单独验证。 |
 | `5fee798` | 建立 canonical grade contract，统一 exact/display score、cap、percentage、letter、category 和 grade-bin 处理 | `canonicalGrade.test.js`、`policySummaryBuilder.test.js`、`questPolicyScore.test.js`、前端 adapter tests | Avery/Jordan fixture、边界、missing due date、Quest 与小数取整有自动化断言；不能据此宣称所有真实课程跨页值均已复验。 |
 | `4513f01` | 建立 route-driven student review 与稳定学生 deep link | `studentRoutes.test.js`、`studentProfile.test.jsx` | direct load、history、旧请求覆盖和 policy 课程上下文有测试；所有页面 filter/scroll 恢复尚未逐项复验。 |
 | `42adcfb` | assignment catalog 与 evidence 分离，保留无 submission/no-due 行；统一 enrolled roster authority | `assignmentEvidence.test.js`、`courseRoster.test.js`、`routeResponseWiring.test.js`、前端 adapter tests | 24 个 catalog 行/5 个 evidence 行、32 人 roster、状态区分和 LEFT JOIN contract 有断言；生产数据库行为与全部异常数据仍需运行验证。 |
@@ -82,11 +82,11 @@ Concept Map 不在本次审计和本报告范围内，本报告不提供其解�
 
 | 问题簇 | 当前状态 | 仍需的关闭证据 |
 | --- | --- | --- |
-| #1–20 成绩、category、rounding、roster | **已有共享 contract 修复，待最终跨页实数复验** | 在同一真实 fixture 上对 Class Health、Workspace、Report、Alerts、Explain Score 逐值比对。 |
+| #1–20 成绩、category、rounding、roster | **已有共享 contract 修复与 Avery/Alex Browser 抽样，仍待完整跨页实数复验** | 在同一真实 fixture 上对 Class Health、Workspace、Report、Alerts、Explain Score 逐值比对。 |
 | #21–41 角色、学生选择与 URL | **部分完成；#21/#168 按新需求改写** | student/staff/demo 三类身份的 direct URL、refresh、back/forward、filter/scroll 全流程。 |
 | #42–65 Class Health 图表、dialog、Students 表 | **Students 表内部 UX 已改进；其余仍需专项复审** | histogram/图表摘要、dialog 层级、email feedback、完整 13-inch 与 keyboard 证据。 |
 | #66–147 Student 各页、Ledger、Explain Score、Policy | **canonical/evidence model 与主要页面恢复已合并，未逐项全关** | 每个 category/status、真实 CSV、时区、全部图表文本替代、Policy 完整性和真实浏览器路径。 |
-| #148–163 AI、Sync、Settings、错误状态 | **目标 contract/component 修复已合并** | 真实服务、权限和异常环境的端到端回归，以及最终集成浏览器证据。 |
+| #148–163 AI、Sync、Settings、错误状态 | **目标 contract/component 修复与目标 Browser smoke 已完成** | 生产服务、完整权限矩阵和异常环境的端到端回归。 |
 | #164–180 响应式、布局、可访问性、loading | **壳层、窄屏溢出和若干语义已改进，仍为部分覆盖** | 多 viewport、200% zoom、keyboard-only、screen reader、reduced motion 和慢网/乱序请求系统复验。 |
 
 在上述证据补齐前，不应把 [audit-report.md](./audit-report.md) 的 180 个编号统一改成 “Resolved”。
@@ -94,6 +94,7 @@ Concept Map 不在本次审计和本报告范围内，本报告不提供其解�
 ## 6. 已知限制与剩余风险
 
 - 当前自动化以 unit、contract 和 component tests 为主，不能替代真实 PostgreSQL、真实 token、真实课程配置与真实外部同步的 E2E。
+- 长期运行的 `web` 容器测试依赖卷缺少 `@testing-library/jest-dom`，导致 test runner 在执行测试前失败；同一提交已在干净 detached worktree 和独立依赖卷中复验通过。该现象记录为陈旧/不完整依赖卷的环境问题，不记为代码测试失败。
 - Student partial-data 状态是诚实降级，不代表缺失类别已经同步完成；当类别不可用时，总分/letter 仍可能不完整，页面应继续保留警告。
 - Class Health 本轮集中修 Students 表，不代表 #42–55 的图表与 dialog 问题已经全部重新验收。
 - 原审计要求的完整 keyboard、screen reader、图表文本替代、color-only、heading、zoom 和多 viewport 证据尚未汇总成逐项报告。
@@ -101,22 +102,26 @@ Concept Map 不在本次审计和本报告范围内，本报告不提供其解�
 - 本轮以 `41b3e4b` 为视觉参考，不承诺像素级完全一致；为满足新权限需求、数据可信度和窄屏可用性，保留了少量有目的的差异。
 - Concept Map 被明确排除，没有被实现、验收或写入解决方案。
 
-## 7. 主代理最终集成验收记录（交付前填写）
+## 7. 主代理最终集成验收记录
 
-以下字段必须在最终 `main` 上执行后填写。当前保持“待主代理填写”，避免把分支结果冒充最终集成结果。
+以下结果均针对 `main@9a33472`。Website tests 使用干净 detached worktree 与独立依赖卷执行；Browser 验收使用该主线运行实例。
 
 | 最终门禁 | 命令/场景 | 结果 | 证据 |
 | --- | --- | --- | --- |
-| Main SHA | `git rev-parse HEAD` | **待主代理填写** | 完整 SHA：待填写 |
-| Website tests | `cd website && npm run test:ci` | **待主代理最终填写证据** | suites/tests/exit code：待填写 |
-| API tests | `cd api && npm test -- --runInBand` | **待主代理最终填写证据** | suites/tests/exit code：待填写 |
-| Production build | `cd website && CI=true npm run build` | **待主代理最终填写证据** | exit code/warnings：待填写 |
-| Git integrity | `git diff --check`、最终 status | **待主代理最终填写证据** | 只包含预期交付与保留的用户文件：待填写 |
-| Browser desktop | 1280×800：管理员导航、Class Health、Student Report、AI、Sync、Settings | **待主代理最终填写证据** | route、截图/观察、console：待填写 |
-| Browser narrow | 391px：菜单、表格、AI 长 course ID、Student 页面、footer | **待主代理最终填写证据** | overflow、操作可达性、console：待填写 |
-| Persona smoke | 普通学生、staff/admin、Demo read-only | **待主代理最终填写证据** | 每类身份的导航、student target、写屏障：待填写 |
+| Main SHA | `git rev-parse HEAD` | **PASS** | `9a33472438de71dce10028a0a0899e2bb3717106` |
+| Website tests | `cd website && npm run test:ci` | **PASS** | 18 suites；253/253 tests 通过。 |
+| API tests | `cd api && npm test -- --runInBand` | **PASS** | 15 suites；150/150 tests 通过。 |
+| Production build | `cd website && CI=true npm run build` | **PASS** | `compiled successfully`。 |
+| Git integrity | `git diff --check`、最终 status | **PASS（已知 dirty 文件除外）** | `git diff --check` 无输出；共享 `main` 仅保留第 8 节列出的 5 个用户未提交文档。 |
+| Browser desktop shell | 桌面 staff/admin | **PASS** | sidebar 244px、topbar 42px；左侧同时显示 `STUDENT` 与 `ADMIN`。 |
+| Browser Student data | Avery 与 Alex Report/Workspace 目标场景 | **PASS** | Avery 显示 `317.13 / 400`，没有 `317 / 400` 或 `Partial data`；Alex 显示 `283.58 / 400`，Labs 为 `Unavailable`，没有 `0 / 80` 或 `0%`，显示 `Partial data`，attempts 为 3/1/1。 |
+| Browser narrow Admin | 请求 391px 的 Class Health Students | **PASS（含 runtime 缩放说明）** | Browser runtime 实测页面 `clientWidth = scrollWidth = 521`；三个 tabs 全文可见，Raw Columns 默认折叠；表格 `clientWidth/scrollWidth = 439/1439`，横向滚动限制在表格内部。 |
+| Browser narrow AI | AI Alert 与真实查询 | **PASS** | Alert `405/405`、message `339/339`，无内部横向溢出；真实查询返回统计表。 |
+| Browser Grade Sync | Demo read-only | **PASS** | `Refresh` 可用，Demo `Start Sync` disabled。 |
+| Browser Settings | 权限错误状态 | **PASS** | 显示 `ROLE_FORBIDDEN`、reason 与 recovery。 |
+| Persona smoke | staff/admin 与 Demo | **PARTIAL** | staff 双分组导航和 Demo 写入负向路径已实测；普通学生 Browser 路径未在这次最终 smoke 中单独重跑，保留 component test 证据。 |
 
-若其中任一门禁失败，应退回对应原分支/agent 修复并重新执行，不应把报告状态改为“最终通过”。即使所有门禁通过，也只能确认本轮目标修复和 UI 恢复通过，不能自动推导 180 项全部关闭。
+上述结果满足本轮目标修复和 UI 恢复的集成门禁。它们不能自动推导 180 项全部关闭；未执行的真实服务、角色和逐编号场景仍按第 5、6 节保留。
 
 ## 8. 用户未提交文档的保留情况
 
@@ -134,4 +139,4 @@ Concept Map 不在本次审计和本报告范围内，本报告不提供其解�
 
 ## 9. 交付状态
 
-截至 `main@9a33472`：底层数据/API/CI 修复与本轮 UI 恢复、窄屏修补和 Class Health 内部 UX 改进均已合并。文档状态为 **等待主代理最终集成验收证据**，不是 **180 项全部解决**。
+截至 `main@9a33472`：底层数据/API/CI 修复与本轮 UI 恢复、窄屏修补和 Class Health 内部 UX 改进均已合并；第 7 节的自动化、build 与目标 Browser 集成证据已记录。文档状态为 **本轮目标集成验收通过，剩余审计项继续保留**，不是 **180 项全部解决**。
