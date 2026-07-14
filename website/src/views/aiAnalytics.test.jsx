@@ -25,6 +25,9 @@ const COURSES = [{
   name: 'Demo Course',
 }];
 
+const LONG_COURSE_ID = `course-${'unbroken'.repeat(18)}`;
+const LONG_RESULT_COLUMN = `metric-${'unbroken'.repeat(18)}`;
+
 async function runQuery(user, question = 'Show overview') {
   await user.type(screen.getByLabelText('Ask about the selected course'), question);
   await user.click(screen.getByRole('button', { name: 'Run query' }));
@@ -91,6 +94,46 @@ describe('AI Analytics live request states', () => {
     expect(screen.getByRole('cell', { name: '82.5' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: 'student_count' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '32' })).toBeInTheDocument();
+  });
+
+  it('wraps long course identifiers and keeps wide live results scrolling inside the table', async () => {
+    const user = userEvent.setup();
+    mockProcessQuery.mockResolvedValue({
+      answer: 'Wide live result',
+      data: [{ [LONG_RESULT_COLUMN]: 'value' }],
+      source: { type: 'live_course', course_id: LONG_COURSE_ID },
+    });
+    render(
+      <AIAnalytics
+        selectedCourseId="long-course"
+        courses={[{
+          id: 'long-course',
+          gradescope_course_id: LONG_COURSE_ID,
+          name: 'Long Course',
+        }]}
+      />,
+    );
+
+    const courseId = screen.getByText(LONG_COURSE_ID);
+    const courseAlert = screen.getByText('Current live course').closest('[role="status"]');
+    const alertMessage = courseId.closest('.MuiAlert-message');
+
+    expect(window.getComputedStyle(courseId).overflowWrap).toBe('anywhere');
+    expect(window.getComputedStyle(courseId).whiteSpace).toBe('normal');
+    expect(window.getComputedStyle(alertMessage).overflowWrap).toBe('anywhere');
+    expect(window.getComputedStyle(alertMessage).overflow).toBe('visible');
+    expect(window.getComputedStyle(courseAlert).overflowX).not.toBe('auto');
+
+    await runQuery(user, 'Show wide result');
+
+    const table = await screen.findByRole('table', { name: 'Live AI Analytics query rows' });
+    const tableContainer = table.closest('.MuiTableContainer-root');
+    const tableContainerStyle = window.getComputedStyle(tableContainer);
+
+    expect(screen.getByRole('columnheader', { name: LONG_RESULT_COLUMN })).toBeInTheDocument();
+    expect(tableContainerStyle.overflowX).toBe('auto');
+    expect(tableContainerStyle.minWidth).toBe('0');
+    expect(tableContainerStyle.maxWidth).toBe('100%');
   });
 
   it('clears an older live result when a 403 course-scope failure arrives', async () => {
