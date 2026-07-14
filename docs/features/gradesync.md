@@ -2,6 +2,8 @@
 
 ## Docs
 
+- Course configuration and assignment binding contract:
+  [course-configuration-control-plane.md](./course-configuration-control-plane.md)
 - Setup guide: [../../gradesync/SETUP_DEMO.md](../../gradesync/SETUP_DEMO.md)
 - Demo guide: [../../gradesync/DEMO_COURSE_README.md](../../gradesync/DEMO_COURSE_README.md)
 - Start here: [../../gradesync/START_HERE.md](../../gradesync/START_HERE.md)

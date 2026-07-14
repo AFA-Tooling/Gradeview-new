@@ -1,5 +1,12 @@
 # Berkeley CS Course Harness Design
 
+> **Status: background design note.** The authoritative Gradescope-only MVP
+> product and integration contract is
+> [Course Configuration Control Plane Specification](./course-configuration-control-plane.md).
+> Where this document conflicts with that specification, the newer specification
+> wins. In particular, the MVP now produces approved assignment actions for an
+> external Gradescope Handler instead of stopping at a setup checklist.
+
 ## Scope
 
 This note treats "all Berkeley CS courses" as a future addressable universe, but the first production harness should be much narrower:

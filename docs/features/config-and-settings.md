@@ -1,5 +1,10 @@
 # Feature: Config & Settings
 
+## Product Specification
+
+- Course configuration control plane:
+  [course-configuration-control-plane.md](./course-configuration-control-plane.md)
+
 ## Source Files
 
 - Config routes: [../../api/v2/Routes/config/index.js](../../api/v2/Routes/config/index.js)
