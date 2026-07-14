@@ -27,13 +27,13 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import Grid from '@mui/material/Grid';
-import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
+import StudentProfile from '../components/StudentProfile';
 import AIAnalytics from './aiAnalytics';
 import GradeSyncControl from './GradeSyncControl';
 import apiv2 from '../utils/apiv2';
 import { cachedApiGet } from '../utils/apiCache';
-import { buildStudentExperiencePath, STUDENT_PERSONA } from '../utils/studentRoutes';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -145,7 +145,7 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
   isLight,
   hdrBorderH,
   hdrBorderV,
-  studentHref,
+  onOpenStudentReport,
 }) {
   const finalPercentage = totalMaxPoints > 0
     ? ((student.total / totalMaxPoints) * 100).toFixed(2)
@@ -163,12 +163,19 @@ const AdminStudentScoreRow = memo(function AdminStudentScoreRow({
         maxWidth: '250px',
       }}>
         <Box
-          component={RouterLink}
-          to={studentHref}
+          component="button"
+          type="button"
+          onClick={() => onOpenStudentReport(student)}
           aria-label={`View report for ${student.name} (${student.email})`}
           sx={{
             display: 'inline-flex',
             flexDirection: 'column',
+            alignItems: 'flex-start',
+            p: 0,
+            border: 0,
+            background: 'none',
+            font: 'inherit',
+            textAlign: 'left',
             color: 'inherit',
             cursor: 'pointer',
             borderRadius: 0.5,
@@ -284,6 +291,7 @@ export default function Admin() {
   const [errorSS, setErrorSS]             = useState();
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const deferredStudentSearchQuery = useDeferredValue(studentSearchQuery);
+  const [studentReportStudent, setStudentReportStudent] = useState(null);
 
   // --- SECTION CAPS (from /bins assignment_points) ---
   const [sectionCaps, setSectionCaps] = useState({}); // { "Labs": 80, "Quest": 25, ... }
@@ -682,8 +690,6 @@ export default function Admin() {
       studentsTableRef.current.scrollTop = 0;
     }
   }, [sortBy, sortAsc, scoreDisplayMode, visibleAssignments, selectedCourse, deferredStudentSearchQuery]);
-
-  const studentReportSearch = buildCourseQuery(selectedCourse);
 
   // Handlers
   const handleTabChange = (_, newTab) => {
@@ -1822,12 +1828,7 @@ export default function Admin() {
                                   isLight={isLight}
                                   hdrBorderH={hdrBorderH}
                                   hdrBorderV={hdrBorderV}
-                                  studentHref={buildStudentExperiencePath({
-                                    persona: STUDENT_PERSONA.STAFF,
-                                    identifier: stu.email,
-                                    page: 'report',
-                                    search: studentReportSearch,
-                                  })}
+                                  onOpenStudentReport={setStudentReportStudent}
                                 />
                             ))}
                             {virtualStudentWindow.bottomPadding > 0 && (
@@ -1854,6 +1855,15 @@ export default function Admin() {
         {tab === 2 && (
           <AIAnalytics selectedCourseId={selectedCourse} courses={courses} />
         )}
+
+        <StudentProfile
+          open={Boolean(studentReportStudent)}
+          onClose={() => setStudentReportStudent(null)}
+          studentEmail={studentReportStudent?.email || ''}
+          studentName={studentReportStudent?.name || ''}
+          selectedCourse={selectedCourse}
+          courses={courses}
+        />
 
     </Box>
   );

@@ -70,15 +70,17 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
     <Dialog 
       open={open} 
       onClose={onClose} 
-      maxWidth="lg" 
+      maxWidth="xl"
       fullWidth
       PaperProps={{
         sx: {
           minHeight: '80vh',
+          width: 'calc(100% - 32px)',
+          m: 2,
         }
       }}
     >
-      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider', px: 2.5, py: 1.75 }}>
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 600 }}>Student Report</Typography>
           {studentName && (
@@ -91,7 +93,7 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
 
       <DialogContent
         dividers
-        sx={{ p: 3 }}
+        sx={{ p: { xs: 1.5, md: 2 } }}
       >
         {loading && (
           <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -115,7 +117,7 @@ export default function StudentProfile({ open, onClose, studentEmail, studentNam
         )}
       </DialogContent>
 
-      <DialogActions sx={{ borderTop: 1, borderColor: 'divider' }}>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', px: 2, py: 1.25 }}>
         <Button onClick={onClose} variant="contained">
           Close
         </Button>

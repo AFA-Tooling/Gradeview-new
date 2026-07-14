@@ -17,6 +17,22 @@ jest.mock('./aiAnalytics', () => function MockAIAnalytics() {
   return <div>AI analytics panel</div>;
 });
 
+jest.mock('../components/StudentProfile', () => function MockStudentProfile({
+  open,
+  onClose,
+  studentEmail,
+  studentName,
+}) {
+  if (!open) return null;
+  return (
+    <div role="dialog" aria-label="Student Report">
+      <div>{studentName}</div>
+      <div>{studentEmail}</div>
+      <button type="button" onClick={onClose}>Close</button>
+    </div>
+  );
+});
+
 jest.mock('react-chartjs-2', () => ({
   Bar: () => <div>Bar chart</div>,
   Line: () => <div>Line chart</div>,
@@ -131,20 +147,30 @@ describe('Class Health tab URL state', () => {
     expect(screen.getByPlaceholderText('Search assignments…')).toBeInTheDocument();
   });
 
-  test('student names are keyboard-accessible report links scoped to the selected course', async () => {
+  test('student names open a report dialog without leaving Class Health', async () => {
     mockStudentScoreData();
-    renderAdmin('/admin?tab=students');
+    const user = userEvent.setup();
+    const { router } = renderAdmin('/admin?tab=students&filter=missing');
 
-    const studentLink = await screen.findByRole('link', {
+    const studentButton = await screen.findByRole('button', {
       name: 'View report for Avery Chen (avery.chen@example.edu)',
     });
 
-    expect(studentLink).toHaveAttribute(
-      'href',
-      '/students/avery.chen%40example.edu/report?course_id=course-101',
-    );
-    studentLink.focus();
-    expect(studentLink).toHaveFocus();
+    studentButton.focus();
+    expect(studentButton).toHaveFocus();
+    await user.click(studentButton);
+
+    expect(screen.getByRole('dialog', { name: 'Student Report' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveTextContent('Avery Chen');
+    expect(screen.getByRole('dialog')).toHaveTextContent('avery.chen@example.edu');
+    expect(router.state.location.pathname).toBe('/admin');
+    expect(router.state.location.search).toBe('?tab=students&filter=missing');
+
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Student Report' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Student Scores Overview' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/admin');
+    expect(router.state.location.search).toBe('?tab=students&filter=missing');
   });
 
   test('search filters by name or email and presents a clear empty state', async () => {
@@ -153,17 +179,17 @@ describe('Class Health tab URL state', () => {
     renderAdmin('/admin?tab=students');
 
     const search = await screen.findByRole('searchbox', { name: 'Search students' });
-    await screen.findByRole('link', {
+    await screen.findByRole('button', {
       name: 'View report for Avery Chen (avery.chen@example.edu)',
     });
 
     await user.type(search, 'zoe.patel');
     await waitFor(() => {
-      expect(screen.queryByRole('link', {
+      expect(screen.queryByRole('button', {
         name: 'View report for Avery Chen (avery.chen@example.edu)',
       })).not.toBeInTheDocument();
     });
-    expect(screen.getByRole('link', {
+    expect(screen.getByRole('button', {
       name: 'View report for Zoe Patel (zoe.patel@example.edu)',
     })).toBeInTheDocument();
 
@@ -193,13 +219,13 @@ describe('Class Health tab URL state', () => {
     try {
       renderAdmin('/admin?tab=students');
       const search = await screen.findByRole('searchbox', { name: 'Search students' });
-      await screen.findByRole('link', {
+      await screen.findByRole('button', {
         name: 'View report for Avery Chen (avery.chen@example.edu)',
       });
 
       await user.type(search, 'Avery');
       await waitFor(() => {
-        expect(screen.queryByRole('link', {
+        expect(screen.queryByRole('button', {
           name: 'View report for Zoe Patel (zoe.patel@example.edu)',
         })).not.toBeInTheDocument();
       });
@@ -220,7 +246,7 @@ describe('Class Health tab URL state', () => {
     mockStudentScoreData();
     const user = userEvent.setup();
     renderAdmin('/admin?tab=students');
-    await screen.findByRole('link', {
+    await screen.findByRole('button', {
       name: 'View report for Avery Chen (avery.chen@example.edu)',
     });
 
@@ -239,7 +265,7 @@ describe('Class Health tab URL state', () => {
     mockStudentScoreData();
     const user = userEvent.setup();
     renderAdmin('/admin?tab=students');
-    await screen.findByRole('link', {
+    await screen.findByRole('button', {
       name: 'View report for Avery Chen (avery.chen@example.edu)',
     });
 
@@ -271,7 +297,7 @@ describe('Class Health tab URL state', () => {
 
     try {
       renderAdmin('/admin?tab=students');
-      await screen.findByRole('link', {
+      await screen.findByRole('button', {
         name: 'View report for Avery Chen (avery.chen@example.edu)',
       });
       expect(screen.getByText('Raw columns (0 of 1 selected)').closest('details'))

@@ -79,6 +79,26 @@ function formatSourceLabel(value) {
     return value;
 }
 
+async function requestCurrentUserCourses() {
+    const [adminResult, studentResult] = await Promise.allSettled([
+        withRequestTimeout((signal) => apiv2.get('/admin/sync', { signal })),
+        withRequestTimeout((signal) => apiv2.get('/students/courses', { signal })),
+    ]);
+    const adminCourses = adminResult.status === 'fulfilled'
+        ? (adminResult.value?.data?.courses || [])
+        : [];
+    const studentCourses = studentResult.status === 'fulfilled'
+        ? (studentResult.value?.data?.courses || [])
+        : [];
+
+    return {
+        courses: normalizeCourseList([...adminCourses, ...studentCourses]),
+        errors: [adminResult, studentResult]
+            .filter((result) => result.status === 'rejected')
+            .map((result) => result.reason),
+    };
+}
+
 export default function GradeSyncControl() {
     const capabilities = useMemo(readCapabilities, []);
     const isReadOnly = capabilities.isReadOnly;
@@ -123,14 +143,14 @@ export default function GradeSyncControl() {
         }
 
         try {
-            const response = await withRequestTimeout((signal) => apiv2.get('/students/courses', { signal }));
+            const { courses, errors } = await requestCurrentUserCourses();
             if (requestId !== courseRequestIdRef.current) return;
-            const courses = normalizeCourseList(response?.data?.courses || []);
             const course = courses.find((candidate) => (
                 String(candidate.id) === selectedId
                 || String(candidate.gradescope_course_id || '') === selectedId
             ));
             if (!course) {
+                if (errors.length > 0) throw errors[0];
                 setCourseResource({ status: 'empty', course: null, apiCourseId: '', error: null });
                 return;
             }

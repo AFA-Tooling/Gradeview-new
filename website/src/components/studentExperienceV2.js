@@ -414,8 +414,9 @@ function CategoryNavigationCard({ block, to }) {
         </Stack>
         <Box>
           <LinearProgress
-            variant={percentage == null ? 'indeterminate' : 'determinate'}
-            value={percentage == null ? undefined : Math.max(0, Math.min(100, percentage))}
+            aria-label={`${block.label} final policy progress`}
+            variant="determinate"
+            value={percentage == null ? 0 : Math.max(0, Math.min(100, percentage))}
             sx={{
               height: 6,
               borderRadius: 1,
@@ -754,16 +755,16 @@ function AssignmentEvidenceTable({ assignments, onOpenAssignment, emptyMessage =
   }
 
   return (
-    <TableContainer sx={{ borderRadius: 1.5, border: `1px solid ${colors.border}` }}>
-      <Table size="small">
+    <TableContainer sx={{ borderRadius: 1.5, border: `1px solid ${colors.border}`, overflowX: 'auto' }}>
+      <Table size="small" sx={{ minWidth: 1040 }}>
         <TableHead>
           <TableRow>
-            <TableCell>Assignment</TableCell>
-            <TableCell>Category</TableCell>
-            <TableCell>Evidence</TableCell>
-            <TableCell align="center">Status</TableCell>
-            <TableCell>Due</TableCell>
-            <TableCell>Submitted</TableCell>
+            <TableCell sx={{ minWidth: 240 }}>Assignment</TableCell>
+            <TableCell sx={{ minWidth: 180 }}>Category</TableCell>
+            <TableCell sx={{ minWidth: 150 }}>Evidence</TableCell>
+            <TableCell align="center" sx={{ minWidth: 170 }}>Status</TableCell>
+            <TableCell sx={{ minWidth: 150 }}>Due</TableCell>
+            <TableCell sx={{ minWidth: 150 }}>Submitted</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -775,12 +776,12 @@ function AssignmentEvidenceTable({ assignments, onOpenAssignment, emptyMessage =
               onClick={() => onOpenAssignment(assignment)}
               sx={{ cursor: 'pointer' }}
             >
-              <TableCell sx={{ fontWeight: 700 }}>{assignment.name}</TableCell>
-              <TableCell>{assignment.category}</TableCell>
-              <TableCell>{formatEvidenceScore(assignment)}</TableCell>
-              <TableCell align="center"><StatusChip status={assignment.evidenceStatus} /></TableCell>
-              <TableCell>{formatCourseDateTime(assignment.dueAt)}</TableCell>
-              <TableCell>{formatCourseDateTime(assignment.submissionTime)}</TableCell>
+              <TableCell sx={{ fontWeight: 700, py: 1.5, verticalAlign: 'top' }}>{assignment.name}</TableCell>
+              <TableCell sx={{ py: 1.5, verticalAlign: 'top' }}>{assignment.category}</TableCell>
+              <TableCell sx={{ py: 1.5, verticalAlign: 'top' }}>{formatEvidenceScore(assignment)}</TableCell>
+              <TableCell align="center" sx={{ py: 1.5, verticalAlign: 'top' }}><StatusChip status={assignment.evidenceStatus} /></TableCell>
+              <TableCell sx={{ py: 1.5, verticalAlign: 'top' }}>{formatCourseDateTime(assignment.dueAt)}</TableCell>
+              <TableCell sx={{ py: 1.5, verticalAlign: 'top' }}>{formatCourseDateTime(assignment.submissionTime)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -924,7 +925,7 @@ export function CategoryDetailPage({ studentData, pageKey }) {
       </Grid>
 
       <Grid container spacing={2}>
-        <Grid item xs={12} md={8}>
+        <Grid item xs={12} data-testid="category-evidence-region">
           <SectionPanel title={pageKey === 'labs' ? `Labs · ${queryState.tab.replace(/^\w/, (char) => char.toUpperCase())}` : `${block?.label || 'Category'} Evidence`} subtitle="Every row retains its A2 catalog/evidence status; unavailable values are not rendered as zero.">
             {pageKey === 'labs' && queryState.tab === 'policy' ? (
               <PolicyFlow steps={policyFlow} />
@@ -941,28 +942,28 @@ export function CategoryDetailPage({ studentData, pageKey }) {
             )}
           </SectionPanel>
         </Grid>
-        <Grid item xs={12} md={4}>
-          <Stack spacing={2}>
-            {!(pageKey === 'labs' && queryState.tab === 'policy') && (
-              <SectionPanel title="Policy Applied">
-                <PolicyFlow steps={policyFlow} compact />
-              </SectionPanel>
-            )}
-            <SectionPanel title="Action">
-              <Stack spacing={1.25}>
-                <Typography sx={{ color: colors.muted, fontSize: 14 }}>
-                  {topAction
-                    ? `${topAction.title}. ${topAction.detail}`
-                    : allAssignments.length === 0
-                      ? 'No concrete action can be generated until catalog evidence is available.'
-                      : 'No concrete missing, zero, late, sync, timing, or request-error action is present.'}
-                </Typography>
-                <Button component={RouterLink} to={topAction?.to || relatedHref} variant="contained" size="small" endIcon={<ArrowForward />}>
-                  Open related catalog rows
-                </Button>
-              </Stack>
+        {!(pageKey === 'labs' && queryState.tab === 'policy') && (
+          <Grid item xs={12} md={6}>
+            <SectionPanel title="Policy Applied" sx={{ height: '100%' }}>
+              <PolicyFlow steps={policyFlow} compact />
             </SectionPanel>
-          </Stack>
+          </Grid>
+        )}
+        <Grid item xs={12} md={pageKey === 'labs' && queryState.tab === 'policy' ? 12 : 6}>
+          <SectionPanel title="Action" sx={{ height: '100%' }}>
+            <Stack spacing={1.25}>
+              <Typography sx={{ color: colors.muted, fontSize: 14, lineHeight: 1.6 }}>
+                {topAction
+                  ? `${topAction.title}. ${topAction.detail}`
+                  : allAssignments.length === 0
+                    ? 'No concrete action can be generated until catalog evidence is available.'
+                    : 'No concrete missing, zero, late, sync, timing, or request-error action is present.'}
+              </Typography>
+              <Button component={RouterLink} to={topAction?.to || relatedHref} variant="contained" size="small" endIcon={<ArrowForward />}>
+                Open related catalog rows
+              </Button>
+            </Stack>
+          </SectionPanel>
         </Grid>
       </Grid>
       <AssignmentDrawer assignment={selectedAssignment} onClose={() => setSelectedAssignment(null)} />

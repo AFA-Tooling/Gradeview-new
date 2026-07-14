@@ -101,9 +101,8 @@ export default function AppShell({ navigation, footer, children }) {
         style={mainStyle}
       >
         {children}
+        {!isLoginRoute && footer}
       </main>
-
-      {!isLoginRoute && footer}
     </div>
   );
 }

@@ -79,13 +79,37 @@ describe('GradeSync platform states', () => {
 
         expect(await screen.findByText('2026 Spring Demo Course')).toBeInTheDocument();
         expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-        expect(apiv2.get).toHaveBeenCalledTimes(2);
+        expect(apiv2.get).toHaveBeenCalledTimes(4);
+    });
+
+    it('resolves a global course that is only present in the GradeSync admin course list', async () => {
+        localStorage.setItem('selectedCourseId', 'gradesync-only');
+        localStorage.setItem('permissions', JSON.stringify({ has_course_admin: true }));
+        apiv2.get.mockImplementation((path) => Promise.resolve(path === '/admin/sync'
+            ? {
+                data: {
+                    courses: [{
+                        id: 'gradesync-only',
+                        name: 'GradeSync Only Course',
+                        year: 2026,
+                        semester: 'Fall',
+                    }],
+                },
+            }
+            : { data: { courses: [] } }));
+
+        render(<GradeSyncControl />);
+
+        expect(await screen.findByText('2026 Fall GradeSync Only Course')).toBeInTheDocument();
+        expect(screen.queryByText('No current course')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Start Sync for current course' })).toBeEnabled();
     });
 
     it('recovers a failed course read with the in-card retry action', async () => {
         setSession();
         const user = userEvent.setup();
         apiv2.get
+            .mockRejectedValueOnce({ response: { status: 500, data: { reason: 'Course service unavailable.' } } })
             .mockRejectedValueOnce({ response: { status: 500, data: { reason: 'Course service unavailable.' } } })
             .mockResolvedValueOnce(COURSE_RESPONSE);
         render(<GradeSyncControl />);

@@ -59,15 +59,14 @@
 }
 
 .app footer {
-    flex-shrink: 0;
     margin-left: 0;
     width: 100%;
     max-width: 100%;
 }
 
 #root:has(.app-shell-sidebar) .app footer {
-    margin-left: var(--app-sidebar-width);
-    width: calc(100% - var(--app-sidebar-width));
+    margin-left: 0;
+    width: 100%;
 }
 
 .login-shell {
@@ -87,11 +86,6 @@
         width: 100%;
         max-width: 100%;
         scrollbar-gutter: auto;
-    }
-
-    .app footer {
-        margin-left: 0 !important;
-        width: 100% !important;
     }
 
     .login-shell {

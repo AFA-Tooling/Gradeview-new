@@ -22,7 +22,11 @@ jest.mock('@xyflow/react', () => ({
       </output>
       {nodes.map((node) => {
         const Node = nodeTypes[node.type];
-        return Node ? <Node key={node.id} data={node.data} /> : null;
+        return Node ? (
+          <div key={node.id} data-testid={`flow-node-${node.id}`} data-render-height={node.data.renderHeight}>
+            <Node data={node.data} />
+          </div>
+        ) : null;
       })}
     </div>
   ),
@@ -90,4 +94,62 @@ test('grade flow keeps its own total when no canonical contract is available', (
   expect(screen.getAllByText('999/150')).toHaveLength(2);
   expect(screen.queryByText('317.13 / 400')).not.toBeInTheDocument();
   expect(screen.getByText('10/20')).toBeInTheDocument();
+});
+
+test('expanded policy rows wrap long assignment names instead of truncating them', () => {
+  const longAssignmentName = 'Lab 9: Algorithms (Binary) / Algorithmic Complexity';
+  const detailInputs = [
+    {
+      id: 'lab-9',
+      type: 'raw',
+      group: 'labs',
+      label: longAssignmentName,
+      displayValue: 'not passed',
+      status: 'missing',
+    },
+    ...Array.from({ length: 25 }, (_, index) => ({
+      id: `lab-${index + 10}`,
+      type: 'raw',
+      group: 'labs',
+      label: `Lab ${index + 10}: Assignment ${index + 10}`,
+      displayValue: 'not passed',
+      status: 'missing',
+    })),
+  ];
+  const graphWithFilterDetails = {
+    student: { email: 'avery@example.com' },
+    course: { id: 'demo-course' },
+    components: [{ id: 'labs' }],
+    nodes: [
+      ...detailInputs,
+      {
+        id: 'labs-filter',
+        type: 'logical',
+        subtype: 'filter',
+        group: 'labs',
+        label: 'FILTER Lab Completion',
+        details: { operator: 'filter' },
+      },
+    ],
+    edges: detailInputs.map((input) => ({
+      id: `${input.id}-filter`,
+      source: input.id,
+      target: 'labs-filter',
+      active: true,
+    })),
+    total: {},
+  };
+
+  render(<GradeDataFlow studentData={{ gradeFlow: graphWithFilterDetails }} />);
+
+  const wrappedDetailLabel = screen
+    .getAllByText(longAssignmentName)
+    .find((element) => !element.classList.contains('MuiTypography-noWrap'));
+
+  expect(wrappedDetailLabel).toHaveStyle({
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+  });
+  expect(screen.getAllByText('not passed')).toHaveLength(52);
+  expect(Number(screen.getByTestId('flow-node-labs-filter').dataset.renderHeight)).toBeGreaterThan(760);
 });

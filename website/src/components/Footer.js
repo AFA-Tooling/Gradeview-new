@@ -9,17 +9,12 @@ export default function Footer() {
         <Box
             component="footer"
             sx={{
-                flex: '0 0 auto',
-                minHeight: 48,
-                py: 1.25,
-                px: 2,
-                bgcolor: 'background.paper',
+                mt: 3,
+                py: 0.75,
+                px: 1,
                 borderTop: 1,
                 borderColor: 'divider',
-                textAlign: 'center',
                 width: '100%',
-                zIndex: 'auto',
-                position: 'static',
             }}
         >
             <Typography
@@ -28,19 +23,20 @@ export default function Footer() {
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 1,
+                    justifyContent: 'flex-end',
+                    gap: 0.75,
                     flexWrap: 'wrap',
+                    fontSize: '0.75rem',
                 }}
             >
-                <Email aria-hidden="true" sx={{ fontSize: 18, flexShrink: 0 }} />
-                <span>Questions or issues?</span>
+                <Email aria-hidden="true" sx={{ fontSize: 15, flexShrink: 0 }} />
+                <span>Need help?</span>
                 <Link
                     href={`mailto:${contactEmail}`}
                     color="secondary.main"
                     underline="hover"
                     sx={{
-                        minHeight: 44,
+                        minHeight: 32,
                         display: 'inline-flex',
                         alignItems: 'center',
                         fontWeight: 600,

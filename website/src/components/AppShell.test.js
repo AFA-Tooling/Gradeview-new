@@ -54,6 +54,16 @@ describe('application shell', () => {
     expect(screen.getByRole('main')).toHaveStyle({ marginLeft: '0', padding: '0' });
   });
 
+  test('keeps the footer in the scrollable main content instead of reserving viewport space', () => {
+    renderShell('/profile');
+
+    const main = screen.getByRole('main');
+    const footer = screen.getByText('Footer');
+
+    expect(main).toContainElement(footer);
+    expect(main.nextElementSibling).toBeNull();
+  });
+
   test('keeps staff persona, student, course, and query state for profile links', async () => {
     const user = userEvent.setup();
     renderShell('/students/avery%40example.com/report?course_id=demo-cs10');

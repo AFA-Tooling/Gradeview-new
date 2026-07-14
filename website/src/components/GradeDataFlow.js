@@ -23,7 +23,10 @@ const NODE_WIDTH = 180;
 const DETAIL_NODE_WIDTH = 260;
 const NODE_HEIGHT = 68;
 const RESULT_NODE_HEIGHT = 106;
-const DETAIL_ROW_HEIGHT = 24;
+const DETAIL_ROW_HEIGHT = 26;
+const DETAIL_LABEL_LINE_HEIGHT = 13;
+const DETAIL_LABEL_CHARS_PER_LINE = 34;
+const DETAIL_SECTION_CHROME_HEIGHT = 18;
 const LAYER_GAP = 292;
 const ROW_GAP = 92;
 const GROUP_GAP = 58;
@@ -50,6 +53,12 @@ function formatNodeResult(data) {
 
 function policyText(data) {
   return data?.details?.operator || data?.displayValue || data?.subtype || 'policy';
+}
+
+function getDetailRowHeight(label) {
+  const labelLength = String(label || '').trim().length;
+  const labelLines = Math.max(1, Math.ceil(labelLength / DETAIL_LABEL_CHARS_PER_LINE));
+  return DETAIL_ROW_HEIGHT + (labelLines - 1) * DETAIL_LABEL_LINE_HEIGHT;
 }
 
 function nodeTone(type, subtype) {
@@ -256,17 +265,33 @@ const LogicalPolicyNode = memo(({ data }) => {
                     justifyContent="space-between"
                     spacing={1}
                     sx={{
-                      minHeight: DETAIL_ROW_HEIGHT,
+                      minHeight: row.renderHeight || DETAIL_ROW_HEIGHT,
                       px: 0.55,
                       borderRadius: 0.6,
                       backgroundColor: index % 2 === 0 ? 'rgba(255,255,255,0.54)' : 'rgba(17,24,39,0.035)',
                     }}
                   >
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography sx={{ fontSize: 10.5, fontWeight: 800, color: dropped ? 'rgba(17,24,39,0.45)' : '#111827' }} noWrap>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Typography
+                        sx={{
+                          fontSize: 10.5,
+                          fontWeight: 800,
+                          lineHeight: 1.2,
+                          color: dropped ? 'rgba(17,24,39,0.45)' : '#111827',
+                          whiteSpace: 'normal',
+                          overflowWrap: 'anywhere',
+                        }}
+                      >
                         {row.label}
                       </Typography>
-                      <Typography sx={{ fontSize: 9.5, color: dropped ? 'rgba(17,24,39,0.38)' : 'rgba(17,24,39,0.58)' }} noWrap>
+                      <Typography
+                        sx={{
+                          fontSize: 9.5,
+                          lineHeight: 1.2,
+                          color: dropped ? 'rgba(17,24,39,0.38)' : 'rgba(17,24,39,0.58)',
+                        }}
+                        noWrap
+                      >
                         {row.displayValue}
                       </Typography>
                     </Box>
@@ -490,6 +515,7 @@ function buildVisibleGraph(graph, upstreamExpandedNodeIds, detailExpandedNodeIds
           label: inputNode.label,
           displayValue: inputNode.displayValue || `${formatPoints(inputNode.score)} / ${formatPoints(inputNode.maxScore)}`,
           status: inputNode.status || 'kept',
+          renderHeight: getDetailRowHeight(inputNode.label),
         })),
       );
     }
@@ -533,7 +559,9 @@ function buildVisibleGraph(graph, upstreamExpandedNodeIds, detailExpandedNodeIds
     const hasInlineDetail = inlineDetailNodeIds.has(node.id) && detailRows.length > 0;
     const hasResultFooter = node.type === 'logical' && !RAW_PROCESSING_SUBTYPES.has(node.subtype);
     const baseHeight = hasResultFooter ? RESULT_NODE_HEIGHT : NODE_HEIGHT;
-    const detailHeight = baseHeight + detailRows.length * DETAIL_ROW_HEIGHT + 14;
+    const detailHeight = baseHeight
+      + detailRows.reduce((height, row) => height + (row.renderHeight || DETAIL_ROW_HEIGHT), 0)
+      + DETAIL_SECTION_CHROME_HEIGHT;
     const showInlineDetail = hasInlineDetail && detailExpandedNodeIds.has(node.id);
     layoutHeightById.set(node.id, hasInlineDetail ? detailHeight : baseHeight);
     renderWidthById.set(node.id, showInlineDetail ? DETAIL_NODE_WIDTH : NODE_WIDTH);
