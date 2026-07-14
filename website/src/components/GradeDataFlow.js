@@ -17,6 +17,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { formatPoints as formatContractPoints, getCanonicalStanding } from './studentExperienceModel';
 
 const NODE_WIDTH = 180;
 const DETAIL_NODE_WIDTH = 260;
@@ -877,6 +878,7 @@ function areSetsEqual(a, b) {
 
 export default function GradeDataFlow({ studentData }) {
   const graph = studentData?.gradeFlow;
+  const canonicalStanding = useMemo(() => getCanonicalStanding(studentData), [studentData]);
   const defaultUpstreamExpandedNodeIds = useMemo(
     () => new Set(getUpstreamToggleNodeIds(graph)),
     [graph],
@@ -928,6 +930,31 @@ export default function GradeDataFlow({ studentData }) {
     [graph, upstreamExpandedNodeIds, detailExpandedNodeIds, toggleUpstreamNode, toggleDetailNode],
   );
 
+  const canonicalTotalDisplay = useMemo(() => {
+    if (canonicalStanding.exactScore == null || canonicalStanding.cap == null) return null;
+    return `${formatContractPoints(canonicalStanding.exactScore)} / ${formatContractPoints(canonicalStanding.cap)}`;
+  }, [canonicalStanding.cap, canonicalStanding.exactScore]);
+
+  const displayedFlowNodes = useMemo(() => {
+    if (!canonicalTotalDisplay) return flowNodes;
+    return flowNodes.map((node) => {
+      if (node.type !== 'final_output') return node;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          score: canonicalStanding.exactScore,
+          maxScore: canonicalStanding.cap,
+          displayValue: canonicalTotalDisplay,
+          details: {
+            ...node.data?.details,
+            percentage: canonicalStanding.percentage ?? node.data?.details?.percentage,
+          },
+        },
+      };
+    });
+  }, [canonicalStanding.cap, canonicalStanding.exactScore, canonicalStanding.percentage, canonicalTotalDisplay, flowNodes]);
+
   const showAllSources = useCallback(() => {
     setUpstreamExpandedNodeIds((prev) => {
       const next = new Set(upstreamToggleNodeIds);
@@ -956,7 +983,16 @@ export default function GradeDataFlow({ studentData }) {
     });
   }, []);
 
-  const total = graph?.total || {};
+  const total = useMemo(() => {
+    const graphTotal = graph?.total || {};
+    if (!canonicalTotalDisplay) return graphTotal;
+    return {
+      ...graphTotal,
+      score: canonicalStanding.exactScore,
+      cap: canonicalStanding.cap,
+      displayValue: canonicalTotalDisplay,
+    };
+  }, [canonicalStanding.cap, canonicalStanding.exactScore, canonicalTotalDisplay, graph?.total]);
   const components = Array.isArray(graph?.components) ? graph.components : [];
   const fitKey = `${graph?.student?.email || studentData?.email || 'student'}:${graph?.course?.id || 'course'}:${components.length}`;
   const upstreamExpandedCount = useMemo(
@@ -1027,7 +1063,7 @@ export default function GradeDataFlow({ studentData }) {
       </Stack>
       <ReactFlowProvider>
         <FlowCanvas
-          nodes={flowNodes}
+          nodes={displayedFlowNodes}
           edges={flowEdges}
           fitKey={fitKey}
           total={total}
