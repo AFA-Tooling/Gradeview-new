@@ -660,7 +660,7 @@ export default function Settings() {
                                 <TextField
                                     label="Retry Attempts"
                                     type="number"
-                                    value={syncConfig.global_settings?.retry_attempts || 3}
+                                    value={syncConfig.global_settings?.retry_attempts ?? 3}
                                     onChange={(e) => setSyncConfig({
                                         ...syncConfig,
                                         global_settings: { ...syncConfig.global_settings, retry_attempts: parseInt(e.target.value || 0, 10) }
@@ -671,7 +671,7 @@ export default function Settings() {
                                 <TextField
                                     label="Retry Delay (seconds)"
                                     type="number"
-                                    value={syncConfig.global_settings?.retry_delay_seconds || 5}
+                                    value={syncConfig.global_settings?.retry_delay_seconds ?? 5}
                                     onChange={(e) => setSyncConfig({
                                         ...syncConfig,
                                         global_settings: { ...syncConfig.global_settings, retry_delay_seconds: parseInt(e.target.value || 0, 10) }
@@ -804,7 +804,7 @@ export default function Settings() {
                                                         <TextField
                                                             label="Sync Interval (hours)"
                                                             type="number"
-                                                            value={course.sources?.gradescope?.sync_interval_hours || 24}
+                                                            value={course.sources?.gradescope?.sync_interval_hours ?? 24}
                                                             onChange={(e) => updateCourseNestedSection(courseIndex, 'sources', 'gradescope', 'sync_interval_hours', parseInt(e.target.value || 0, 10))}
                                                             sx={{ width: '180px' }}
                                                         />
