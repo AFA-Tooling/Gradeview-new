@@ -203,3 +203,21 @@ class GradescopeClient(GradescopeBaseClient):
         except RequestException as e:
             print(f"Request error for assignment {assignment_id}: {e}")
             raise
+
+    def download_gradebook(self, class_id: str) -> bytes:
+        """Download all course grades through Gradescope's Download Grades CSV endpoint."""
+        if not self.logged_in:
+            return False
+
+        url = f"{GRADESCOPE_ROOT}/courses/{class_id}/gradebook.csv"
+        try:
+            self.last_res = res = self.session.get(url, timeout=self.request_timeout)
+            if not res or not res.ok:
+                return False
+            return res.content
+        except Timeout:
+            raise TimeoutError(
+                f"Course gradebook download timed out after {self.request_timeout}s"
+            )
+        except RequestException:
+            raise

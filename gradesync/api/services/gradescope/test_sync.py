@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from api.services.gradescope.sync import parse_assignment_catalog
+from api.core import ingest_optimized
+from api.services.gradescope.sync import is_published_assignment, parse_assignment_catalog
+from api.services.gradescope.sync import GradescopeSync
 
 
 def assignments_table(rows):
@@ -59,3 +61,68 @@ def test_parse_assignment_catalog_rejects_duplicate_assignment_ids():
 def test_parse_assignment_catalog_requires_assignments_table():
     with pytest.raises(RuntimeError, match='AssignmentsTable payload was not found'):
         parse_assignment_catalog('<html></html>')
+
+
+@pytest.mark.parametrize(
+    ('published', 'expected'),
+    [
+        (True, True),
+        (False, False),
+        (None, False),
+        ('true', False),
+    ],
+)
+def test_only_explicitly_published_assignments_are_syncable(published, expected):
+    assert is_published_assignment({'is_published': published}) is expected
+
+
+def test_course_sync_downloads_and_ingests_only_published_assignments(monkeypatch):
+    sync = GradescopeSync('staff@example.edu', 'secret')
+    public = {'assignment_id': '100', 'title': 'Public Lab', 'is_published': True}
+    unpublished = {'assignment_id': '200', 'title': 'Future Lab', 'is_published': False}
+    captured_catalog = []
+    ingested_catalog = []
+
+    monkeypatch.setattr(sync, '_get_course_assignments', lambda _course_id: [public, unpublished])
+    monkeypatch.setattr(sync.gs_client, 'log_in', lambda _email, _password: True)
+    monkeypatch.setattr(sync.gs_client, 'logout', lambda: None)
+
+    gradebook_csv = (
+        'Name,SID,Email,Public Lab,Public Lab - Max Points,'
+        'Public Lab - Submission Time,Public Lab - Lateness (H:M:S)\n'
+        'Student,1,s@example.edu,1,1,,\n'
+    )
+
+    monkeypatch.setattr(sync.gs_client, 'download_gradebook', lambda course_id: gradebook_csv)
+    monkeypatch.setattr(
+        sync.gs_client,
+        'download_scores',
+        lambda *_args: pytest.fail('Per-assignment downloads must not be used'),
+    )
+
+    def capture_catalog(**kwargs):
+        captured_catalog.extend(kwargs['catalog'])
+        return {'catalog_count': len(kwargs['catalog'])}
+
+    def capture_ingest(**kwargs):
+        ingested_catalog.extend(kwargs['catalog'])
+        assert kwargs['csv_content'] == gradebook_csv
+        return {
+            'success': True,
+            'students_processed': 1,
+            'assignments_processed': 1,
+            'submissions_processed': 1,
+            'unmatched_assignment_titles': [],
+        }
+
+    monkeypatch.setattr(ingest_optimized, 'upsert_gradescope_assignment_catalog', capture_catalog)
+    monkeypatch.setattr(ingest_optimized, 'write_course_gradebook_optimized', capture_ingest)
+
+    result = sync.sync_course('1329547', save_to_db=True)
+
+    assert [row['assignment_id'] for row in captured_catalog] == ['100']
+    assert [row['assignment_id'] for row in ingested_catalog] == ['100']
+    assert result['assignments_synced'] == 1
+    assert result['assignments_discovered'] == 2
+    assert result['unpublished_skipped'] == 1
+    assert result['submissions_synced'] == 1

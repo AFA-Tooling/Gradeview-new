@@ -15,6 +15,11 @@ from .client import GRADESCOPE_ROOT, GradescopeClient
 logger = logging.getLogger(__name__)
 
 
+def is_published_assignment(catalog_entry: Dict[str, Any]) -> bool:
+    """Return whether Gradescope currently exposes an assignment to students."""
+    return catalog_entry.get('is_published') is True
+
+
 def _parse_catalog_datetime(value: Optional[str], timezone_name: str) -> Optional[datetime]:
     if not value:
         return None
@@ -163,21 +168,25 @@ class GradescopeSync:
                 "message": "Loading assignment list...",
                 "progress": 5,
             })
-            assignments_data = {}
-            students_data = set()
-            
-            # Download all assignments and their scores
-            # print(f"[DEBUG] About to call _get_course_assignments({course_id})")
-            course_assignments = self._get_course_assignments(course_id)
-            if not course_assignments:
+            # Fetch the catalog once for stable IDs, publication state, and dates.
+            source_catalog = self._get_course_assignments(course_id)
+            if not source_catalog:
                 raise RuntimeError(
                     f"No assignments found for course {course_id}. "
                     "This is usually caused by missing course access for the configured Gradescope account."
                 )
-            # print(f"[DEBUG] Retrieved {len(course_assignments)} assignments from Gradescope")
-            logger.info(f"Retrieved {len(course_assignments)} assignments from Gradescope")
-            total_assignments = len(course_assignments)
-
+            course_assignments = [
+                assignment
+                for assignment in source_catalog
+                if is_published_assignment(assignment)
+            ]
+            unpublished_count = len(source_catalog) - len(course_assignments)
+            logger.info(
+                "Retrieved %d assignments from Gradescope; %d are published and %d will be ignored",
+                len(source_catalog),
+                len(course_assignments),
+                unpublished_count,
+            )
             catalog_result = None
             if save_to_db:
                 from api.core.ingest_optimized import upsert_gradescope_assignment_catalog
@@ -187,123 +196,74 @@ class GradescopeSync:
                     course_config=course_config,
                 )
 
-            assignments_failed = []
-            
-            for index, catalog_entry in enumerate(course_assignments, start=1):
-                assignment_id = catalog_entry['assignment_id']
-                assignment_name = catalog_entry['title']
-                start_pct = int(10 + ((index - 1) / max(1, total_assignments)) * 80)
-                emit_progress({
-                    "event": "progress",
-                    "status": "running",
-                    "stage": "assignment_start",
-                    "message": f"Syncing assignment {index}/{total_assignments}: {assignment_name}",
-                    "progress": start_pct,
-                    "subCurrent": index,
-                    "subTotal": total_assignments,
-                    "subLabel": assignment_name,
-                })
-                logger.info(f"Downloading scores for: {assignment_name} (ID: {assignment_id})")
-                
-                try:
-                    import time as _time
-                    print(f"[{_ts()}] Processing {assignment_name}...", flush=True)
-                    
-                    # Download CSV scores for this assignment
-                    _dl_start = _time.time()
-                    scores_csv = self.gs_client.download_scores(course_id, assignment_id)
-                    _dl_elapsed = _time.time() - _dl_start
-                    
-                    if scores_csv:
-                        # Ensure scores_csv is a string (not bytes)
-                        if isinstance(scores_csv, bytes):
-                            scores_csv = scores_csv.decode('utf-8')
-                        
-                        logger.info(f"[INFO] [{_ts()}] `save_to_db` is {save_to_db} for {assignment_name}")
-                        
-                        # Parse CSV and save to database if requested
-                        if save_to_db:
-                            # Use optimized batch ingestion
-                            from api.core.ingest_optimized import write_assignment_scores_optimized
-                            
-                            _db_start = _time.time()
-                            result = write_assignment_scores_optimized(
-                                course_gradescope_id=course_id,
-                                assignment_id=assignment_id,
-                                assignment_name=assignment_name,
-                                csv_content=scores_csv,
-                                course_config=course_config,
-                                catalog_entry=catalog_entry,
-                            )
-                            if not result.get('success'):
-                                raise RuntimeError(result.get('error') or 'Database ingestion failed')
-                            _db_elapsed = _time.time() - _db_start
-                            
-                            # if result.get('skipped'):
-                            #     print(f"[{_ts()}] Skipped {assignment_name} - {result.get('reason')} ({_db_elapsed:.2f}s)", flush=True)
-                            # elif result.get('success'):
-                            #     print(f"[{_ts()}] Saved {assignment_name} ({result.get('submissions_processed')} subs, {_db_elapsed:.2f}s)", flush=True)
-                            # else:
-                            #     print(f"[{_ts()}] Failed {assignment_name}: {result.get('error')} ({_db_elapsed:.2f}s)", flush=True)
-                        
-                        assignments_data[assignment_id] = assignment_name
-                        
-                        # Count unique students
-                        import csv
-                        import io
-                        reader = csv.DictReader(io.StringIO(scores_csv))
-                        for row in reader:
-                            if 'SID' in row:
-                                students_data.add(row['SID'])
+            emit_progress({
+                "event": "progress",
+                "status": "running",
+                "stage": "download_gradebook",
+                "message": "Downloading the course gradebook...",
+                "progress": 20,
+            })
+            gradebook_csv = self.gs_client.download_gradebook(course_id)
+            if not gradebook_csv:
+                raise RuntimeError(f"Failed to download course gradebook for {course_id}")
+            if isinstance(gradebook_csv, bytes):
+                gradebook_csv = gradebook_csv.decode('utf-8-sig')
 
-                        done_pct = int(10 + (index / max(1, total_assignments)) * 80)
-                        emit_progress({
-                            "event": "progress",
-                            "status": "running",
-                            "stage": "assignment_done",
-                            "message": f"Finished assignment {index}/{total_assignments}: {assignment_name}",
-                            "progress": done_pct,
-                            "subCurrent": index,
-                            "subTotal": total_assignments,
-                            "subLabel": assignment_name,
-                        })
-                
-                except Exception as e:
-                    logger.error(f"Failed to sync {assignment_name}: {e}")
-                    assignments_failed.append({
-                        'assignment_id': assignment_id,
-                        'title': assignment_name,
-                        'error': str(e),
-                    })
-                    done_pct = int(10 + (index / max(1, total_assignments)) * 80)
-                    emit_progress({
-                        "event": "progress",
-                        "status": "running",
-                        "stage": "assignment_failed",
-                        "message": f"Failed assignment {index}/{total_assignments}: {assignment_name}",
-                        "progress": done_pct,
-                        "subCurrent": index,
-                        "subTotal": total_assignments,
-                        "subLabel": assignment_name,
-                    })
-                    # print(f"[{_ts()}] Error: {assignment_name}: {e}", flush=True)
-                    continue
-            
+            emit_progress({
+                "event": "progress",
+                "status": "running",
+                "stage": "ingest_gradebook",
+                "message": "Saving course grades in one batch...",
+                "progress": 55,
+            })
+            from api.core.ingest_optimized import (
+                parse_gradescope_course_gradebook,
+                write_course_gradebook_optimized,
+            )
+            if save_to_db:
+                gradebook_result = write_course_gradebook_optimized(
+                    course_gradescope_id=course_id,
+                    csv_content=gradebook_csv,
+                    catalog=course_assignments,
+                    course_config=course_config,
+                )
+                if not gradebook_result.get('success'):
+                    raise RuntimeError(
+                        gradebook_result.get('error') or 'Course gradebook ingestion failed'
+                    )
+            else:
+                parsed = parse_gradescope_course_gradebook(
+                    gradebook_csv,
+                    course_assignments,
+                )
+                gradebook_result = {
+                    'success': True,
+                    'students_processed': len(parsed['students']),
+                    'assignments_processed': len(parsed['matched_assignments']),
+                    'submissions_processed': len(parsed['submissions']),
+                    'unmatched_assignment_titles': parsed['unmatched_assignment_titles'],
+                }
+
             results = {
                 "success": True,
                 "course_id": course_id,
-                "assignments_synced": len(assignments_data),
-                "students_synced": len(students_data),
+                "assignments_synced": gradebook_result['assignments_processed'],
+                "assignments_discovered": len(source_catalog),
+                "unpublished_skipped": unpublished_count,
+                "students_synced": gradebook_result['students_processed'],
+                "submissions_synced": gradebook_result['submissions_processed'],
+                "assignments_missing_from_gradebook": gradebook_result['unmatched_assignment_titles'],
                 "catalog": catalog_result,
-                "assignments_failed": assignments_failed,
+                "assignments_failed": [],
             }
 
-            if assignments_failed:
-                raise RuntimeError(
-                    f"Failed to sync {len(assignments_failed)} of {total_assignments} assignments"
-                )
-            
-            # print(f"[{_ts()}] Sync completed: {results}", flush=True)
+            emit_progress({
+                "event": "progress",
+                "status": "running",
+                "stage": "gradebook_done",
+                "message": f"Finished {results['assignments_synced']} assignments in one batch",
+                "progress": 90,
+            })
             logger.info(f"Sync completed: {results}")
             return results
             

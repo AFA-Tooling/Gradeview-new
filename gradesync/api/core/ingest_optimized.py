@@ -14,31 +14,135 @@ from .ingest import _categorize_assignment
 
 logger = logging.getLogger(__name__)
 
-NON_EVIDENCE_SUBMISSION_STATUSES = {
-    'missing',
-    'not submitted',
-    'not_submitted',
-    'unsubmitted',
-}
-
 def _ts():
     """Return current timestamp for debug logs."""
     return datetime.now().strftime('%H:%M:%S.%f')[:-3]
 
 
 def has_submission_evidence(submission: Dict[str, Any]) -> bool:
-    """Return whether a Gradescope roster row contains real student evidence."""
-    status = str(submission.get('status') or '').strip().lower()
-    if status in {'excused', 'not applicable', 'not_applicable', 'n/a'}:
-        return True
-    if status in NON_EVIDENCE_SUBMISSION_STATUSES:
-        return False
+    """Use only a recorded score or submission time as Gradescope evidence."""
     return any((
         submission.get('total_score') is not None,
         submission.get('submission_time') is not None,
-        bool(str(submission.get('submission_id') or '').strip()),
-        (submission.get('submission_count') or 0) > 0,
     ))
+
+
+def _normalize_gradebook_header(value: Any) -> str:
+    return ' '.join(str(value or '').split())
+
+
+def _parse_gradebook_float(value: Any) -> Optional[float]:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_gradebook_submission_time(value: Any) -> Optional[datetime]:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S %z")
+    except ValueError:
+        logger.warning("Failed to parse Gradescope submission time %r", text)
+        return None
+
+
+def parse_gradescope_course_gradebook(
+    csv_content: str,
+    catalog: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Convert Gradescope's course-wide gradebook CSV into normalized rows."""
+    reader = csv.DictReader(io.StringIO(csv_content))
+    fieldnames = reader.fieldnames or []
+    if not {'Name', 'SID', 'Email'}.issubset(set(fieldnames)):
+        raise ValueError('Gradescope gradebook is missing Name, SID, or Email columns')
+
+    header_lookup: Dict[str, str] = {}
+    for header in fieldnames:
+        normalized = _normalize_gradebook_header(header)
+        if normalized in header_lookup:
+            raise ValueError(f'Duplicate normalized gradebook header: {normalized}')
+        header_lookup[normalized] = header
+
+    title_keys: Dict[str, str] = {}
+    bindings = []
+    unmatched_titles = []
+    for entry in catalog:
+        assignment_id = str(entry['assignment_id'])
+        title = _normalize_gradebook_header(entry['title'])
+        if title in title_keys:
+            raise ValueError(
+                f'Duplicate Gradescope assignment title in catalog: {entry["title"]}'
+            )
+        title_keys[title] = assignment_id
+
+        score_column = header_lookup.get(title)
+        if score_column is None:
+            unmatched_titles.append(entry['title'])
+            continue
+        bindings.append({
+            'assignment_id': assignment_id,
+            'title': entry['title'],
+            'catalog_entry': entry,
+            'score_column': score_column,
+            'max_points_column': header_lookup.get(f'{title} - Max Points'),
+            'submission_time_column': header_lookup.get(f'{title} - Submission Time'),
+            'lateness_column': header_lookup.get(f'{title} - Lateness (H:M:S)'),
+        })
+
+    students_by_email: Dict[str, Dict[str, str]] = {}
+    submissions = []
+    for row in reader:
+        email = str(row.get('Email') or '').strip()
+        if not email:
+            continue
+        students_by_email[email] = {
+            'email': email,
+            'sid': str(row.get('SID') or '').strip(),
+            'legal_name': str(row.get('Name') or '').strip(),
+        }
+
+        for binding in bindings:
+            total_score = _parse_gradebook_float(row.get(binding['score_column']))
+            submission_time = _parse_gradebook_submission_time(
+                row.get(binding['submission_time_column'])
+                if binding['submission_time_column'] else None
+            )
+            if total_score is None and submission_time is None:
+                continue
+
+            max_points = _parse_gradebook_float(
+                row.get(binding['max_points_column'])
+                if binding['max_points_column'] else None
+            )
+            if max_points is None:
+                max_points = _parse_gradebook_float(
+                    binding['catalog_entry'].get('max_points')
+                )
+
+            submissions.append({
+                'assignment_id': binding['assignment_id'],
+                'email': email,
+                'total_score': total_score,
+                'max_points': max_points,
+                'submission_time': submission_time,
+                'lateness': (
+                    str(row.get(binding['lateness_column']) or '').strip()
+                    if binding['lateness_column'] else None
+                ),
+            })
+
+    return {
+        'students': list(students_by_email.values()),
+        'submissions': submissions,
+        'matched_assignments': bindings,
+        'unmatched_assignment_titles': unmatched_titles,
+    }
 
 
 def should_sync_assignment(
@@ -108,9 +212,21 @@ def upsert_gradescope_assignment_catalog(
     catalog: List[Dict[str, Any]],
     course_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
-    """Persist a complete Gradescope catalog before syncing evidence CSVs."""
+    """Persist only published Gradescope rows and hide rows no longer public."""
     session = SessionLocal()
     try:
+        published_catalog = [
+            item for item in catalog
+            if item.get('is_published') is True
+        ]
+        unpublished_ignored = len(catalog) - len(published_catalog)
+        if unpublished_ignored:
+            logger.warning(
+                "Ignoring %d unpublished Gradescope catalog rows for course %s",
+                unpublished_ignored,
+                course_gradescope_id,
+            )
+
         course = session.query(Course).filter(
             Course.gradescope_course_id == str(course_gradescope_id)
         ).first()
@@ -132,7 +248,7 @@ def upsert_gradescope_assignment_catalog(
         inserted = 0
         updated = 0
 
-        for item in catalog:
+        for item in published_catalog:
             external_id = str(item['assignment_id'])
             seen_ids.append(external_id)
             assignment = session.query(Assignment).filter(
@@ -158,6 +274,7 @@ def upsert_gradescope_assignment_catalog(
 
         stale_query = session.query(Assignment).filter(
             Assignment.course_id == course.id,
+            Assignment.source_type == 'gradescope',
             Assignment.assignment_id.op('~')('^[0-9]+$'),
         )
         if seen_ids:
@@ -169,14 +286,145 @@ def upsert_gradescope_assignment_catalog(
 
         session.commit()
         return {
-            'catalog_count': len(catalog),
+            'catalog_count': len(published_catalog),
             'inserted': inserted,
             'updated': updated,
             'marked_stale': int(stale or 0),
+            'unpublished_ignored': unpublished_ignored,
         }
     except Exception:
         session.rollback()
         raise
+    finally:
+        session.close()
+
+
+def write_course_gradebook_optimized(
+    course_gradescope_id: str,
+    csv_content: str,
+    catalog: List[Dict[str, Any]],
+    course_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Replace published Gradescope evidence from one course-wide CSV."""
+    parsed = parse_gradescope_course_gradebook(csv_content, catalog)
+    matched = parsed['matched_assignments']
+    if not matched:
+        return {
+            'success': False,
+            'error': 'No published catalog assignments matched the Gradescope gradebook',
+        }
+
+    session = SessionLocal()
+    try:
+        course = session.query(Course).filter(
+            Course.gradescope_course_id == str(course_gradescope_id)
+        ).first()
+        if course is None:
+            raise RuntimeError(
+                f'Course {course_gradescope_id} was not created by catalog ingestion'
+            )
+
+        students_data = [
+            {**student, 'course_id': course.id}
+            for student in parsed['students']
+        ]
+        if students_data:
+            student_insert = insert(Student).values(students_data)
+            student_insert = student_insert.on_conflict_do_update(
+                constraint='uq_student_email_course',
+                set_={
+                    'sid': student_insert.excluded.sid,
+                    'legal_name': student_insert.excluded.legal_name,
+                },
+            )
+            session.execute(student_insert)
+            session.flush()
+
+        emails = [student['email'] for student in parsed['students']]
+        students = session.query(Student).filter(
+            Student.course_id == course.id,
+            Student.email.in_(emails),
+        ).all() if emails else []
+        email_to_id = {student.email: student.id for student in students}
+
+        external_ids = [binding['assignment_id'] for binding in matched]
+        assignments = session.query(Assignment).filter(
+            Assignment.course_id == course.id,
+            Assignment.assignment_id.in_(external_ids),
+        ).all()
+        assignment_by_external_id = {
+            str(assignment.assignment_id): assignment
+            for assignment in assignments
+        }
+        missing_ids = sorted(set(external_ids) - set(assignment_by_external_id))
+        if missing_ids:
+            raise RuntimeError(
+                f'Catalog assignments missing from database: {", ".join(missing_ids)}'
+            )
+
+        synced_at = datetime.now(timezone.utc)
+        for binding in matched:
+            assignment = assignment_by_external_id[binding['assignment_id']]
+            assignment.last_synced_at = synced_at
+            source_max_points = binding['catalog_entry'].get('max_points')
+            if source_max_points is not None:
+                assignment.max_points = source_max_points
+
+        assignment_db_ids = [assignment.id for assignment in assignments]
+        session.query(Submission).filter(
+            Submission.assignment_id.in_(assignment_db_ids)
+        ).delete(synchronize_session=False)
+
+        submission_rows = []
+        for submission in parsed['submissions']:
+            student_id = email_to_id.get(submission['email'])
+            assignment = assignment_by_external_id.get(submission['assignment_id'])
+            if student_id is None or assignment is None:
+                continue
+            submission_rows.append({
+                key: value
+                for key, value in {
+                    **submission,
+                    'student_id': student_id,
+                    'assignment_id': assignment.id,
+                }.items()
+                if key != 'email'
+            })
+
+        # Keep one transaction while avoiding PostgreSQL's bind-parameter limit
+        # for larger courses.
+        for offset in range(0, len(submission_rows), 2000):
+            session.execute(insert(Submission).values(submission_rows[offset:offset + 2000]))
+
+        course.number_of_students = len(students_data)
+        course.last_synced_at = synced_at
+        session.commit()
+
+        unmatched = parsed['unmatched_assignment_titles']
+        if unmatched:
+            logger.warning(
+                'Gradescope gradebook omitted %d published assignments: %s',
+                len(unmatched),
+                ', '.join(unmatched),
+            )
+        logger.info(
+            'Course-wide Gradescope ingest complete: course=%s students=%d assignments=%d submissions=%d',
+            course_gradescope_id,
+            len(students_data),
+            len(matched),
+            len(submission_rows),
+        )
+        return {
+            'success': True,
+            'students_processed': len(students_data),
+            'assignments_processed': len(matched),
+            'submissions_processed': len(submission_rows),
+            'unmatched_assignment_titles': unmatched,
+        }
+    except Exception as exc:
+        session.rollback()
+        logger.exception('Course-wide Gradescope gradebook ingest failed')
+        return {'success': False, 'error': str(exc)}
     finally:
         session.close()
 
@@ -297,6 +545,17 @@ def write_assignment_scores_optimized(
     Returns:
         Dict with sync results
     """
+    if catalog_entry is not None and catalog_entry.get('is_published') is not True:
+        logger.error(
+            "Refusing to ingest unpublished Gradescope assignment %s (%s)",
+            assignment_name,
+            assignment_id,
+        )
+        return {
+            "success": False,
+            "error": "Refusing to ingest an unpublished Gradescope assignment",
+        }
+
     import time as _time
     _fn_start = _time.time()
     # print(f"[{_ts()}] DB: Starting write_assignment_scores_optimized for {assignment_name}")

@@ -208,6 +208,8 @@ def compute_lab_score(session: Session, course_id: int, policy: Optional[Dict[st
     #   - uncategorized practice midterm/postterm labs
     candidates = session.query(Assignment).filter(
         Assignment.course_id == course_id,
+        Assignment.source_type == "gradescope",
+        Assignment.is_published.is_(True),
         Assignment.is_visible.is_not(False),
     ).all()
 
@@ -326,6 +328,8 @@ def compute_project_scores(session: Session, course_id: int, policy: Optional[Di
     # Gather candidates from current 'Projects' or already-hidden '_projects_raw'
     candidates = session.query(Assignment).filter(
         Assignment.course_id == course_id,
+        Assignment.source_type == "gradescope",
+        Assignment.is_published.is_(True),
         Assignment.is_visible.is_not(False),
         Assignment.category.in_(("Projects", "_projects_raw")),
     ).all()
@@ -448,6 +452,8 @@ def hide_lab_project_raw(session: Session, course_id: int) -> Dict[str, int]:
     moved_projects = 0
     candidates = session.query(Assignment).filter(
         Assignment.course_id == course_id,
+        Assignment.source_type == "gradescope",
+        Assignment.is_published.is_(True),
         Assignment.is_visible.is_not(False),
     ).all()
     for a in candidates:

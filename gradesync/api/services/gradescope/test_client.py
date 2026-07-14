@@ -98,3 +98,17 @@ def test_login_reuses_an_authenticated_session_without_posting_credentials():
 
     client.session.post.assert_not_called()
     client.reset_inactivity_timer.assert_called_once_with()
+
+
+def test_download_gradebook_uses_course_wide_csv_endpoint():
+    client = client_without_timer()
+    client.logged_in = True
+    client.session.get.return_value = response(200, content=b'Name,SID,Email\n')
+
+    result = client.download_gradebook('1329547')
+
+    assert result == b'Name,SID,Email\n'
+    client.session.get.assert_called_once_with(
+        f'{GRADESCOPE_ROOT}/courses/1329547/gradebook.csv',
+        timeout=client.request_timeout,
+    )
