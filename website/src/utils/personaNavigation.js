@@ -1,3 +1,9 @@
+import {
+  STUDENT_PERSONA,
+  buildStudentExperiencePath,
+  isValidStudentIdentifier,
+} from './studentRoutes';
+
 export const SHELL_PERMISSION_STATUS = Object.freeze({
   GUEST: 'guest',
   RESOLVING: 'resolving',
@@ -27,16 +33,16 @@ export const SHELL_PERSONA = Object.freeze({
 });
 
 export const STUDENT_NAV_ITEMS = Object.freeze([
-  { name: 'Workspace', href: '/profile', icon: 'workspace', exact: true },
-  { name: 'Report', href: '/profile/report', icon: 'report', exact: true },
-  { name: 'Attendance', href: '/profile/attendance', icon: 'attendance', exact: true },
-  { name: 'Labs', href: '/profile/labs', icon: 'labs', exact: true },
-  { name: 'Projects', href: '/profile/projects', icon: 'projects', exact: true },
-  { name: 'Exams', href: '/profile/exams', icon: 'exams' },
-  { name: 'Assignments', href: '/profile/assignments', icon: 'assignments', exact: true },
-  { name: 'Explain Score', href: '/profile/explain', icon: 'explain', exact: true },
-  { name: 'Concepts', href: '/profile/concepts', icon: 'concepts', exact: true },
-  { name: 'Policy', href: '/profile/policy', icon: 'policy', exact: true },
+  { name: 'Workspace', href: '/profile', icon: 'workspace', page: 'workspace', exact: true },
+  { name: 'Report', href: '/profile/report', icon: 'report', page: 'report', exact: true },
+  { name: 'Attendance', href: '/profile/attendance', icon: 'attendance', page: 'attendance', exact: true },
+  { name: 'Labs', href: '/profile/labs', icon: 'labs', page: 'labs', exact: true },
+  { name: 'Projects', href: '/profile/projects', icon: 'projects', page: 'projects', exact: true },
+  { name: 'Exams', href: '/profile/exams', icon: 'exams', page: 'exams' },
+  { name: 'Assignments', href: '/profile/assignments', icon: 'assignments', page: 'assignments', exact: true },
+  { name: 'Explain Score', href: '/profile/explain', icon: 'explain', page: 'explain', exact: true },
+  { name: 'Concepts', href: '/profile/concepts', icon: 'concepts', page: 'concepts', exact: true },
+  { name: 'Policy', href: '/profile/policy', icon: 'policy', page: 'policy', exact: true },
 ]);
 
 export const STAFF_NAV_ITEMS = Object.freeze([
@@ -219,7 +225,49 @@ export function getStudentReviewContext(pathname) {
   }
 }
 
-export function buildNavigationModel(capabilities, pathname = '/') {
+function buildStaffStudentSection(pathname, {
+  selectedStudentIdentifier = '',
+  courseId = '',
+} = {}) {
+  const routeIdentifier = getStudentReviewContext(pathname)?.identifier || '';
+  const identifier = isValidStudentIdentifier(routeIdentifier)
+    ? routeIdentifier
+    : isValidStudentIdentifier(selectedStudentIdentifier)
+      ? String(selectedStudentIdentifier).trim()
+      : '';
+
+  if (!identifier) {
+    return {
+      title: 'STUDENT',
+      description: 'Select a student in Class Health to open student views.',
+      items: [{
+        name: 'Select student',
+        href: '/admin?tab=students',
+        icon: 'select-student',
+        exact: true,
+        active: false,
+      }],
+    };
+  }
+
+  const search = courseId
+    ? `?${new URLSearchParams({ course_id: String(courseId).trim() }).toString()}`
+    : '';
+  return {
+    title: 'STUDENT',
+    items: STUDENT_NAV_ITEMS.map((item) => ({
+      ...item,
+      href: buildStudentExperiencePath({
+        persona: STUDENT_PERSONA.STAFF,
+        identifier,
+        page: item.page,
+        search,
+      }),
+    })),
+  };
+}
+
+export function buildNavigationModel(capabilities, pathname = '/', options = {}) {
   if (!capabilities?.hasKnownRole) {
     return {
       persona: SHELL_PERSONA.RESOLVING,
@@ -236,7 +284,10 @@ export function buildNavigationModel(capabilities, pathname = '/') {
         ? SHELL_PERSONA.STAFF_STUDENT_REVIEW
         : SHELL_PERSONA.STAFF_CLASS,
       personaLabel: reviewContext ? 'Student review' : 'Class workspace',
-      sections: [{ title: 'CLASS', items: STAFF_NAV_ITEMS }],
+      sections: [
+        buildStaffStudentSection(pathname, options),
+        { title: 'ADMIN', items: STAFF_NAV_ITEMS },
+      ],
       reviewContext,
     };
   }
@@ -249,14 +300,23 @@ export function buildNavigationModel(capabilities, pathname = '/') {
   };
 }
 
-export function buildShellRenderModel({ loggedIn, permissionState, pathname = '/' }) {
+export function buildShellRenderModel({
+  loggedIn,
+  permissionState,
+  pathname = '/',
+  selectedStudentIdentifier = '',
+  courseId = '',
+}) {
   const capabilities = permissionState?.capabilities || deriveShellCapabilities();
   return {
     showSidebar: Boolean(loggedIn),
     showDemoBanner: Boolean(loggedIn && capabilities.isDemo),
     showReadOnlyBanner: Boolean(loggedIn && capabilities.isReadOnly),
     navigation: loggedIn
-      ? buildNavigationModel(capabilities, pathname)
+      ? buildNavigationModel(capabilities, pathname, {
+          selectedStudentIdentifier,
+          courseId,
+        })
       : {
           persona: SHELL_PERSONA.GUEST,
           personaLabel: 'Signed out',
@@ -314,7 +374,9 @@ export function getCourseControlModel(courses, selectedCourseId) {
 }
 
 export function isNavigationItemActive(item, pathname) {
-  if (item.href === '/') return pathname === '/';
-  if (item.exact) return pathname === item.href;
-  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+  if (item.active === false) return false;
+  const hrefPath = String(item.href || '').split('?')[0] || '/';
+  if (hrefPath === '/') return pathname === '/';
+  if (item.exact) return pathname === hrefPath;
+  return pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
 }

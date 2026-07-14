@@ -33,32 +33,60 @@ describe('persona navigation matrix', () => {
     expect(model.sections[0].items.some((item) => item.name === 'Class Health')).toBe(false);
   });
 
-  it('shows only Class navigation to staff, including Demo staff', () => {
+  it('shows Student and Admin navigation to staff, including Demo staff', () => {
     const staff = buildNavigationModel(
       deriveShellCapabilities({ has_course_admin: true }),
       '/admin',
+      { selectedStudentIdentifier: 'avery@example.com', courseId: 'demo-cs10' },
     );
     const demo = buildNavigationModel(
       deriveShellCapabilities({ has_course_admin: true, is_demo: true }),
       '/admin',
+      { selectedStudentIdentifier: 'avery@example.com', courseId: 'demo-cs10' },
     );
 
     expect(staff.persona).toBe(SHELL_PERSONA.STAFF_CLASS);
     expect(demo.persona).toBe(SHELL_PERSONA.STAFF_CLASS);
-    expect(staff.sections.map((section) => section.title)).toEqual(['CLASS']);
-    expect(staff.sections[0].items.some((item) => item.name === 'Workspace')).toBe(false);
+    expect(staff.sections.map((section) => section.title)).toEqual(['STUDENT', 'ADMIN']);
+    expect(staff.sections[0].items.find((item) => item.name === 'Workspace')?.href).toBe(
+      '/students/avery%40example.com/workspace?course_id=demo-cs10',
+    );
+    expect(staff.sections[1].items.some((item) => item.name === 'Class Health')).toBe(true);
+    expect(demo.sections.map((section) => section.title)).toEqual(['STUDENT', 'ADMIN']);
   });
 
-  it('uses an explicit Student review persona on staff deep links', () => {
+  it('uses the current route student before persisted selection and keeps course scope', () => {
     const model = buildNavigationModel(
       deriveShellCapabilities({ has_instructor: true }),
       '/students/avery%40example.com/report',
+      { selectedStudentIdentifier: 'old@example.com', courseId: 'demo-cs61c' },
     );
 
     expect(model.persona).toBe(SHELL_PERSONA.STAFF_STUDENT_REVIEW);
     expect(model.personaLabel).toBe('Student review');
     expect(model.reviewContext.identifier).toBe('avery@example.com');
-    expect(model.sections.map((section) => section.title)).toEqual(['CLASS']);
+    expect(model.sections.map((section) => section.title)).toEqual(['STUDENT', 'ADMIN']);
+    expect(model.sections[0].items.map((item) => item.href)).toEqual(
+      expect.arrayContaining([
+        '/students/avery%40example.com/report?course_id=demo-cs61c',
+        '/students/avery%40example.com/labs?course_id=demo-cs61c',
+      ]),
+    );
+    expect(model.sections[0].items.some((item) => item.href.includes('old%40example.com'))).toBe(false);
+  });
+
+  it('provides an explained Class Health fallback instead of staff self-profile links', () => {
+    const model = buildNavigationModel(
+      deriveShellCapabilities({ has_instructor: true }),
+      '/admin',
+    );
+
+    expect(model.sections.map((section) => section.title)).toEqual(['STUDENT', 'ADMIN']);
+    expect(model.sections[0].description).toMatch(/select a student/i);
+    expect(model.sections[0].items).toEqual([
+      expect.objectContaining({ name: 'Select student', href: '/admin?tab=students' }),
+    ]);
+    expect(model.sections[0].items.some((item) => item.href.startsWith('/profile'))).toBe(false);
   });
 });
 

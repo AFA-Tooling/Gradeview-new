@@ -16,8 +16,8 @@ import {
     Divider,
     FormControl,
     IconButton,
-    InputLabel,
     Link,
+    ListSubheader,
     Menu,
     MenuItem,
     Select,
@@ -31,7 +31,6 @@ import {
 import {
     AccountTree,
     AdminPanelSettingsOutlined,
-    ArrowBack,
     ArticleOutlined,
     AssignmentOutlined,
     DashboardOutlined,
@@ -70,15 +69,14 @@ import {
     resolveCourseQueryId,
 } from '../utils/personaNavigation';
 import {
-    getClassHealthStudentsPath,
     getStudentRouteCourseId,
     resolveCourseSelection,
 } from '../utils/studentRoutes';
 import NavMenuItem from './NavMenuItem';
 import { StudentSelectionContext } from './StudentSelectionWrapper';
 
-const SIDEBAR_WIDTH = 260;
-const TOPBAR_HEIGHT = 56;
+const SIDEBAR_WIDTH = 244;
+const TOPBAR_HEIGHT = 42;
 
 const NAV_ICONS = Object.freeze({
     workspace: <DashboardOutlined />,
@@ -95,6 +93,7 @@ const NAV_ICONS = Object.freeze({
     'grade-sync': <SyncOutlined />,
     alerts: <WarningAmberOutlined />,
     settings: <SettingsIcon />,
+    'select-student': <SchoolOutlined />,
 });
 
 function getInitialPermissionState() {
@@ -146,25 +145,27 @@ function SidebarNavItem({ item, active }) {
             component={NavLink}
             to={item.href}
             fullWidth
-            startIcon={navIcon(item)}
+            startIcon={navIcon(item, item.indent ? 15 : 17)}
             aria-current={active ? 'page' : undefined}
             sx={{
                 justifyContent: 'flex-start',
-                minHeight: 44,
-                px: 1.25,
-                borderRadius: 1.25,
-                color: active ? '#111827' : '#555B66',
+                minHeight: item.indent ? 30 : 34,
+                px: 1,
+                pl: item.indent ? 1.5 : 1,
+                borderRadius: 1,
+                color: active ? '#111827' : '#737780',
                 backgroundColor: active ? '#E6E7E9' : 'transparent',
-                fontSize: 13.5,
-                fontWeight: active ? 750 : 650,
-                lineHeight: 1.35,
+                fontSize: item.indent ? 12.5 : 13,
+                fontWeight: active ? 700 : 600,
+                lineHeight: 1.25,
                 '& .MuiButton-startIcon': {
-                    mr: 1,
-                    color: active ? '#111827' : '#6B7280',
+                    mr: 0.9,
+                    color: active ? '#111827' : '#8B9099',
                 },
                 '&:hover': {
-                    backgroundColor: active ? '#DEE0E3' : '#ECEEF1',
+                    backgroundColor: active ? '#E1E3E6' : '#F0F1F3',
                     color: '#111827',
+                    '& .MuiButton-startIcon': { color: '#111827' },
                 },
                 '&:focus-visible': {
                     outline: '3px solid #2563EB',
@@ -172,7 +173,7 @@ function SidebarNavItem({ item, active }) {
                 },
             }}
         >
-            <Box component="span" sx={{ textAlign: 'left', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+            <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {item.name}
             </Box>
         </Button>
@@ -184,15 +185,22 @@ function SidebarSection({ section, pathname }) {
         <Box>
             <Typography
                 component="h2"
-                sx={{ px: 1, mb: 0.5, color: '#6B7280', fontSize: 11, fontWeight: 800, letterSpacing: '0.08em' }}
+                sx={{ px: 0.75, mb: 0.45, color: '#A0A4AC', fontSize: 10, fontWeight: 800 }}
             >
                 {section.title}
             </Typography>
-            <Stack spacing={0.5}>
+            {section.description && (
+                <Typography
+                    sx={{ px: 0.75, mb: 0.65, color: '#737780', fontSize: 11.5, lineHeight: 1.35 }}
+                >
+                    {section.description}
+                </Typography>
+            )}
+            <Stack spacing={0.15}>
                 {section.items.map((item) => (
                     <SidebarNavItem
                         key={item.name}
-                        item={item}
+                        item={{ ...item, indent: section.title === 'STUDENT' }}
                         active={isNavigationItemActive(item, pathname)}
                     />
                 ))}
@@ -215,79 +223,16 @@ function ReadOnlyStatusChip({ isDemo }) {
                 size="small"
                 sx={{
                     flexShrink: 0,
+                    height: 24,
                     bgcolor: '#FEF3C7',
                     color: '#713F12',
                     border: '1px solid #D97706',
-                    fontWeight: 800,
+                    fontSize: 11.5,
+                    fontWeight: 750,
                     '& .MuiChip-icon': { color: '#92400E' },
                 }}
             />
         </Tooltip>
-    );
-}
-
-function ReadOnlyNotice({ isDemo, compact = false }) {
-    return (
-        <Box
-            role="status"
-            aria-label={isDemo ? 'Demo mode read-only notice' : 'Read-only notice'}
-            sx={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 1,
-                p: compact ? 1.25 : 1.5,
-                bgcolor: '#FFFBEB',
-                color: '#713F12',
-                border: '1px solid #D97706',
-                borderRadius: 1.5,
-            }}
-        >
-            <LockOutlined aria-hidden="true" sx={{ fontSize: 20, mt: 0.1, flexShrink: 0 }} />
-            <Typography sx={{ fontSize: 13, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-                <Box component="strong" sx={{ display: 'block', fontWeight: 800 }}>
-                    {isDemo ? 'Demo mode · View-only experience' : 'Read-only experience'}
-                </Box>
-                This interface notice does not confirm server-side write protection.
-            </Typography>
-        </Box>
-    );
-}
-
-function ReviewContext({ context, compact = false }) {
-    if (!context) return null;
-    return (
-        <Box
-            component="section"
-            aria-label="Student review context"
-            sx={{
-                p: compact ? 1.25 : 1.5,
-                border: '1px solid #93C5FD',
-                bgcolor: '#EFF6FF',
-                borderRadius: 1.5,
-            }}
-        >
-            <Typography component="h2" sx={{ color: '#1E3A8A', fontSize: 14, fontWeight: 800 }}>
-                Student review
-            </Typography>
-            <Typography sx={{ mt: 0.25, color: '#1E3A8A', fontSize: 12.5, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-                Reviewing: {context.identifier}
-            </Typography>
-            <Button
-                component={NavLink}
-                to={getClassHealthStudentsPath()}
-                fullWidth
-                startIcon={<ArrowBack aria-hidden="true" />}
-                sx={{
-                    mt: 1,
-                    minHeight: 44,
-                    justifyContent: 'flex-start',
-                    color: '#1E3A8A',
-                    '&:focus-visible': { outline: '3px solid #2563EB', outlineOffset: 1 },
-                }}
-            >
-                Return to Class Health
-            </Button>
-        </Box>
     );
 }
 
@@ -302,54 +247,50 @@ function CourseControl({ model, onChange, controlId }) {
                     aria-label={model.accessibleName}
                     sx={{
                         display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 1,
-                        minHeight: 48,
-                        p: 1.25,
-                        border: '1px solid #D8DCE3',
-                        borderRadius: 1.25,
+                        alignItems: 'center',
+                        gap: 0.9,
+                        minHeight: 34,
+                        px: 1,
+                        py: 0.5,
+                        border: '1px solid #EDEFF3',
+                        borderRadius: 1,
                         bgcolor: '#FFFFFF',
                     }}
                 >
-                    <SchoolOutlined aria-hidden="true" sx={{ mt: 0.1, fontSize: 20, color: '#4B5563', flexShrink: 0 }} />
-                    <Box sx={{ minWidth: 0 }}>
-                        <Typography sx={{ color: '#6B7280', fontSize: 11, fontWeight: 750, lineHeight: 1.2 }}>
-                            Current course
-                        </Typography>
-                        <Typography sx={{ mt: 0.25, color: '#111827', fontSize: 13.5, fontWeight: 750, lineHeight: 1.35, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
-                            {model.label}
-                        </Typography>
-                    </Box>
+                    <SchoolOutlined aria-hidden="true" sx={{ fontSize: 17, color: '#8B9099', flexShrink: 0 }} />
+                    <Typography
+                        title={model.label}
+                        sx={{ minWidth: 0, color: '#111827', fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                        {model.label}
+                    </Typography>
                 </Box>
             </Tooltip>
         );
     }
 
-    const labelId = `${controlId}-label`;
     return (
         <FormControl size="small" fullWidth>
-            <InputLabel id={labelId}>Current course</InputLabel>
             <Select
                 id={controlId}
-                labelId={labelId}
-                label="Current course"
+                inputProps={{ 'aria-label': 'Current course' }}
                 value={model.value}
                 onChange={onChange}
                 IconComponent={KeyboardArrowDown}
                 renderValue={() => (
-                    <Typography sx={{ fontSize: 13.5, fontWeight: 750, lineHeight: 1.35, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                    <Typography noWrap title={model.label} sx={{ fontSize: 13, fontWeight: 700, lineHeight: 1.25 }}>
                         {model.label}
                     </Typography>
                 )}
                 sx={{
-                    minHeight: 52,
+                    minHeight: 34,
                     bgcolor: '#FFFFFF',
                     color: '#111827',
                     '& .MuiSelect-select': {
-                        display: 'block',
                         minHeight: '0 !important',
-                        whiteSpace: 'normal !important',
-                        pr: '36px !important',
+                        py: '7px',
+                        pl: 1.25,
+                        pr: '32px !important',
                     },
                     '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
                         borderColor: '#2563EB',
@@ -362,7 +303,7 @@ function CourseControl({ model, onChange, controlId }) {
                     <MenuItem
                         key={course.id}
                         value={course.id}
-                        sx={{ minHeight: 44, maxWidth: 420, whiteSpace: 'normal', overflowWrap: 'anywhere' }}
+                        sx={{ minHeight: 40, maxWidth: 420, whiteSpace: 'normal', overflowWrap: 'anywhere' }}
                     >
                         {formatCourseLabel(course)}
                     </MenuItem>
@@ -375,9 +316,9 @@ function CourseControl({ model, onChange, controlId }) {
 function PermissionLoadingState() {
     return (
         <Box role="status" aria-label="Loading navigation" sx={{ px: 0.5 }}>
-            <Skeleton variant="rounded" height={44} sx={{ mb: 1 }} />
-            <Skeleton variant="rounded" height={44} sx={{ mb: 1 }} />
-            <Skeleton variant="rounded" height={44} />
+            <Skeleton variant="rounded" height={30} sx={{ mb: 0.5 }} />
+            <Skeleton variant="rounded" height={30} sx={{ mb: 0.5 }} />
+            <Skeleton variant="rounded" height={30} />
         </Box>
     );
 }
@@ -394,7 +335,7 @@ export default function ButtonAppBar() {
     const reviewRouteCourseId = reviewRouteContext
         ? getStudentRouteCourseId(location.search)
         : '';
-    const { setSelectedStudent } = useContext(StudentSelectionContext);
+    const { selectedStudent, setSelectedStudent } = useContext(StudentSelectionContext);
     const [loggedIn, setLoginStatus] = useState(() => Boolean(localStorage.getItem('token')));
     const [permissionState, dispatchPermissions] = useReducer(
         permissionStateReducer,
@@ -530,21 +471,27 @@ export default function ButtonAppBar() {
     const doLogout = () => {
         clearShellSession(localStorage);
         setLoginStatus(false);
-        window.location.href = '/login';
+        navigate('/login', { replace: true });
     };
 
+    const navigationCourseId = reviewRouteCourseId
+        || resolveCourseQueryId(selectedCourse, courses);
     const shellModel = useMemo(() => buildShellRenderModel({
         loggedIn,
         permissionState,
         pathname: location.pathname,
-    }), [location.pathname, loggedIn, permissionState]);
+        selectedStudentIdentifier: selectedStudent,
+        courseId: navigationCourseId,
+    }), [
+        location.pathname,
+        loggedIn,
+        navigationCourseId,
+        permissionState,
+        selectedStudent,
+    ]);
     const courseControl = useMemo(
         () => getCourseControlModel(courses, selectedCourse),
         [courses, selectedCourse],
-    );
-    const navigationItems = useMemo(
-        () => shellModel.navigation.sections.flatMap((section) => section.items),
-        [shellModel.navigation.sections],
     );
     const userLabel = localStorage.getItem('name') || localStorage.getItem('email') || 'GradeView user';
     const permissionReady = permissionState.status === SHELL_PERMISSION_STATUS.READY;
@@ -559,41 +506,36 @@ export default function ButtonAppBar() {
             onClose={handleClose}
             MenuListProps={{ 'aria-label': `${shellModel.navigation.personaLabel} navigation and account` }}
         >
-            {mobileView && (
-                <Box sx={{ px: 2, py: 1, maxWidth: 320 }}>
-                    <Typography sx={{ color: '#6B7280', fontSize: 12 }}>Signed in as</Typography>
-                    <Typography sx={{ color: '#111827', fontSize: 13.5, fontWeight: 750, overflowWrap: 'anywhere' }}>
-                        {userLabel}
-                    </Typography>
-                    <Typography sx={{ mt: 0.5, color: '#4B5563', fontSize: 12.5 }}>
-                        {shellModel.navigation.personaLabel}
-                    </Typography>
-                </Box>
-            )}
-            {mobileView && shellModel.navigation.reviewContext && (
-                <NavMenuItem
-                    icon={<ArrowBack />}
-                    text="Return to Class Health"
-                    onClick={() => navigateFromMenu(getClassHealthStudentsPath())}
-                />
-            )}
-            {mobileView && navigationItems.map((item) => (
-                <NavMenuItem
-                    key={item.name}
-                    icon={navIcon(item, 20)}
-                    text={item.name}
-                    selected={isNavigationItemActive(item, location.pathname)}
-                    onClick={() => navigateFromMenu(item.href)}
-                />
+            {mobileView && shellModel.navigation.sections.map((section, index) => (
+                <React.Fragment key={section.title}>
+                    {index > 0 && <Divider />}
+                    <ListSubheader
+                        disableSticky
+                        component="li"
+                        role="presentation"
+                        sx={{ px: 2, pt: 1, pb: section.description ? 0.75 : 0.4, lineHeight: 1.35, bgcolor: '#FFFFFF' }}
+                    >
+                        <Typography sx={{ color: '#A0A4AC', fontSize: 10, fontWeight: 800 }}>
+                            {section.title}
+                        </Typography>
+                        {section.description && (
+                            <Typography sx={{ mt: 0.4, maxWidth: 280, color: '#737780', fontSize: 11.5, lineHeight: 1.35, whiteSpace: 'normal' }}>
+                                {section.description}
+                            </Typography>
+                        )}
+                    </ListSubheader>
+                    {section.items.map((item) => (
+                        <NavMenuItem
+                            key={`${section.title}-${item.name}`}
+                            icon={navIcon(item, 20)}
+                            text={item.name}
+                            selected={isNavigationItemActive(item, location.pathname)}
+                            onClick={() => navigateFromMenu(item.href)}
+                        />
+                    ))}
+                </React.Fragment>
             ))}
-            {mobileView && navigationItems.length > 0 && <Divider />}
-            {!mobileView && isStaff && (
-                <NavMenuItem
-                    icon={<SettingsIcon />}
-                    text="Settings"
-                    onClick={() => navigateFromMenu('/settings')}
-                />
-            )}
+            {mobileView && shellModel.navigation.sections.length > 0 && <Divider />}
             <NavMenuItem icon={<Logout />} text="Logout" onClick={doLogout} />
         </Menu>
     );
@@ -608,7 +550,7 @@ export default function ButtonAppBar() {
                     sx={{
                         height: TOPBAR_HEIGHT,
                         bgcolor: '#FFFFFF',
-                        borderBottom: '1px solid #DDE1E7',
+                        borderBottom: '1px solid #ECEEF2',
                         zIndex: (theme) => theme.zIndex.drawer + 2,
                     }}
                 >
@@ -620,16 +562,16 @@ export default function ButtonAppBar() {
                             underline="none"
                             aria-label="GradeView home"
                             sx={{
-                                width: loggedIn ? SIDEBAR_WIDTH - 20 : 'auto',
-                                minHeight: 44,
+                                width: loggedIn ? SIDEBAR_WIDTH - 18 : 'auto',
+                                height: TOPBAR_HEIGHT,
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 borderRadius: 1,
                                 '&:focus-visible': { outline: '3px solid #2563EB', outlineOffset: 1 },
                             }}
                         >
-                            <AccountTree aria-hidden="true" sx={{ mr: 1, fontSize: 20, color: '#4B5563' }} />
-                            <Typography sx={{ color: '#374151', fontSize: 14, fontWeight: 800 }}>
+                            <AccountTree aria-hidden="true" sx={{ mr: 0.9, fontSize: 17, color: '#777B84' }} />
+                            <Typography sx={{ color: '#5F636B', fontSize: 13, fontWeight: 750 }}>
                                 GradeView
                             </Typography>
                         </Link>
@@ -645,11 +587,14 @@ export default function ButtonAppBar() {
                                     aria-expanded={Boolean(anchorEl) ? 'true' : undefined}
                                     onClick={handleMenu}
                                     sx={{
-                                        minHeight: 44,
+                                        minHeight: 30,
                                         maxWidth: 280,
-                                        px: 1,
-                                        gap: 1,
-                                        color: '#374151',
+                                        px: 0.75,
+                                        py: 0.35,
+                                        gap: 0.8,
+                                        borderRadius: 1,
+                                        color: '#5F636B',
+                                        '&:hover': { bgcolor: '#F4F5F7' },
                                         '&:focus-visible': { outline: '3px solid #2563EB', outlineOffset: 1 },
                                     }}
                                 >
@@ -657,12 +602,12 @@ export default function ButtonAppBar() {
                                         src={profilePicture}
                                         alt=""
                                         imgProps={{ referrerPolicy: 'no-referrer' }}
-                                        sx={{ width: 28, height: 28 }}
+                                        sx={{ width: 22, height: 22 }}
                                     />
-                                    <Typography noWrap title={userLabel} sx={{ minWidth: 0, maxWidth: 190, fontSize: 13.5, fontWeight: 700 }}>
+                                    <Typography noWrap title={userLabel} sx={{ minWidth: 0, maxWidth: 180, fontSize: 13, fontWeight: 650, color: '#5F636B' }}>
                                         {userLabel}
                                     </Typography>
-                                    <KeyboardArrowDown aria-hidden="true" sx={{ fontSize: 18 }} />
+                                    <KeyboardArrowDown aria-hidden="true" sx={{ fontSize: 16, color: '#9CA3AF' }} />
                                 </Button>
                                 {accountMenu}
                             </>
@@ -672,7 +617,7 @@ export default function ButtonAppBar() {
                                 to="/login"
                                 variant="outlined"
                                 startIcon={<LoginOutlined aria-hidden="true" />}
-                                sx={{ minHeight: 44, '&:focus-visible': { outline: '3px solid #2563EB', outlineOffset: 1 } }}
+                                sx={{ minHeight: 30, px: 1.25, py: 0.35, fontSize: 13, '&:focus-visible': { outline: '3px solid #2563EB', outlineOffset: 1 } }}
                             >
                                 Login
                             </Button>
@@ -692,8 +637,8 @@ export default function ButtonAppBar() {
                             right: 'auto',
                             width: SIDEBAR_WIDTH,
                             height: `calc(100dvh - ${TOPBAR_HEIGHT}px)`,
-                            bgcolor: '#F8F9FA',
-                            borderRight: '1px solid #DDE1E7',
+                            bgcolor: '#FBFBFC',
+                            borderRight: '1px solid #ECEEF2',
                             borderBottom: 0,
                             zIndex: (theme) => theme.zIndex.drawer + 1,
                         }}
@@ -705,41 +650,38 @@ export default function ButtonAppBar() {
                                 height: '100%',
                                 flexDirection: 'column',
                                 alignItems: 'stretch',
-                                gap: 1.25,
-                                px: 1.5,
-                                py: 1.5,
+                                px: 1.25,
+                                py: 1,
                                 overflowY: 'auto',
                                 overflowX: 'hidden',
                             }}
                         >
-                            {coursesLoading ? (
-                                <Skeleton variant="rounded" height={52} />
-                            ) : (
-                                <CourseControl
-                                    model={courseControl}
-                                    onChange={handleCourseChange}
-                                    controlId="desktop-course-selector"
-                                />
-                            )}
-                            {shellModel.showReadOnlyBanner && (
-                                <ReadOnlyNotice isDemo={shellModel.showDemoBanner} />
-                            )}
-                            <ReviewContext context={shellModel.navigation.reviewContext} />
+                            <Box sx={{ mb: 1.25 }}>
+                                {coursesLoading ? (
+                                    <Skeleton variant="rounded" height={34} />
+                                ) : (
+                                    <CourseControl
+                                        model={courseControl}
+                                        onChange={handleCourseChange}
+                                        controlId="desktop-course-selector"
+                                    />
+                                )}
+                            </Box>
                             {permissionState.status === SHELL_PERMISSION_STATUS.RESOLVING && (
                                 <PermissionLoadingState />
                             )}
                             {permissionState.status === SHELL_PERMISSION_STATUS.ERROR && (
-                                <Box role="alert" sx={{ p: 1.5, border: '1px solid #DC2626', borderRadius: 1.5, bgcolor: '#FEF2F2' }}>
-                                    <Typography sx={{ color: '#7F1D1D', fontSize: 13, lineHeight: 1.45 }}>
+                                <Box role="alert" sx={{ p: 1, border: '1px solid #DC2626', borderRadius: 1, bgcolor: '#FEF2F2' }}>
+                                    <Typography sx={{ color: '#7F1D1D', fontSize: 12, lineHeight: 1.4 }}>
                                         Navigation permissions are unavailable. Refresh the page to retry.
                                     </Typography>
                                 </Box>
                             )}
                             {permissionReady && (
-                                <Stack component="nav" aria-label={shellModel.navigation.personaLabel} spacing={1}>
+                                <Stack component="nav" aria-label={shellModel.navigation.personaLabel} spacing={0.25}>
                                     {shellModel.navigation.sections.map((section, index) => (
                                         <React.Fragment key={section.title}>
-                                            {index > 0 && <Divider />}
+                                            {index > 0 && <Divider sx={{ my: 1.05, borderColor: '#ECEEF2' }} />}
                                             <SidebarSection section={section} pathname={location.pathname} />
                                         </React.Fragment>
                                     ))}
@@ -754,8 +696,8 @@ export default function ButtonAppBar() {
 
     return (
         <Box className="app-shell app-shell--mobile">
-            <AppBar component="header" position="static" sx={{ bgcolor: '#FFFFFF', borderBottom: '1px solid #DDE1E7' }}>
-                <Toolbar sx={{ minHeight: 64, gap: 1 }}>
+            <AppBar component="header" position="static" sx={{ bgcolor: '#FFFFFF', borderBottom: '1px solid #ECEEF2' }}>
+                <Toolbar sx={{ minHeight: 58, gap: 1 }}>
                     <Link
                         component={NavLink}
                         to="/"
@@ -772,8 +714,8 @@ export default function ButtonAppBar() {
                             '&:focus-visible': { outline: '3px solid #2563EB', outlineOffset: 1 },
                         }}
                     >
-                        <AccountTree aria-hidden="true" sx={{ mr: 0.75, fontSize: 20, color: '#4B5563', flexShrink: 0 }} />
-                        <Typography noWrap sx={{ color: '#374151', fontSize: 16, fontWeight: 800 }}>
+                        <AccountTree aria-hidden="true" sx={{ mr: 0.75, fontSize: 18, color: '#777B84', flexShrink: 0 }} />
+                        <Typography noWrap sx={{ color: '#5F636B', fontSize: 15, fontWeight: 750 }}>
                             GradeView
                         </Typography>
                     </Link>
@@ -810,9 +752,9 @@ export default function ButtonAppBar() {
                     )}
                 </Toolbar>
                 {loggedIn && (
-                    <Stack spacing={1} sx={{ px: 2, pb: 1.5 }}>
+                    <Stack spacing={0.75} sx={{ px: 2, pb: 1 }}>
                         {coursesLoading ? (
-                            <Skeleton variant="rounded" height={52} />
+                            <Skeleton variant="rounded" height={34} />
                         ) : (
                             <CourseControl
                                 model={courseControl}
@@ -820,10 +762,6 @@ export default function ButtonAppBar() {
                                 controlId="mobile-course-selector"
                             />
                         )}
-                        {shellModel.showReadOnlyBanner && (
-                            <ReadOnlyNotice isDemo={shellModel.showDemoBanner} compact />
-                        )}
-                        <ReviewContext context={shellModel.navigation.reviewContext} compact />
                         {permissionState.status === SHELL_PERMISSION_STATUS.RESOLVING && (
                             <PermissionLoadingState />
                         )}

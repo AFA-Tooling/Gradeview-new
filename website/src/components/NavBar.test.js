@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import NavBar from './NavBar';
@@ -71,7 +71,12 @@ function installMatchMedia(isMobile) {
   }));
 }
 
-function renderWithNavigation(initialEntry, setSelectedStudent, includeProfile = true) {
+function renderWithNavigation(
+  initialEntry,
+  setSelectedStudent,
+  includeProfile = true,
+  selectedStudent = 'old@example.com',
+) {
   const router = createMemoryRouter([
     {
       path: '*',
@@ -88,7 +93,7 @@ function renderWithNavigation(initialEntry, setSelectedStudent, includeProfile =
     router,
     ...render(
       <StudentSelectionContext.Provider value={{
-        selectedStudent: 'old@example.com',
+        selectedStudent,
         setSelectedStudent,
       }}>
         <RouterProvider router={router} />
@@ -132,19 +137,23 @@ describe('route-authoritative staff shell navigation', () => {
     jest.clearAllMocks();
   });
 
-  test('keeps the URL student authoritative on direct load and course changes', async () => {
+  test('keeps the URL student authoritative on direct refresh', async () => {
     const setSelectedStudent = jest.fn();
-    const { router } = renderWithNavigation(
+    renderWithNavigation(
       '/students/avery%40example.com/report?course_id=demo-cs61c',
       setSelectedStudent,
     );
 
     expect(screen.queryByText(/old@example.com/i)).not.toBeInTheDocument();
     expect(await screen.findByText('Loaded avery@example.com for course 2')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Return to Class Health' })).toHaveAttribute(
+    expect(screen.getByRole('heading', { name: 'STUDENT' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ADMIN' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
       'href',
-      '/admin?tab=students',
+      '/students/avery%40example.com/workspace?course_id=demo-cs61c',
     );
+    expect(screen.getByRole('link', { name: 'Report' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Class Health' })).toHaveAttribute('href', '/admin');
 
     const courseSelector = await screen.findByRole('combobox', { name: /Current course/ });
     expect(courseSelector).toHaveTextContent('2027 Fall Systems Course B');
@@ -152,27 +161,13 @@ describe('route-authoritative staff shell navigation', () => {
     expect(setSelectedStudent).not.toHaveBeenCalledWith('old@example.com');
     expect(setSelectedStudent.mock.calls.every(([email]) => email === 'avery@example.com')).toBe(true);
 
-    act(() => {
-      window.dispatchEvent(new CustomEvent('selectedCourseChanged', {
-        detail: { courseId: COURSE_A.id },
-      }));
-    });
-
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/students/avery%40example.com/report');
-      expect(new URLSearchParams(router.state.location.search).get('course_id')).toBe('demo-cs10');
-    });
-    expect(await screen.findByText('Loaded avery@example.com for course 1')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: /Current course/ })).toHaveTextContent(
-      '2026 Spring Demo CS10',
-    );
     expect(fetchStudentProfileData.mock.calls.every(
       ([options]) => options.studentEmail === 'avery@example.com',
     )).toBe(true);
     expect(setSelectedStudent).not.toHaveBeenCalledWith('old@example.com');
   });
 
-  test('returns from the mobile account menu to the Students tab', async () => {
+  test('keeps Student and Admin groups in the mobile menu without duplicate Settings', async () => {
     installMatchMedia(true);
     const user = userEvent.setup();
     const { router } = renderWithNavigation(
@@ -184,11 +179,118 @@ describe('route-authoritative staff shell navigation', () => {
     await user.click(screen.getByRole('button', {
       name: 'Open navigation and account menu for Course Staff',
     }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Return to Class Health' }));
+    expect(await screen.findByText('STUDENT')).toBeInTheDocument();
+    expect(screen.getByText('ADMIN')).toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem', { name: 'Settings' })).toHaveLength(1);
+    expect(screen.getByRole('menuitem', { name: 'Workspace' })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'Class Health' }));
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/admin');
-      expect(router.state.location.search).toBe('?tab=students');
+      expect(router.state.location.search).toBe('');
     });
+  });
+
+  test('uses the persisted selected student from a class page', async () => {
+    renderWithNavigation('/admin', jest.fn(), false, 'old@example.com');
+
+    expect(await screen.findByRole('heading', { name: 'STUDENT' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ADMIN' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
+        'href',
+        '/students/old%40example.com/workspace?course_id=demo-cs10',
+      );
+    });
+  });
+
+  test('updates selected-student links when the class course changes', async () => {
+    renderWithNavigation('/admin', jest.fn(), false, 'old@example.com');
+
+    const courseSelector = await screen.findByRole('combobox', { name: /Current course/ });
+    await waitFor(() => expect(courseSelector).toHaveTextContent('2026 Spring Demo CS10'));
+    const nativeCourseInput = courseSelector.parentElement.querySelector('input');
+    fireEvent.change(nativeCourseInput, { target: { value: COURSE_B.id } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Current course/ })).toHaveTextContent(
+        '2027 Fall Systems Course B',
+      );
+      expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
+        'href',
+        '/students/old%40example.com/workspace?course_id=demo-cs61c',
+      );
+    });
+    expect(localStorage.getItem('selectedCourseId')).toBe(COURSE_B.id);
+  });
+
+  test('explains how to select a student when no review target exists', async () => {
+    localStorage.removeItem('selectedStudentEmail');
+    cachedApiGet.mockImplementation((path) => {
+      if (path.startsWith('/me/permissions')) {
+        return Promise.resolve({ data: { permissions: { has_course_admin: true } } });
+      }
+      if (path === '/admin/sync' || path === '/students/courses') {
+        return Promise.resolve({ data: { courses: [COURSE_A] } });
+      }
+      if (path.startsWith('/students?course_id=')) {
+        return Promise.resolve({ data: { students: [] } });
+      }
+      return Promise.reject(new Error(`Unexpected API path: ${path}`));
+    });
+
+    renderWithNavigation('/admin', jest.fn(), false, '');
+
+    expect(await screen.findByText(/Select a student in Class Health/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Select student' })).toHaveAttribute(
+      'href',
+      '/admin?tab=students',
+    );
+    expect(screen.queryByRole('link', { name: 'Workspace' })).not.toBeInTheDocument();
+  });
+
+  test('keeps ordinary students on Student navigation only', async () => {
+    localStorage.setItem('permissions', JSON.stringify({ has_student: true }));
+    cachedApiGet.mockImplementation((path) => {
+      if (path.startsWith('/me/permissions')) {
+        return Promise.resolve({ data: { permissions: { has_student: true } } });
+      }
+      if (path === '/students/courses') {
+        return Promise.resolve({ data: { courses: [COURSE_A] } });
+      }
+      return Promise.reject(new Error(`Unexpected API path: ${path}`));
+    });
+
+    renderWithNavigation('/profile', jest.fn(), false, '');
+
+    expect(await screen.findByRole('heading', { name: 'STUDENT' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute('href', '/profile');
+    expect(screen.queryByRole('heading', { name: 'ADMIN' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Class Health' })).not.toBeInTheDocument();
+  });
+
+  test('shows one low-interruption Demo status chip without a sidebar notice', async () => {
+    localStorage.setItem('shellUiCapabilities', JSON.stringify({ demo: true, read_only: true }));
+
+    renderWithNavigation('/admin', jest.fn(), false);
+
+    expect(await screen.findByLabelText(/Demo mode, read-only interface/i)).toHaveTextContent(
+      'Demo · Read-only',
+    );
+    expect(screen.queryByText(/View-only experience/i)).not.toBeInTheDocument();
+  });
+
+  test('clears shell state and uses router navigation on logout', async () => {
+    const user = userEvent.setup();
+    const { router } = renderWithNavigation('/admin', jest.fn(), false);
+
+    await user.click(screen.getByRole('button', { name: 'Open account menu for Course Staff' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('permissions')).toBeNull();
+    expect(localStorage.getItem('selectedCourseId')).toBeNull();
+    expect(localStorage.getItem('selectedStudentEmail')).toBeNull();
   });
 });
