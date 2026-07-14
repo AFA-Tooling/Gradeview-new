@@ -42,6 +42,37 @@ import {
 
 const SUGGESTED_QUERIES = aiAgent.getSuggestions();
 
+const LIVE_COURSE_ALERT_SX = {
+  mb: 3,
+  minWidth: 0,
+  maxWidth: '100%',
+};
+
+const LIVE_COURSE_ALERT_SLOT_PROPS = {
+  message: {
+    style: {
+      minWidth: 0,
+      overflow: 'visible',
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word',
+    },
+  },
+};
+
+const LIVE_COURSE_ID_SX = {
+  whiteSpace: 'normal',
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
+};
+
+const LIVE_TABLE_CONTAINER_SX = {
+  mt: 2,
+  width: '100%',
+  maxWidth: '100%',
+  minWidth: 0,
+  overflowX: 'auto',
+};
+
 const FAILURE_TITLES = Object.freeze({
   AUTH_REQUIRED: 'Your session could not be verified',
   SESSION_REQUIRED: 'Your session could not be verified',
@@ -76,7 +107,7 @@ function LiveResultTable({ rows }) {
     const entries = Object.entries(rows);
     if (entries.length === 0) return null;
     return (
-      <TableContainer component={Paper} variant="outlined" sx={{ mt: 2, maxWidth: '100%' }}>
+      <TableContainer component={Paper} variant="outlined" sx={LIVE_TABLE_CONTAINER_SX}>
         <Table size="small" aria-label="Live AI Analytics result fields">
           <TableHead>
             <TableRow>
@@ -100,7 +131,7 @@ function LiveResultTable({ rows }) {
   const columns = Object.keys(rows[0] || {});
 
   return (
-    <TableContainer component={Paper} variant="outlined" sx={{ mt: 2, maxWidth: '100%' }}>
+    <TableContainer component={Paper} variant="outlined" sx={LIVE_TABLE_CONTAINER_SX}>
       <Table size="small" aria-label="Live AI Analytics query rows">
         <TableHead>
           <TableRow>
@@ -261,10 +292,15 @@ function AIAnalyticsCourse({ courseContext }) {
         </Box>
 
         {courseId ? (
-          <Alert severity="info" role="status" sx={{ mb: 3 }}>
+          <Alert
+            severity="info"
+            role="status"
+            slotProps={LIVE_COURSE_ALERT_SLOT_PROPS}
+            sx={LIVE_COURSE_ALERT_SX}
+          >
             <AlertTitle>Current live course</AlertTitle>
             <strong>{courseLabel}</strong>. Schema and query requests are scoped to course ID{' '}
-            <code>{courseId}</code>.
+            <Box component="code" sx={LIVE_COURSE_ID_SX}>{courseId}</Box>.
           </Alert>
         ) : (
           <Alert severity="info" role="status" sx={{ mb: 3 }}>
