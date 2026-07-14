@@ -195,6 +195,13 @@ class Assignment(Base):
     category = Column(String)
     max_points = Column(Numeric)
     assignment_metadata = Column(JSON)
+    source_type = Column(String(50))
+    release_at = Column(DateTime(timezone=True))
+    due_at = Column(DateTime(timezone=True), index=True)
+    late_due_at = Column(DateTime(timezone=True))
+    is_published = Column(Boolean)
+    is_visible = Column(Boolean, default=True, index=True)
+    catalog_last_seen_at = Column(DateTime(timezone=True), index=True)
     last_synced_at = Column(DateTime(timezone=True), index=True)  # Track last sync time
     gradescope_updated_at = Column(DateTime(timezone=True))  # From Gradescope API
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 
 # 每个HTTP请求的超时时间（秒）
 DEFAULT_REQUEST_TIMEOUT = 30  # 30秒，快速跳过卡住的作业
+GRADESCOPE_ROOT = "https://www.gradescope.com"
+GRADESCOPE_LOGIN_URL = f"{GRADESCOPE_ROOT}/login"
 
 class GradescopeClient(GradescopeBaseClient):
     def __init__(self, timeout: int = 1800):
@@ -47,48 +49,74 @@ class GradescopeClient(GradescopeBaseClient):
         """
         Logs into Gradescope. This overriden method is thread-safe.
         """
-        if not self.logged_in or not self.verify_logged_in():
-            with self.lock:  # Ensures only one thread can execute this block at a time
-                if self.logged_in:  # Double-check inside the lock to avoid redundant login attempts
-                    self.reset_inactivity_timer()
-                    # print("Logged in to Gradescope")
-                    return True
-                
-                url = self.base_url + self.login_path
-                token = self._load_login_token(url)
+        if self.logged_in and self._session_is_authenticated():
+            self.reset_inactivity_timer()
+            return True
 
-                payload = {
-                    "utf8": "✓",
-                    "authenticity_token": token,
-                    "session[email]": email,
-                    "session[password]": password,
-                    "session[remember_me]": 1,
-                    "commit": "Log In",
-                    "session[remember_me_sso]": 0,
-                }
+        with self.lock:  # Ensures only one thread can perform login at a time
+            if self.logged_in and self._session_is_authenticated():
+                self.reset_inactivity_timer()
+                return True
+
+            self.logged_in = False
+            token = self._load_login_token(GRADESCOPE_LOGIN_URL)
+            payload = {
+                "utf8": "✓",
+                "authenticity_token": token,
+                "session[email]": email,
+                "session[password]": password,
+                "session[remember_me]": 1,
+                "commit": "Log In",
+                "session[remember_me_sso]": 0,
+            }
+
+            try:
                 self.last_res = res = self.session.post(
-                    url,
+                    GRADESCOPE_LOGIN_URL,
                     data=payload,
                     headers={
-                        "Host": "www.gradescope.com",
-                        "Origin": "https://www.gradescope.com",
-                        "Referer": url,
+                        "Origin": GRADESCOPE_ROOT,
+                        "Referer": GRADESCOPE_LOGIN_URL,
                     },
                     timeout=self.request_timeout,
+                    # Following a redirect from gradescope.com to the canonical
+                    # www host changes POST into GET and drops the credentials.
+                    allow_redirects=False,
                 )
-                if res.ok and self.verify_logged_in():
-                    self.logged_in = True
-                    # print("Logged in to Gradescope")
-                    self.reset_inactivity_timer()
-                    return True
-                self.logged_in = False
-                raise RuntimeError(
-                    "Failed to login to Gradescope. Check GRADESCOPE_EMAIL / "
-                    "GRADESCOPE_PASSWORD and whether the account is being asked "
-                    "to use SSO or two-factor authentication."
-                )
-        # We are already logged in, so reset the inactivity timer
-        self.reset_inactivity_timer()
+            except (Timeout, RequestException) as exc:
+                raise RuntimeError(f"Gradescope login request failed: {exc}") from exc
+
+            if self._session_is_authenticated():
+                self.logged_in = True
+                self.reset_inactivity_timer()
+                return True
+
+            self.logged_in = False
+            redirect = res.headers.get("Location", "")
+            response_summary = f"HTTP {res.status_code}"
+            if redirect:
+                response_summary += f", redirect={redirect}"
+            raise RuntimeError(
+                "Failed to login to Gradescope "
+                f"({response_summary}). Check the credentials and whether the "
+                "account requires SSO, two-factor authentication, or CAPTCHA."
+            )
+
+    def _session_is_authenticated(self) -> bool:
+        """Check the server-side session without consulting ``self.logged_in``."""
+        try:
+            self.last_res = res = self.session.get(
+                GRADESCOPE_LOGIN_URL,
+                timeout=self.request_timeout,
+                allow_redirects=False,
+            )
+            # Gradescope rejects its login page with 401 for authenticated
+            # sessions. fullGSapi checks the same response but first returns
+            # False while self.logged_in is False, so it cannot verify a fresh
+            # login before that local flag has been set.
+            return res.status_code == 401
+        except (Timeout, RequestException):
+            return False
 
     def _extract_authenticity_token(self, content: bytes) -> str:
         soup = BeautifulSoup(content, "html.parser")
@@ -103,18 +131,12 @@ class GradescopeClient(GradescopeBaseClient):
         return token
 
     def _load_login_token(self, url: str) -> str:
-        candidates = [url]
-        if "://gradescope.com" in url:
-            candidates.append(url.replace("://gradescope.com", "://www.gradescope.com", 1))
-
-        last_error = None
-        for candidate in candidates:
-            try:
-                self.last_res = login_page = self.session.get(candidate, timeout=self.request_timeout)
-                login_page.raise_for_status()
-                return self._extract_authenticity_token(login_page.content)
-            except Exception as exc:
-                last_error = exc
+        try:
+            self.last_res = login_page = self.session.get(url, timeout=self.request_timeout)
+            login_page.raise_for_status()
+            return self._extract_authenticity_token(login_page.content)
+        except Exception as exc:
+            last_error = exc
 
         raise RuntimeError(
             "Failed to load Gradescope login token. "
@@ -131,9 +153,8 @@ class GradescopeClient(GradescopeBaseClient):
             if not self.logged_in:  # Double-check within the lock to avoid redundant logout attempts
                 return False
 
-            base_url = "https://www.gradescope.com"
-            url = base_url + "/logout"
-            ref_url = base_url + "/account"
+            url = GRADESCOPE_ROOT + "/logout"
+            ref_url = GRADESCOPE_ROOT + "/account"
             try:
                 self.last_res = res = self.session.get(url, headers={"Referer": ref_url}, timeout=self.request_timeout)
                 if res.ok:

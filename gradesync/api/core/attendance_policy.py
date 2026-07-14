@@ -309,7 +309,8 @@ def compute_attendance_scores(session: Session, course_id: int, policy: Optional
     student_attendance_effective_scores.
     """
     assignments = session.query(Assignment).filter(
-        Assignment.course_id == course_id
+        Assignment.course_id == course_id,
+        Assignment.is_visible.is_not(False),
     ).all()
     if not assignments:
         return {"sections_processed": 0, "rows_upserted": 0}
@@ -465,6 +466,7 @@ def _hide_makeup_assignments(session: Session, course_id: int) -> int:
     """
     candidates = session.query(Assignment).filter(
         Assignment.course_id == course_id,
+        Assignment.is_visible.is_not(False),
         Assignment.category != "_attendance_raw",
     ).all()
     n = 0

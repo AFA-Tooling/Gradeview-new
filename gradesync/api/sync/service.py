@@ -369,7 +369,8 @@ class GradeSyncService:
                 
                 # Get all data
                 assignments = session.query(Assignment).filter(
-                    Assignment.course_id == course.id
+                    Assignment.course_id == course.id,
+                    Assignment.is_visible.is_not(False),
                 ).all()
                 
                 students = session.query(Student).filter(
@@ -377,7 +378,8 @@ class GradeSyncService:
                 ).all()
                 
                 submissions = session.query(Submission).join(Assignment).filter(
-                    Assignment.course_id == course.id
+                    Assignment.course_id == course.id,
+                    Assignment.is_visible.is_not(False),
                 ).all()
                 
                 from api.core.exam_policy import compute_effective_exam_scores

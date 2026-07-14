@@ -170,6 +170,22 @@ describe('student experience canonical contract surfaces', () => {
     }
   });
 
+  test('category evidence keeps a full-width readable table instead of sharing a compressed row', () => {
+    renderRoutes([{
+      path: '/profile/attendance',
+      element: <CategoryDetailPage studentData={studentData} pageKey="attendance" />,
+    }], '/profile/attendance');
+
+    const evidenceRegion = screen.getByTestId('category-evidence-region');
+    const table = within(evidenceRegion).getByRole('table');
+
+    expect(evidenceRegion).toHaveClass('MuiGrid-grid-xs-12');
+    expect(evidenceRegion).not.toHaveClass('MuiGrid-grid-md-8');
+    expect(table).toHaveStyle({ minWidth: '1040px' });
+    expect(screen.getByRole('heading', { name: 'Policy Applied' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Action' })).toBeInTheDocument();
+  });
+
   test('Workspace concrete action opens a URL-filtered Ledger and browser back restores Workspace', async () => {
     const user = userEvent.setup();
     const { router } = renderRoutes([
@@ -221,8 +237,13 @@ describe('student experience canonical contract surfaces', () => {
     expect(screen.getByRole('heading', { name: 'Score Trend' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Detailed Assignment Scores' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Assignment ID' })).toBeInTheDocument();
-    expect(screen.getByText('lab-duplicate-a')).toBeInTheDocument();
+    expect(screen.getByTestId('detailed-assignment-table')).toHaveStyle({
+      minWidth: '1120px',
+      tableLayout: 'fixed',
+    });
+    expect(screen.queryByText('lab-duplicate-a')).not.toBeInTheDocument();
     expect(screen.getByText('lab-duplicate-b')).toBeInTheDocument();
+    expect(screen.queryByText('quest-future')).not.toBeInTheDocument();
     expect(screen.getAllByText('3 attempts').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 attempt').length).toBeGreaterThanOrEqual(2);
     report.unmount();
@@ -306,6 +327,7 @@ describe('student experience canonical contract surfaces', () => {
 
     const workspace = renderRoutes([{ path: '/profile', element: <StudentWorkspaceHome studentData={unavailableStudent} /> }], '/profile');
     expect(screen.getByText(partialMessage)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Labs final policy progress' })).toHaveAttribute('aria-valuenow', '0');
     workspace.unmount();
 
     renderRoutes([{ path: '/profile/explain', element: <ExplainScorePage studentData={unavailableStudent} /> }], '/profile/explain');

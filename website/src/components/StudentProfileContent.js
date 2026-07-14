@@ -27,6 +27,7 @@ import {
   getEvidenceStatusMeta,
   getExamRows,
   getExamTrend,
+  isDueWorkStatus,
   optionalNumber,
 } from './studentExperienceModel';
 import {
@@ -323,22 +324,30 @@ function createExamTrendOptions(trend, fallbackCap) {
   };
 }
 
-const ProgressBattery = memo(function ProgressBattery({ value, segmentCount = 10 }) {
+const ProgressBattery = memo(function ProgressBattery({ value, segmentCount = 10, compact = false }) {
   const safeValue = toSafePercentage(value);
   const filledSegments = safeValue == null ? 0 : Math.round((safeValue / 100) * segmentCount);
   const segmentIndexes = segmentCount === 10
     ? DEFAULT_BATTERY_SEGMENTS
     : Array.from({ length: segmentCount }, (_, index) => index);
 
+  if (compact && safeValue == null) {
+    return (
+      <Typography variant="body2" sx={{ color: chartColors.ink, fontWeight: 650, fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+        Unavailable
+      </Typography>
+    );
+  }
+
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: { xs: 0.5, xl: 1 } }}>
-      <Box sx={{ display: 'flex', gap: { xs: 0.25, xl: 0.5 }, alignItems: 'center' }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: compact ? 0.5 : { xs: 0.5, xl: 1 } }}>
+      <Box sx={{ display: 'flex', gap: compact ? 0.25 : { xs: 0.25, xl: 0.5 }, alignItems: 'center' }}>
         {segmentIndexes.map((index) => (
           <Box
             key={index}
             sx={{
-              width: { xs: 6, sm: 8, xl: 10 },
-              height: 16,
+              width: compact ? 6 : { xs: 6, sm: 8, xl: 10 },
+              height: compact ? 12 : 16,
               borderRadius: '2px',
               backgroundColor: index < filledSegments ? chartColors.blue : '#EEF0F4',
               border: `1px solid ${index < filledSegments ? chartColors.blue : chartColors.border}`,
@@ -346,7 +355,14 @@ const ProgressBattery = memo(function ProgressBattery({ value, segmentCount = 10
           />
         ))}
       </Box>
-      <Typography variant="body2" sx={{ color: chartColors.ink, fontWeight: 650, minWidth: { xs: 48, sm: 52, xl: 58 }, textAlign: 'left' }}>
+      <Typography variant="body2" sx={{
+        color: chartColors.ink,
+        fontWeight: 650,
+        minWidth: compact ? 42 : { xs: 48, sm: 52, xl: 58 },
+        fontSize: compact ? '0.8rem' : undefined,
+        textAlign: 'left',
+        whiteSpace: 'nowrap',
+      }}>
         {safeValue == null ? 'Unavailable' : `${safeValue.toFixed(2)}%`}
       </Typography>
     </Box>
@@ -469,13 +485,16 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
   const sortedAssignments = useMemo(() => {
     if (assignmentEvidence.length === 0) return [];
     return assignmentEvidence
+      .filter((assignment) => isDueWorkStatus(assignment.evidenceStatus))
       .map((assignment, index) => ({
         item: {
           ...assignment,
           formattedSubmissionTime: formatDate(assignment.submissionTime),
         },
         index,
-        timestamp: getSubmissionTimestamp(assignment.submissionTime),
+        timestamp: assignment.submissionTime || assignment.dueAt
+          ? getSubmissionTimestamp(assignment.submissionTime || assignment.dueAt)
+          : Number.POSITIVE_INFINITY,
       }))
       .sort((a, b) => (a.timestamp - b.timestamp) || (a.index - b.index))
       .map(({ item }) => item);
@@ -1201,27 +1220,43 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
         elevation={0}
         sx={{
           ...cardSx,
-          p: 4,
+          p: { xs: 2, md: 2.5 },
         }}
       >
-        <Typography variant="h6" gutterBottom sx={{ ...headingSx, mb: 3 }}>
+        <Typography variant="h6" sx={{ ...headingSx, mb: 0.75 }}>
           Detailed Assignment Scores
         </Typography>
-        <Typography variant="caption" sx={{ color: chartColors.muted, display: 'block', mt: -2, mb: 2 }}>
-          All {sortedAssignments.length} authoritative catalog rows. Duplicate titles remain distinct by assignment ID; dates use America/Los_Angeles.
+        <Typography variant="caption" sx={{ color: chartColors.muted, display: 'block', mb: 1.5 }}>
+          Showing {sortedAssignments.length} past-due or submitted assignments from {assignmentEvidence.length} authoritative catalog rows. Dates use America/Los_Angeles.
         </Typography>
-        <TableContainer sx={{ mt: 2, borderRadius: 2, overflowX: 'auto', overflowY: 'visible' }}>
-          <Table size="small" stickyHeader>
+        <TableContainer sx={{ mt: 1, borderRadius: 1.5, overflowX: 'auto', overflowY: 'visible' }}>
+          <Table
+            data-testid="detailed-assignment-table"
+            size="small"
+            stickyHeader
+            sx={{
+              minWidth: 1120,
+              tableLayout: 'fixed',
+              '& th, & td': {
+                px: 1,
+                py: 1.25,
+                fontSize: '0.8125rem',
+                lineHeight: 1.35,
+                verticalAlign: 'top',
+              },
+              '& th': { whiteSpace: 'nowrap' },
+            }}
+          >
             <TableHead>
               <TableRow>
-                <TableCell sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Assignment ID</TableCell>
-                <TableCell sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Category</TableCell>
-                <TableCell sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Assignment</TableCell>
-                <TableCell align="center" sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Evidence</TableCell>
-                <TableCell align="center" sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>%</TableCell>
-                <TableCell align="center" sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Status</TableCell>
-                <TableCell align="center" sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Due</TableCell>
-                <TableCell align="center" sx={{ backgroundColor: chartColors.band, fontWeight: 600 }}>Submitted</TableCell>
+                <TableCell sx={{ width: 90, backgroundColor: chartColors.band, fontWeight: 600 }}>Assignment ID</TableCell>
+                <TableCell sx={{ width: 145, backgroundColor: chartColors.band, fontWeight: 600 }}>Category</TableCell>
+                <TableCell sx={{ width: 195, backgroundColor: chartColors.band, fontWeight: 600 }}>Assignment</TableCell>
+                <TableCell align="center" sx={{ width: 110, backgroundColor: chartColors.band, fontWeight: 600 }}>Evidence</TableCell>
+                <TableCell align="center" sx={{ width: 110, backgroundColor: chartColors.band, fontWeight: 600 }}>%</TableCell>
+                <TableCell align="center" sx={{ width: 150, backgroundColor: chartColors.band, fontWeight: 600 }}>Status</TableCell>
+                <TableCell align="center" sx={{ width: 145, backgroundColor: chartColors.band, fontWeight: 600 }}>Due</TableCell>
+                <TableCell align="center" sx={{ width: 175, backgroundColor: chartColors.band, fontWeight: 600 }}>Submitted</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -1232,12 +1267,12 @@ function StudentProfileContent({ studentData, hideTopSnapshot = false }) {
                     <TableCell>{assignment.category}</TableCell>
                     <TableCell>{assignment.name}</TableCell>
                     <TableCell align="center">{formatEvidenceScore(assignment)}</TableCell>
-                    <TableCell align="center"><ProgressBattery value={assignment.percentage} /></TableCell>
+                    <TableCell align="center"><ProgressBattery value={assignment.percentage} segmentCount={5} compact /></TableCell>
                     <TableCell align="center"><EvidenceStatusChip row={assignment} /></TableCell>
-                    <TableCell align="center" sx={{ fontSize: '0.875rem', minWidth: 170 }}>
+                    <TableCell align="center">
                       {formatDate(assignment.dueAt)}
                     </TableCell>
-                    <TableCell align="center" sx={{ fontSize: '0.875rem' }}>
+                    <TableCell align="center">
                       {assignment.formattedSubmissionTime}
                       {assignment.isLate && (
                         <Box component="span" sx={{ display: 'block', color: chartColors.rose, fontSize: '0.75rem', mt: 0.5 }}>

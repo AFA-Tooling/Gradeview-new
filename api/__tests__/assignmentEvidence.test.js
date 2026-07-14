@@ -380,6 +380,26 @@ describe('catalog authority and LEFT JOIN contract', () => {
         ]);
     });
 
+    test('unpublished assignments require real submission evidence to appear', () => {
+        const unpublished = catalogRow(10, {
+            assignment_name: 'Unpublished retake',
+            is_published: false,
+            due_at: PAST_DUE,
+        });
+
+        expect(joinAssignmentCatalogWithEvidence([unpublished], [], { now: NOW })).toEqual([]);
+        expect(joinAssignmentCatalogWithEvidence([unpublished], [{
+            assignment_pk: '10',
+            submission_pk: 'submission-10',
+            submission_status: 'submitted',
+            total_score: 9,
+        }], { now: NOW })).toMatchObject([{
+            assignmentId: '10',
+            evidenceStatus: ASSIGNMENT_EVIDENCE_STATUS.SUBMITTED,
+            score: 9,
+        }]);
+    });
+
     test('catalog endpoint helper uses the same visibility contract and stable error state', async () => {
         const pool = {
             query: jest.fn().mockResolvedValue({
@@ -416,5 +436,6 @@ describe('catalog authority and LEFT JOIN contract', () => {
         expect(query.values).toEqual(['student@example.edu', 'course-1']);
         expect(query.text).toContain('c.id::text = $2');
         expect(query.text).toContain('s.student_id = st.id');
+        expect(query.text).toContain('a.is_published');
     });
 });

@@ -147,7 +147,7 @@ export function getAssignmentDueState(row = {}, now = Date.now()) {
         : ASSIGNMENT_DUE_STATE.NOT_DUE;
 }
 
-export function isVisibleCatalogAssignment(row = {}) {
+export function isVisibleCatalogAssignment(row = {}, { includeUnpublished = false } = {}) {
     const title = String(row.assignment_name || row.title || row.name || '').trim();
     if (!title) return false;
 
@@ -174,7 +174,7 @@ export function isVisibleCatalogAssignment(row = {}) {
         metadata.isPublished,
         metadata.published,
     ));
-    if (published === false) return false;
+    if (published === false && !includeUnpublished) return false;
     const audience = normalizeText(firstPresentValue(metadata.audience, metadata.visibility));
     if (['staff', 'internal', 'hidden'].includes(audience)) return false;
 
@@ -187,6 +187,11 @@ export function isVisibleCatalogAssignment(row = {}) {
     }
 
     return true;
+}
+
+function isVisibleCatalogEvidenceRow(row = {}) {
+    if (!isVisibleCatalogAssignment(row, { includeUnpublished: true })) return false;
+    return isVisibleCatalogAssignment(row) || hasUsableSubmission(row);
 }
 
 export function normalizeCatalogCategory(category = '') {
@@ -324,6 +329,8 @@ function toCatalogRow(row = {}) {
         category: row.category,
         assignment_max_points: row.assignment_max_points ?? row.max_points,
         assignment_metadata: row.assignment_metadata,
+        is_visible: row.is_visible,
+        is_published: row.is_published,
         assignment_last_synced_at: row.assignment_last_synced_at,
         course_last_synced_at: row.course_last_synced_at,
         course_id: row.course_id,
@@ -441,11 +448,12 @@ export function joinAssignmentCatalogWithEvidence(
     });
 
     return (Array.isArray(catalogRows) ? catalogRows : [])
-        .filter(isVisibleCatalogAssignment)
         .map((catalogRow) => {
             const evidenceRow = evidenceByAssignment.get(assignmentKey(catalogRow));
-            return serializeAssignmentEvidence(mergeDefined(catalogRow, evidenceRow), { now });
-        });
+            return mergeDefined(catalogRow, evidenceRow);
+        })
+        .filter(isVisibleCatalogEvidenceRow)
+        .map((row) => serializeAssignmentEvidence(row, { now }));
 }
 
 export function countAssignmentEvidenceStatuses(rows = []) {
@@ -662,6 +670,10 @@ export function buildStudentAssignmentEvidenceQuery(email, courseId = null) {
                 COALESCE(a.category, 'Uncategorized') AS category,
                 a.max_points AS assignment_max_points,
                 a.assignment_metadata,
+                a.due_at,
+                a.release_at,
+                a.is_visible,
+                a.is_published,
                 a.last_synced_at AS assignment_last_synced_at,
                 c.last_synced_at AS course_last_synced_at,
                 c.id::text AS course_id,
@@ -774,6 +786,10 @@ export function buildCourseWideAssignmentEvidenceQuery(courseId) {
                 COALESCE(a.category, 'Uncategorized') AS category,
                 a.max_points AS assignment_max_points,
                 a.assignment_metadata,
+                a.due_at,
+                a.release_at,
+                a.is_visible,
+                a.is_published,
                 a.last_synced_at AS assignment_last_synced_at,
                 a.assignment_metadata ->> 'source_sync_status' AS source_sync_status,
                 a.assignment_metadata ->> 'request_error' AS request_error,
@@ -843,7 +859,7 @@ export function buildCourseWideAssignmentEvidenceGroups(
                 });
             }
 
-            if (!isVisibleCatalogAssignment(row)) return;
+            if (!isVisibleCatalogEvidenceRow(row)) return;
             const evidence = serializeAssignmentEvidence(row, { now });
             if (!evidence.assignmentId) return;
             groups.get(key).evidenceByAssignmentId.set(evidence.assignmentId, evidence);
@@ -890,6 +906,10 @@ export function buildCourseAssignmentCatalogQuery(courseId = null) {
                 COALESCE(a.category, 'Uncategorized') AS category,
                 a.max_points AS assignment_max_points,
                 a.assignment_metadata,
+                a.due_at,
+                a.release_at,
+                a.is_visible,
+                a.is_published,
                 a.last_synced_at AS assignment_last_synced_at,
                 c.last_synced_at AS course_last_synced_at,
                 c.id::text AS course_id,

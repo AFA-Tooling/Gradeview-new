@@ -14,9 +14,31 @@ from .ingest import _categorize_assignment
 
 logger = logging.getLogger(__name__)
 
+NON_EVIDENCE_SUBMISSION_STATUSES = {
+    'missing',
+    'not submitted',
+    'not_submitted',
+    'unsubmitted',
+}
+
 def _ts():
     """Return current timestamp for debug logs."""
     return datetime.now().strftime('%H:%M:%S.%f')[:-3]
+
+
+def has_submission_evidence(submission: Dict[str, Any]) -> bool:
+    """Return whether a Gradescope roster row contains real student evidence."""
+    status = str(submission.get('status') or '').strip().lower()
+    if status in {'excused', 'not applicable', 'not_applicable', 'n/a'}:
+        return True
+    if status in NON_EVIDENCE_SUBMISSION_STATUSES:
+        return False
+    return any((
+        submission.get('total_score') is not None,
+        submission.get('submission_time') is not None,
+        bool(str(submission.get('submission_id') or '').strip()),
+        (submission.get('submission_count') or 0) > 0,
+    ))
 
 
 def should_sync_assignment(
@@ -56,6 +78,107 @@ def should_sync_assignment(
     hours_since_sync = (now - assignment.last_synced_at).total_seconds() / 3600
     
     return hours_since_sync >= sync_if_older_than_hours
+
+
+def _apply_catalog_fields(assignment: Assignment, catalog_entry: Dict[str, Any]) -> None:
+    """Apply one normalized Gradescope catalog row to an assignment."""
+    raw_catalog = dict(catalog_entry.get('raw') or {})
+    metadata = dict(assignment.assignment_metadata or {})
+    metadata['gradescope_catalog'] = raw_catalog
+    metadata['submission_window'] = dict(raw_catalog.get('submission_window') or {})
+    if catalog_entry.get('course_timezone'):
+        metadata['course_timezone'] = catalog_entry['course_timezone']
+
+    assignment.assignment_metadata = metadata
+    assignment.source_type = 'gradescope'
+    assignment.release_at = catalog_entry.get('release_at')
+    assignment.due_at = catalog_entry.get('due_at')
+    assignment.late_due_at = catalog_entry.get('late_due_at')
+    assignment.is_published = catalog_entry.get('is_published')
+    assignment.is_visible = True
+    assignment.catalog_last_seen_at = catalog_entry.get('catalog_seen_at') or datetime.now(timezone.utc)
+
+    source_max_points = catalog_entry.get('max_points')
+    if source_max_points is not None:
+        assignment.max_points = source_max_points
+
+
+def upsert_gradescope_assignment_catalog(
+    course_gradescope_id: str,
+    catalog: List[Dict[str, Any]],
+    course_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, int]:
+    """Persist a complete Gradescope catalog before syncing evidence CSVs."""
+    session = SessionLocal()
+    try:
+        course = session.query(Course).filter(
+            Course.gradescope_course_id == str(course_gradescope_id)
+        ).first()
+        if not course:
+            course = Course(
+                gradescope_course_id=str(course_gradescope_id),
+                name=(course_config or {}).get('name'),
+                department=(course_config or {}).get('department'),
+                course_number=(course_config or {}).get('course_number'),
+                semester=(course_config or {}).get('semester'),
+                year=(course_config or {}).get('year'),
+                instructor=(course_config or {}).get('instructor'),
+            )
+            session.add(course)
+            session.flush()
+
+        course_categories = (course_config or {}).get('assignment_categories')
+        seen_ids = []
+        inserted = 0
+        updated = 0
+
+        for item in catalog:
+            external_id = str(item['assignment_id'])
+            seen_ids.append(external_id)
+            assignment = session.query(Assignment).filter(
+                Assignment.course_id == course.id,
+                Assignment.assignment_id == external_id,
+            ).first()
+            if assignment is None:
+                assignment = Assignment(
+                    course_id=course.id,
+                    assignment_id=external_id,
+                    title=item['title'],
+                    category=_categorize_assignment(item['title'], course_categories),
+                )
+                session.add(assignment)
+                inserted += 1
+            else:
+                assignment.title = item['title']
+                category = _categorize_assignment(item['title'], course_categories)
+                if category:
+                    assignment.category = category
+                updated += 1
+            _apply_catalog_fields(assignment, item)
+
+        stale_query = session.query(Assignment).filter(
+            Assignment.course_id == course.id,
+            Assignment.assignment_id.op('~')('^[0-9]+$'),
+        )
+        if seen_ids:
+            stale_query = stale_query.filter(Assignment.assignment_id.notin_(seen_ids))
+        stale = stale_query.update(
+            {Assignment.is_visible: False},
+            synchronize_session=False,
+        )
+
+        session.commit()
+        return {
+            'catalog_count': len(catalog),
+            'inserted': inserted,
+            'updated': updated,
+            'marked_stale': int(stale or 0),
+        }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def batch_upsert_submissions(
@@ -157,7 +280,8 @@ def write_assignment_scores_optimized(
     assignment_id: str,
     assignment_name: str,
     csv_content: str,
-    course_config: Optional[Dict[str, Any]] = None
+    course_config: Optional[Dict[str, Any]] = None,
+    catalog_entry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     logger.info(f"[INFO] [{_ts()}] === Entered write_assignment_scores_optimized for {assignment_name} ===")
     """
@@ -283,6 +407,10 @@ def write_assignment_scores_optimized(
                 updated_assignment = True
             if updated_assignment:
                 session.flush()
+
+        if catalog_entry:
+            _apply_catalog_fields(assignment, catalog_entry)
+            session.flush()
         
         # Parse CSV
         reader = csv.DictReader(io.StringIO(csv_content))
@@ -420,7 +548,8 @@ def write_assignment_scores_optimized(
                     # If parsing fails, keep submission_time as None
                     logger.warning(f"Failed to parse submission time '{sub_time_str}' for {email}")
             
-            submissions_data.append({**submission, 'email': email})
+            if has_submission_evidence(submission):
+                submissions_data.append({**submission, 'email': email})
 
         assignment_metadata = assignment.assignment_metadata if isinstance(assignment.assignment_metadata, dict) else {}
         if question_columns:

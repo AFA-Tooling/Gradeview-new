@@ -180,7 +180,10 @@ def _submission_percentage(submission: Optional[Submission], assignment: Assignm
 
 
 def compute_effective_exam_scores(session: Session, course_id: int) -> Dict[str, int]:
-    assignments = session.query(Assignment).filter(Assignment.course_id == course_id).all()
+    assignments = session.query(Assignment).filter(
+        Assignment.course_id == course_id,
+        Assignment.is_visible.is_not(False),
+    ).all()
     students = session.query(Student).filter(Student.course_id == course_id).all()
 
     if not assignments or not students:

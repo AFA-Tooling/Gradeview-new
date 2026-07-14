@@ -3,12 +3,80 @@ Gradescope Sync Module
 
 High-level sync operations for Gradescope data.
 """
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 import logging
-from datetime import datetime
-from .client import GradescopeClient
+import json
+import re
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from bs4 import BeautifulSoup
+from .client import GRADESCOPE_ROOT, GradescopeClient
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_catalog_datetime(value: Optional[str], timezone_name: str) -> Optional[datetime]:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone_name))
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_assignment_catalog(html: str, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Parse the authoritative Gradescope AssignmentsTable payload."""
+    table = BeautifulSoup(html, 'html.parser').find(
+        'div',
+        {'data-react-class': 'AssignmentsTable'},
+    )
+    if table is None or not table.get('data-react-props'):
+        raise RuntimeError('Gradescope AssignmentsTable payload was not found')
+
+    props = json.loads(table.get('data-react-props'))
+    timezone_name = (props.get('timezone') or {}).get('identifier') or 'America/Los_Angeles'
+    seen_at = now or datetime.now(timezone.utc)
+    catalog = []
+    seen_ids = set()
+
+    for row in props.get('table_data') or []:
+        assignment_url = str(row.get('url') or '')
+        match = re.search(r'/assignments/(\d+)', assignment_url)
+        if match is None:
+            match = re.search(r'(\d+)$', str(row.get('id') or ''))
+        title = ' '.join(str(row.get('title') or '').split())
+        if match is None or not title:
+            continue
+
+        assignment_id = match.group(1)
+        if assignment_id in seen_ids:
+            raise RuntimeError(f'Duplicate assignment ID in Gradescope catalog: {assignment_id}')
+        seen_ids.add(assignment_id)
+
+        window = dict(row.get('submission_window') or {})
+        max_points = row.get('total_points')
+        try:
+            max_points = float(max_points) if max_points not in (None, '') else None
+        except (TypeError, ValueError):
+            max_points = None
+
+        catalog.append({
+            'assignment_id': assignment_id,
+            'title': title,
+            'source_type': str(row.get('type') or 'assignment'),
+            'max_points': max_points,
+            'release_at': _parse_catalog_datetime(window.get('release_date'), timezone_name),
+            'due_at': _parse_catalog_datetime(window.get('due_date'), timezone_name),
+            'late_due_at': _parse_catalog_datetime(window.get('hard_due_date'), timezone_name),
+            'is_published': row.get('is_published'),
+            'catalog_seen_at': seen_at,
+            'course_timezone': timezone_name,
+            'raw': row,
+        })
+
+    if not catalog:
+        raise RuntimeError('Gradescope AssignmentsTable did not contain any assignments')
+    return catalog
 
 def _ts():
     """Return current timestamp for debug logs."""
@@ -18,7 +86,6 @@ def _ts():
 class GradescopeSync:
     """
     Sync Gradescope grades to database.
-    
     Orchestrates:
     - Gradescope API access
     - Data transformation
@@ -110,8 +177,21 @@ class GradescopeSync:
             # print(f"[DEBUG] Retrieved {len(course_assignments)} assignments from Gradescope")
             logger.info(f"Retrieved {len(course_assignments)} assignments from Gradescope")
             total_assignments = len(course_assignments)
+
+            catalog_result = None
+            if save_to_db:
+                from api.core.ingest_optimized import upsert_gradescope_assignment_catalog
+                catalog_result = upsert_gradescope_assignment_catalog(
+                    course_gradescope_id=course_id,
+                    catalog=course_assignments,
+                    course_config=course_config,
+                )
+
+            assignments_failed = []
             
-            for index, (assignment_id, assignment_name) in enumerate(course_assignments.items(), start=1):
+            for index, catalog_entry in enumerate(course_assignments, start=1):
+                assignment_id = catalog_entry['assignment_id']
+                assignment_name = catalog_entry['title']
                 start_pct = int(10 + ((index - 1) / max(1, total_assignments)) * 80)
                 emit_progress({
                     "event": "progress",
@@ -152,8 +232,11 @@ class GradescopeSync:
                                 assignment_id=assignment_id,
                                 assignment_name=assignment_name,
                                 csv_content=scores_csv,
-                                course_config=course_config
+                                course_config=course_config,
+                                catalog_entry=catalog_entry,
                             )
+                            if not result.get('success'):
+                                raise RuntimeError(result.get('error') or 'Database ingestion failed')
                             _db_elapsed = _time.time() - _db_start
                             
                             # if result.get('skipped'):
@@ -187,6 +270,11 @@ class GradescopeSync:
                 
                 except Exception as e:
                     logger.error(f"Failed to sync {assignment_name}: {e}")
+                    assignments_failed.append({
+                        'assignment_id': assignment_id,
+                        'title': assignment_name,
+                        'error': str(e),
+                    })
                     done_pct = int(10 + (index / max(1, total_assignments)) * 80)
                     emit_progress({
                         "event": "progress",
@@ -205,8 +293,15 @@ class GradescopeSync:
                 "success": True,
                 "course_id": course_id,
                 "assignments_synced": len(assignments_data),
-                "students_synced": len(students_data)
+                "students_synced": len(students_data),
+                "catalog": catalog_result,
+                "assignments_failed": assignments_failed,
             }
+
+            if assignments_failed:
+                raise RuntimeError(
+                    f"Failed to sync {len(assignments_failed)} of {total_assignments} assignments"
+                )
             
             # print(f"[{_ts()}] Sync completed: {results}", flush=True)
             logger.info(f"Sync completed: {results}")
@@ -222,7 +317,7 @@ class GradescopeSync:
         """Close clients."""
         self.gs_client.logout()
     
-    def _get_course_assignments(self, course_id: str) -> Dict[str, str]:
+    def _get_course_assignments(self, course_id: str) -> List[Dict[str, Any]]:
         """
         Get all assignments for a course using Gradescope API.
         
@@ -230,17 +325,11 @@ class GradescopeSync:
             course_id: Gradescope course ID
             
         Returns:
-            Dict mapping assignment_id -> assignment_name
+            Normalized rows from AssignmentsTable.data-react-props.table_data
         """
-        import re
-        import html
-        
-        # print(f"[DEBUG] Getting assignments for course {course_id}")
-        
         try:
-            # Get course assignments page
-            url = f"{self.gs_client.base_url}/courses/{course_id}/assignments"
-            response = self.gs_client.session.get(url)
+            url = f"{GRADESCOPE_ROOT}/courses/{course_id}"
+            response = self.gs_client.session.get(url, timeout=self.gs_client.request_timeout)
 
             if response.status_code in (401, 403):
                 raise PermissionError(
@@ -250,41 +339,7 @@ class GradescopeSync:
 
             response.raise_for_status()
             
-            response_text = response.text
-
-            assignments = {}
-
-            def _add_assignment(assignment_id: str, assignment_name: str):
-                assignment_id = str(assignment_id).strip()
-                assignment_name = html.unescape((assignment_name or '').strip())
-                assignment_name = re.sub(r'\s+', ' ', assignment_name)
-
-                if not assignment_id or not assignment_name:
-                    return
-                assignments[assignment_id] = assignment_name
-
-            # Strategy 1: JSON-like objects with "id" and "title" (id before title)
-            for assignment_id, assignment_name in re.findall(
-                r'"id"\s*:\s*(\d+)\s*,\s*"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"',
-                response_text,
-            ):
-                _add_assignment(assignment_id, assignment_name.replace('\\"', '"'))
-
-            # Strategy 2: JSON-like objects with "title" and "id" (title before id)
-            for assignment_name, assignment_id in re.findall(
-                r'"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*,\s*"id"\s*:\s*(\d+)',
-                response_text,
-            ):
-                _add_assignment(assignment_id, assignment_name.replace('\\"', '"'))
-
-            # Strategy 3 (fallback): parse assignment links from HTML
-            # e.g. <a href="/courses/<course_id>/assignments/<assignment_id>">Assignment Name</a>
-            link_pattern = rf'<a[^>]+href="/courses/{re.escape(str(course_id))}/assignments/(\d+)"[^>]*>(.*?)</a>'
-            for assignment_id, anchor_inner_html in re.findall(link_pattern, response_text, flags=re.IGNORECASE | re.DOTALL):
-                assignment_name = re.sub(r'<[^>]+>', '', anchor_inner_html)
-                _add_assignment(assignment_id, assignment_name)
-            
-            # print(f"[DEBUG] Found {len(assignments)} assignments: {assignments}")
+            assignments = parse_assignment_catalog(response.text)
             logger.info(f"Found {len(assignments)} assignments for course {course_id}")
             return assignments
             
@@ -359,4 +414,3 @@ class GradescopeSync:
             logger.error(f"Failed to save {assignment_name} to database: {e}")
             # import traceback
             # traceback.print_exc()
-    
