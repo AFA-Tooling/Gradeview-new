@@ -57,6 +57,7 @@ describe('GradeSync platform states', () => {
 
         expect(await screen.findByText('2026 Spring Demo Course')).toBeInTheDocument();
         expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Refresh Current Course' })).toBeEnabled();
         await user.click(screen.getByRole('button', { name: 'Start Sync for current course' }));
 
         expect(await screen.findByText('The sync completed successfully for the current course.')).toBeInTheDocument();
@@ -66,6 +67,34 @@ describe('GradeSync platform states', () => {
             undefined,
             expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
+    });
+
+    it('refreshes the global course in place without adding a second selector', async () => {
+        setSession();
+        const user = userEvent.setup();
+        render(<GradeSyncControl />);
+
+        await screen.findByText('2026 Spring Demo Course');
+        await user.click(screen.getByRole('button', { name: 'Refresh Current Course' }));
+
+        expect(await screen.findByText('2026 Spring Demo Course')).toBeInTheDocument();
+        expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+        expect(apiv2.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('recovers a failed course read with the in-card retry action', async () => {
+        setSession();
+        const user = userEvent.setup();
+        apiv2.get
+            .mockRejectedValueOnce({ response: { status: 500, data: { reason: 'Course service unavailable.' } } })
+            .mockResolvedValueOnce(COURSE_RESPONSE);
+        render(<GradeSyncControl />);
+
+        expect(await screen.findByText('Current course unavailable')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: 'Retry course' }));
+
+        expect(await screen.findByText('2026 Spring Demo Course')).toBeInTheDocument();
+        expect(screen.queryByText('Current course unavailable')).not.toBeInTheDocument();
     });
 
     it.each([

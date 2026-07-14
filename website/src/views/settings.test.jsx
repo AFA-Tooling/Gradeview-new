@@ -163,6 +163,27 @@ describe('Settings request and capability states', () => {
         expect(apiv2.put).not.toHaveBeenCalled();
     });
 
+    it('preserves explicit zero values instead of replacing them with defaults', async () => {
+        apiv2.get.mockImplementation((path) => Promise.resolve({
+            data: path === '/config' ? VIEW_CONFIG : {
+                ...SYNC_CONFIG,
+                global_settings: {
+                    ...SYNC_CONFIG.global_settings,
+                    retry_attempts: 0,
+                    retry_delay_seconds: 0,
+                },
+            },
+        }));
+        const user = userEvent.setup();
+        render(<Settings />);
+
+        await screen.findByLabelText('Client ID');
+        await user.click(screen.getByRole('tab', { name: /GradeSync Configuration/ }));
+
+        expect(screen.getByLabelText('Retry Attempts')).toHaveValue(0);
+        expect(screen.getByLabelText('Retry Delay (seconds)')).toHaveValue(0);
+    });
+
     it('aborts hanging configuration reads and offers in-page timeout recovery', async () => {
         apiv2.get.mockImplementation((path, options) => new Promise((resolve, reject) => {
             options.signal.addEventListener('abort', () => {

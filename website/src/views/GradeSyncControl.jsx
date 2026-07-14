@@ -309,74 +309,108 @@ export default function GradeSyncControl() {
                 aria-labelledby="gradesync-heading"
                 elevation={0}
                 className="glass-section"
-                sx={{ p: { xs: 2.5, md: 4 }, borderRadius: 2, maxWidth: 900 }}
+                sx={{ p: { xs: 2.5, md: 4 }, borderRadius: 2, maxWidth: 800 }}
             >
-                <Typography id="gradesync-heading" component="h1" variant="h5" sx={{ fontWeight: 700, mb: 1 }}>
-                    GradeSync Control
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                    Synchronize the course selected in the global GradeView course control.
-                </Typography>
-
-                {isReadOnly && (
-                    <Alert severity="warning" role="status" sx={{ mb: 3 }}>
-                        <AlertTitle>Read-only Demo</AlertTitle>
-                        Sync mutations are disabled in this page, and the GradeView API independently
-                        rejects Demo writes with <strong>DEMO_READ_ONLY</strong>. Sign in with an authorized
-                        staff account to start a sync.
-                    </Alert>
-                )}
-
-                {courseResource.status === 'loading' && (
-                    <Box role="status" aria-live="polite" sx={{ mb: 3 }}>
-                        <Typography variant="body2" sx={{ mb: 1 }}>Loading current course…</Typography>
-                        <LinearProgress aria-label="Loading current GradeSync course" />
-                    </Box>
-                )}
-
-                {courseResource.status === 'error' && (
-                    <Alert
-                        severity="error"
-                        role="alert"
-                        sx={{ mb: 3 }}
-                        action={<Button color="inherit" onClick={loadCourseContext}>Retry course</Button>}
+                <Box
+                    mb={3}
+                    display="flex"
+                    flexDirection={{ xs: 'column', sm: 'row' }}
+                    justifyContent="space-between"
+                    alignItems={{ xs: 'flex-start', sm: 'center' }}
+                    gap={1}
+                >
+                    <Typography id="gradesync-heading" component="h1" variant="h6" sx={{ fontWeight: 600 }}>
+                        GradeSync Control
+                    </Typography>
+                    <Button
+                        startIcon={<Refresh />}
+                        onClick={loadCourseContext}
+                        disabled={courseResource.status === 'loading' || syncing}
+                        size="small"
                     >
-                        <AlertTitle>Current course unavailable</AlertTitle>
-                        <Typography variant="body2">Code: <strong>{courseResource.error.code}</strong></Typography>
-                        <Typography variant="body2">Reason: {courseResource.error.reason}</Typography>
-                        <Typography variant="body2">Recovery: {courseResource.error.recovery}</Typography>
-                    </Alert>
-                )}
+                        Refresh Current Course
+                    </Button>
+                </Box>
 
-                {courseResource.status === 'empty' && (
-                    <Alert severity="info" role="status" sx={{ mb: 3 }}>
-                        <AlertTitle>No current course</AlertTitle>
-                        Choose a course with the global course control. This is an empty selection, not a failed sync.
-                    </Alert>
-                )}
+                <Box mb={4}>
+                    <Typography variant="body2" color="text.secondary" paragraph>
+                        Synchronize grades from Gradescope, PrairieLearn, and iClicker for the course
+                        selected in the global GradeView course control. This process may take several minutes.
+                    </Typography>
 
-                {courseResource.status === 'success' && (
-                    <>
-                        <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-                            <Typography variant="overline" color="text.secondary">Current course</Typography>
-                            <Typography variant="h6">{formatCourseLabel(courseResource.course)}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                                Course ID: {courseResource.apiCourseId}. Change courses with the global course control.
+                    {isReadOnly && (
+                        <Alert severity="warning" role="status" sx={{ mb: 3 }}>
+                            <AlertTitle>Read-only Demo</AlertTitle>
+                            Sync mutations are disabled on this page, and the GradeView API independently
+                            rejects Demo writes with <strong>DEMO_READ_ONLY</strong>. Sign in with an authorized
+                            staff account to start a sync.
+                        </Alert>
+                    )}
+
+                    {courseResource.status === 'loading' && (
+                        <Box role="status" aria-live="polite" sx={{ mb: 3 }}>
+                            <Typography variant="body2" sx={{ mb: 1, fontStyle: 'italic' }}>
+                                Loading current course…
                             </Typography>
-                        </Paper>
+                            <LinearProgress aria-label="Loading current GradeSync course" />
+                        </Box>
+                    )}
 
-                        <Button
-                            variant="contained"
-                            startIcon={syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
-                            onClick={handleSync}
-                            disabled={isReadOnly || syncing}
-                            aria-label={isReadOnly ? 'Start Sync unavailable in read-only Demo' : 'Start Sync for current course'}
+                    {courseResource.status === 'error' && (
+                        <Alert
+                            severity="error"
+                            role="alert"
                             sx={{ mb: 3 }}
+                            action={<Button color="inherit" onClick={loadCourseContext}>Retry course</Button>}
                         >
-                            {syncing ? 'Syncing…' : 'Start Sync'}
-                        </Button>
-                    </>
-                )}
+                            <AlertTitle>Current course unavailable</AlertTitle>
+                            <Typography variant="body2">Code: <strong>{courseResource.error.code}</strong></Typography>
+                            <Typography variant="body2">Reason: {courseResource.error.reason}</Typography>
+                            <Typography variant="body2">Recovery: {courseResource.error.recovery}</Typography>
+                        </Alert>
+                    )}
+
+                    {courseResource.status === 'empty' && (
+                        <Alert severity="info" role="status" sx={{ mb: 3 }}>
+                            <AlertTitle>No current course</AlertTitle>
+                            Choose a course with the global course control. This is an empty selection, not a failed sync.
+                        </Alert>
+                    )}
+
+                    {courseResource.status === 'success' && (
+                        <Box
+                            display="flex"
+                            flexDirection={{ xs: 'column', sm: 'row' }}
+                            gap={2}
+                            alignItems={{ xs: 'stretch', sm: 'center' }}
+                        >
+                            <Paper
+                                variant="outlined"
+                                aria-label="Current GradeSync course"
+                                sx={{ px: 2, py: 1.25, flex: 1, minWidth: 0 }}
+                            >
+                                <Typography variant="caption" color="text.secondary">Current course</Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                    {formatCourseLabel(courseResource.course)}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    Course ID: {courseResource.apiCourseId} · Change with the global course control
+                                </Typography>
+                            </Paper>
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                startIcon={syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
+                                onClick={handleSync}
+                                disabled={isReadOnly || syncing}
+                                aria-label={isReadOnly ? 'Start Sync unavailable in read-only Demo' : 'Start Sync for current course'}
+                                sx={{ minHeight: 44, flexShrink: 0 }}
+                            >
+                                {syncing ? 'Syncing…' : 'Start Sync'}
+                            </Button>
+                        </Box>
+                    )}
+                </Box>
 
                 {syncing && (
                     <Alert severity="info" role="status" aria-live="polite" sx={{ mb: 3 }}>
