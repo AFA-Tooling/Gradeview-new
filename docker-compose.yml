@@ -154,6 +154,10 @@ services:
     networks:
       - db
     command: python -m api.sync.maintainer
+    # This worker sleeps between scheduled runs and does not serve HTTP.
+    # Disable the GradeSync image's inherited API healthcheck.
+    healthcheck:
+      disable: true
     depends_on:
       cloud-sql-proxy:
         condition: service_started
